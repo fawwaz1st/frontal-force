@@ -1,19 +1,20 @@
 {
   "name": "frontal-force",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.19.3",
-    "three": "^0.182.0"
+    "three": "^0.185.1"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
-    "vite": "^6.4.3"
+    "@types/three": "^0.185.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
   }
 }

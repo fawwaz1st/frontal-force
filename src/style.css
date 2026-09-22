@@ -1,6 +1,18 @@
-html,
-body,
-#app {
+:root {
+  --accent: #5f8cff;
+  --accent-soft: rgba(95, 140, 255, 0.35);
+  --danger: #ff4d5e;
+  --ok: #2aff8a;
+  --panel: rgba(8, 12, 22, 0.62);
+  --line: rgba(140, 170, 255, 0.22);
+  --text: #e8eeff;
+  --text-dim: rgba(200, 214, 255, 0.62);
+  --ch-gap: 4px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -8,99 +20,452 @@ body,
 
 body {
   overflow: hidden;
-  font-family: Inter, system-ui, sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(95, 111, 255, 0.28), transparent 40%),
-    linear-gradient(180deg, #06070b 0%, #0d1220 100%);
-  color: #eef2ff;
+  background: #060a14;
+  color: var(--text);
+  font-family: 'Chakra Petch', system-ui, sans-serif;
+  user-select: none;
 }
 
-.game-shell {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
+#app { position: relative; }
+#app canvas { display: block; }
 
-.game-shell canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
+/* ---------- HUD shell ---------- */
 .hud {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  display: grid;
-  grid-template-rows: auto 1fr auto auto;
-  padding: 18px;
+  overflow: hidden;
 }
 
-.hud__topbar,
-.hud__panel,
-.hud__hint,
-.hud__chat {
-  pointer-events: auto;
+.hud__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 4, 10, 0.55) 100%);
+  transition: background 0.4s;
 }
 
-.hud__topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+.hud__vignette.hit { animation: dmg 0.45s ease-out; }
+@keyframes dmg {
+  0% { box-shadow: inset 0 0 140px 40px rgba(255, 40, 60, 0.55); }
+  100% { box-shadow: inset 0 0 140px 40px rgba(255, 40, 60, 0); }
 }
 
-.hud__title { font-size: 18px; letter-spacing: 0.12em; text-transform: uppercase; }
-.hud__mode { color: #a7c4ff; }
-
-.hud__panel {
-  align-self: start;
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(140px, 1fr));
-  gap: 10px;
-  max-width: 420px;
-  padding: 14px;
-  border: 1px solid rgba(167, 196, 255, 0.2);
-  background: rgba(8, 12, 22, 0.55);
-  backdrop-filter: blur(8px);
-  border-radius: 16px;
+.hud__vignette.lowhp { animation: lowhp 1.1s ease-in-out infinite; }
+@keyframes lowhp {
+  0%, 100% { box-shadow: inset 0 0 120px 20px rgba(255, 40, 60, 0.14); }
+  50% { box-shadow: inset 0 0 150px 46px rgba(255, 40, 60, 0.4); }
 }
 
-.hud__panel--grid { grid-template-columns: repeat(4, minmax(120px, 1fr)); max-width: 900px; }
-.hud__panel div { display: flex; justify-content: space-between; gap: 8px; color: #c8d6ff; }
-.hud__panel span { opacity: 0.75; }
-.hud__panel strong { color: #fff; }
+/* ---------- Damage direction arcs ---------- */
+.hud__dmg-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 
+.hud__dmg-arc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 150px;
+  height: 150px;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+/* Wedge drawn at the top of the element; rotation points it at the attacker */
+.hud__dmg-arc::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 110px;
+  height: 22px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(255, 60, 80, 0.85), rgba(255, 60, 80, 0) 72%);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+}
+
+.hud__dmg-arc.show { animation: dmgarc 0.8s ease-out; }
+@keyframes dmgarc {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- Crosshair ---------- */
 .hud__crosshair {
   position: absolute;
   left: 50%; top: 50%;
-  width: 18px; height: 18px;
   transform: translate(-50%, -50%);
-  border: 2px solid rgba(255,255,255,0.8);
-  border-radius: 50%;
-  box-shadow: 0 0 16px rgba(123, 163, 255, 0.7);
+  width: 40px; height: 40px;
+  transition: opacity 0.2s;
+}
+.hud__crosshair.dim { opacity: 0.25; }
+
+.ch { position: absolute; background: rgba(232, 238, 255, 0.92); box-shadow: 0 0 6px var(--accent-soft); transition: transform 0.08s ease-out; }
+.ch--t { left: 19px; top: 19px; width: 2px; height: 9px; transform: translateY(calc(-1 * var(--ch-gap) - 100%)); }
+.ch--b { left: 19px; top: 19px; width: 2px; height: 9px; transform: translateY(var(--ch-gap)); }
+.ch--l { top: 19px; left: 19px; width: 9px; height: 2px; transform: translateX(calc(-1 * var(--ch-gap) - 100%)); }
+.ch--r { top: 19px; left: 19px; width: 9px; height: 2px; transform: translateX(var(--ch-gap)); }
+.ch--dot { left: 19px; top: 19px; width: 2px; height: 2px; border-radius: 50%; }
+
+.hud__hitmarker {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 26px; height: 26px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  opacity: 0;
+}
+.hud__hitmarker::before, .hud__hitmarker::after {
+  content: '';
+  position: absolute;
+  background: #fff;
+}
+.hud__hitmarker::before { left: 12px; top: 0; width: 2px; height: 26px; }
+.hud__hitmarker::after { top: 12px; left: 0; width: 26px; height: 2px; }
+.hud__hitmarker.flash { animation: hit 0.18s ease-out; }
+.hud__hitmarker.flash--head::before,
+.hud__hitmarker.flash--head::after { background: #ffd76b; box-shadow: 0 0 8px #ffd76b; }
+.hud__hitmarker.flash--head { animation: hithead 0.26s ease-out; }
+.hud__hitmarker.flash--kill::before,
+.hud__hitmarker.flash--kill::after { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+.hud__hitmarker.flash--kill { animation: hitkill 0.3s ease-out; }
+@keyframes hit {
+  0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.25); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(0.85); }
+}
+@keyframes hithead {
+  0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.7); }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(0.9); }
+}
+@keyframes hitkill {
+  0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.85); }
+  60% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(1); }
 }
 
+/* ---------- Banner ---------- */
+.hud__banner {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+}
+.hud__banner.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.hud__banner-title {
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-shadow: 0 0 24px var(--accent-soft);
+}
+.hud__banner-sub { color: var(--text-dim); letter-spacing: 0.2em; font-size: 13px; margin-top: 4px; }
+
+/* ---------- Top chips ---------- */
+.hud__top {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+.hud__chip {
+  padding: 6px 16px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  border-radius: 6px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+}
+.hud__chip--wave { color: var(--accent); border-color: var(--accent-soft); }
+
+.hud__enemies {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+
+/* ---------- Radar ---------- */
+.hud__radar {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 144px;
+  height: 144px;
+  opacity: 0.92;
+  filter: drop-shadow(0 0 10px rgba(95, 140, 255, 0.25));
+}
+
+/* ---------- Hint bar ---------- */
 .hud__hint {
-  align-self: end;
-  color: rgba(238, 242, 255, 0.8);
-  margin-bottom: 14px;
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 18px;
+  border: 1px solid rgba(255, 200, 90, 0.4);
+  background: rgba(20, 14, 6, 0.72);
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: #ffd98a;
 }
 
-.hud__chat textarea {
-  width: min(540px, 100%);
-  min-height: 92px;
-  resize: none;
+/* ---------- Bottom: health + weapon ---------- */
+.hud__bottom {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.hud__health { width: 300px; }
+.hud__health-label { font-size: 11px; letter-spacing: 0.24em; color: var(--text-dim); margin-bottom: 5px; }
+.hud__health-bar {
+  height: 10px;
+  border: 1px solid var(--line);
+  background: rgba(6, 10, 20, 0.7);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.hud__health-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #38e08c, #7dffb8);
+  transition: width 0.15s ease-out;
+}
+.hud__health-fill.low { background: linear-gradient(90deg, #ff4d5e, #ff8a5e); }
+.hud__health-num { margin-top: 5px; font-size: 26px; font-weight: 700; }
+
+.hud__weapon { text-align: right; }
+.hud__slots { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 8px; }
+.hud__slot {
+  width: 26px; height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.hud__slot.active { border-color: var(--accent); color: #fff; box-shadow: 0 0 10px var(--accent-soft); }
+
+.hud__weapon-name { font-size: 14px; letter-spacing: 0.18em; color: var(--text-dim); }
+.hud__ammo { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.hud__ammo span { font-size: 17px; color: var(--text-dim); font-weight: 400; }
+.hud__ammo.empty { color: var(--danger); animation: blink 0.6s step-end infinite; }
+@keyframes blink { 50% { opacity: 0.45; } }
+
+.hud__reload {
+  margin-top: 6px;
+  height: 4px;
+  width: 180px;
+  margin-left: auto;
+  background: rgba(6, 10, 20, 0.7);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.hud__reload-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+
+/* ---------- Menus ---------- */
+.hud__menu, .hud__pause, .hud__death {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 5, 12, 0.55);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  transition: opacity 0.25s;
+}
+/* visibility removes hidden overlays from tab order + the a11y tree */
+.hud__menu.hidden, .hud__pause.hidden, .hud__death.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s, visibility 0s 0.25s;
+}
+
+.hud__menu-card {
+  text-align: center;
+  padding: 42px 56px;
+  border: 1px solid var(--line);
+  background: var(--panel);
   border-radius: 14px;
-  border: 1px solid rgba(167, 196, 255, 0.2);
-  background: rgba(5, 8, 16, 0.78);
-  color: #eef2ff;
-  padding: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
 }
 
-button,
-input,
-textarea {
+.hud__menu-title {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-shadow: 0 0 30px var(--accent-soft);
+}
+.hud__menu-title--dead { color: var(--danger); text-shadow: 0 0 30px rgba(255, 77, 94, 0.4); }
+.hud__menu-title--pause { font-size: 32px; }
+.hud__menu-sub { color: var(--text-dim); letter-spacing: 0.2em; font-size: 13px; margin-top: 6px; }
+.hud__menu-best { color: var(--accent); letter-spacing: 0.18em; font-size: 12px; margin-top: 12px; }
+
+.hud__menu-keys {
+  margin: 26px 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 28px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.hud__menu-keys b { color: var(--text); font-weight: 600; margin-right: 6px; }
+
+.hud__death-stats {
+  margin: 24px 0;
+  display: grid;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--text-dim);
+}
+.hud__death-stats b { color: var(--text); margin-left: 8px; }
+
+.hud__record {
+  margin-top: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: #ffd76b;
+  text-shadow: 0 0 18px rgba(255, 215, 107, 0.6);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ---------- Settings ---------- */
+.hud__settings {
+  margin: 18px 0 4px;
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+.hud__settings label {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+}
+.hud__settings input[type='range'] {
+  pointer-events: auto;
+  width: 170px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ---------- Buttons ---------- */
+.hud__btn-row { display: flex; gap: 12px; justify-content: center; margin-top: 22px; }
+
+.hud__btn {
+  pointer-events: auto;
   font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: #fff;
+  padding: 13px 44px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(95, 140, 255, 0.35), rgba(95, 140, 255, 0.12));
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.1s;
+}
+.hud__btn:hover { box-shadow: 0 0 24px var(--accent-soft); transform: translateY(-1px); }
+.hud__btn:active { transform: translateY(0); }
+
+.hud__btn--ghost {
+  font-size: 13px;
+  padding: 13px 24px;
+  border-color: var(--line);
+  background: rgba(140, 170, 255, 0.06);
+  color: var(--text-dim);
+}
+.hud__btn--ghost:hover { color: var(--text); box-shadow: 0 0 14px rgba(140, 170, 255, 0.18); }
+
+/* ---------- Reloading state (no innerHTML per frame) ---------- */
+.hud__ammo.reloading b, .hud__ammo.reloading span { display: none; }
+.hud__ammo.reloading::after { content: 'RELOADING'; }
+
+/* ---------- Touch devices ---------- */
+.hud__touch-note {
+  display: none;
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 200, 90, 0.4);
+  background: rgba(20, 14, 6, 0.72);
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: #ffd98a;
+}
+@media (pointer: coarse) {
+  .hud__touch-note { display: block; }
+  .hud__btn[data-start] { display: none; }
+}
+
+/* ---------- Keyboard focus ---------- */
+.hud__btn:focus-visible,
+.hud__settings input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---------- Gameplay HUD hides under full-screen overlays ---------- */
+.hud__top, .hud__enemies, .hud__radar, .hud__bottom, .hud__hint, .hud__banner {
+  transition: opacity 0.2s;
+}
+.hud--overlay .hud__top,
+.hud--overlay .hud__enemies,
+.hud--overlay .hud__radar,
+.hud--overlay .hud__bottom,
+.hud--overlay .hud__hint,
+.hud--overlay .hud__banner { opacity: 0; }
+
+/* ---------- Reduced motion: keep feedback, drop movement ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .hud__vignette.lowhp { animation: none; box-shadow: inset 0 0 130px 26px rgba(255, 40, 60, 0.28); }
+  .hud__ammo.empty { animation: none; }
+  .hud__record { animation: none; }
+  .hud__btn:hover { transform: none; }
+  .hud__banner { transition: none; }
+  @keyframes hit {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes hithead {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes hitkill {
+    0% { opacity: 1; }
+    60% { opacity: 0.9; }
+    100% { opacity: 0; }
+  }
 }
