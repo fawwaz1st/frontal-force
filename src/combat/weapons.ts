@@ -47,7 +47,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   },
 };
 
-export const WEAPON_ORDER: WeaponId[] = ['ar', 'smg', 'shotgun', 'rail'];
+export const WEAPON_ORDER = ['ar', 'smg', 'shotgun', 'rail'] as const satisfies readonly WeaponId[];
 
 export interface WeaponState {
   def: WeaponDef;

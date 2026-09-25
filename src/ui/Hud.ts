@@ -1,35 +1,51 @@
+import { icon, type IconName } from './icons';
+import type { GameMode } from '../core/storage';
+import type { WavePhase } from '../game/Waves';
+
+const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
+  standard: { icon: 'flag', label: 'STANDARD' },
+  blitz: { icon: 'sprint', label: 'BLITZ' },
+  onslaught: { icon: 'skull', label: 'ONSLAUGHT' },
+  rotator: { icon: 'swap', label: 'ROTATION' },
+};
+
 export interface RadarBlip {
   /** Right offset in radar units (-1..1) */
   x: number;
   /** Forward offset in radar units (-1..1) */
   z: number;
   color: number;
+  colorCss: string;
 }
 
 export interface HudState {
   health: number;
   maxHealth: number;
-  weaponName: string;
   mag: number;
   magSize: number;
   reserve: number;
   reloading: boolean;
   reloadProgress: number;
   weaponIndex: number;
-  weaponCount: number;
   wave: number;
   enemiesLeft: number;
-  phase: string;
-  intermission: number;
+  phase: WavePhase;
+  phaseTimer: number;
   score: number;
   kills: number;
   /** 0..1 — drives dynamic crosshair gap */
   spread: number;
   /** False on menu/pause/death screens: suppresses gameplay hints */
   inGame: boolean;
+  /** Escort-bot squad readout */
+  allyActive: boolean;
+  allyCount: number;
+  allyHp: number;
+  allyMax: number;
   /** Reused array of pre-rotated radar blips */
   radar: RadarBlip[];
-  bestScore: number;
+  /** Active entries at the start of `radar` */
+  radarCount: number;
 }
 
 export interface DeathStats {
@@ -38,6 +54,7 @@ export interface DeathStats {
   score: number;
   bestScore: number;
   isNewRecord: boolean;
+  mode: GameMode;
 }
 
 export interface SettingsPatch {
@@ -54,10 +71,11 @@ export class Hud {
   public onResume: (() => void) | null = null;
   public onQuit: (() => void) | null = null;
   public onSettings: ((patch: SettingsPatch) => void) | null = null;
+  public onMode: ((mode: GameMode) => void) | null = null;
 
   private readonly healthFill: HTMLElement;
+  private readonly healthHead: HTMLElement;
   private readonly healthText: HTMLElement;
-  private readonly weaponName: HTMLElement;
   private readonly ammoEl: HTMLElement;
   private readonly ammoMag: HTMLElement;
   private readonly ammoResv: HTMLElement;
@@ -67,10 +85,13 @@ export class Hud {
   private readonly bannerTitle: HTMLElement;
   private readonly bannerSub: HTMLElement;
   private readonly waveText: HTMLElement;
-  private readonly enemiesText: HTMLElement;
   private readonly scoreText: HTMLElement;
-  private readonly bestText: HTMLElement;
   private readonly killsText: HTMLElement;
+  private readonly enHostiles: HTMLElement;
+  private readonly enTimer: HTMLElement;
+  private readonly enClear: HTMLElement;
+  private readonly enemiesN: HTMLElement;
+  private readonly timerN: HTMLElement;
   private readonly crosshair: HTMLElement;
   private readonly hitmarker: HTMLElement;
   private readonly vignette: HTMLElement;
@@ -85,8 +106,34 @@ export class Hud {
   private readonly damageDirs: HTMLElement[] = [];
   private readonly sensInputs: HTMLInputElement[] = [];
   private readonly volInputs: HTMLInputElement[] = [];
+  private readonly modeChips: HTMLButtonElement[] = [];
+  private readonly pauseModeEl: HTMLElement;
+  private readonly allyEl: HTMLElement;
+  private readonly allyFill: HTMLElement;
+  private readonly allyN: HTMLElement;
+  private lastAllyN = -1;
+  private readonly pops: HTMLElement[] = [];
+  private popCursor = 0;
   private bannerTimer = 0;
   private dmgCursor = 0;
+  private radarVisible = false;
+  private readonly txtCache = new Map<string, string>();
+
+  /** Cached DOM write — skips entirely when the value is unchanged (hot path: 60 fps). */
+  private setText(key: string, el: HTMLElement, v: string): void {
+    if (this.txtCache.get(key) !== v) {
+      this.txtCache.set(key, v);
+      el.textContent = v;
+    }
+  }
+
+  private setStyle(key: string, el: HTMLElement, prop: string, v: string): void {
+    const k = `s:${key}`;
+    if (this.txtCache.get(k) !== v) {
+      this.txtCache.set(k, v);
+      el.style.setProperty(prop, v);
+    }
+  }
 
   public constructor() {
     this.root = document.createElement('div');
@@ -100,73 +147,84 @@ export class Hud {
         <span class="ch ch--dot"></span>
       </div>
       <div class="hud__hitmarker" data-hitmarker></div>
+      <div class="hud__pops" data-pops></div>
       <div class="hud__banner" data-banner>
         <div class="hud__banner-title" data-banner-title>WAVE 1</div>
         <div class="hud__banner-sub" data-banner-sub></div>
       </div>
       <div class="hud__top">
-        <div class="hud__chip" data-score>SCORE 0</div>
-        <div class="hud__chip" data-best>BEST 0</div>
-        <div class="hud__chip hud__chip--wave" data-wave>WAVE 1</div>
-        <div class="hud__chip" data-kills>KILLS 0</div>
+        <div class="hud__chip" data-score>${icon('score')}<b data-score-n>0</b></div>
+        <div class="hud__chip hud__chip--wave" data-wave>${icon('flag')}<b data-wave-n>1</b></div>
+        <div class="hud__chip" data-kills>${icon('skull')}<b data-kills-n>0</b></div>
       </div>
-      <div class="hud__enemies" data-enemies></div>
+      <div class="hud__enemies" data-enemies>
+        <span data-en-hostiles>${icon('target')}<b data-enemies-n>0</b></span>
+        <span data-en-timer hidden>${icon('clock')}<b data-timer-n>0</b></span>
+        <span data-en-clear hidden>${icon('check')}</span>
+      </div>
       <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}"></canvas>
       <div class="hud__hint" data-hint hidden></div>
       <div class="hud__bottom">
         <div class="hud__health">
-          <div class="hud__health-label">INTEGRITY</div>
+          <div class="hud__health-head">${icon('shield', 'hud__health-ic')}<span class="hud__health-num" data-health>100</span></div>
           <div class="hud__health-bar"><div class="hud__health-fill" data-health-fill></div></div>
-          <div class="hud__health-num" data-health>100</div>
+          <div class="hud__ally" data-ally hidden>
+            ${icon('bot')}
+            <b class="hud__ally-n" data-ally-n></b>
+            <div class="hud__ally-bar"><i data-ally-fill></i></div>
+          </div>
         </div>
         <div class="hud__weapon">
           <div class="hud__slots" data-slots></div>
-          <div class="hud__weapon-name" data-weapon-name>Vanguard AR</div>
-          <div class="hud__ammo" data-ammo><b data-mag>30</b> <span data-resv>/ 150</span></div>
+          <div class="hud__ammo" data-ammo>
+            ${icon('bullet', 'hud__ammo-ic')}
+            <b data-mag>30</b> <span data-resv>/ 150</span>
+            <span class="hud__reload-spin" data-reload-spin>${icon('reload')}</span>
+          </div>
           <div class="hud__reload"><div class="hud__reload-fill" data-reload></div></div>
         </div>
       </div>
       <div class="hud__menu" data-menu>
         <div class="hud__menu-card">
           <div class="hud__menu-title">FRONTAL FORCE</div>
-          <div class="hud__menu-sub">Wave survival arena</div>
           <div class="hud__menu-best" data-menu-best></div>
           <div class="hud__touch-note">Requires mouse &amp; keyboard — desktop only</div>
-          <div class="hud__menu-keys">
-            <div><b>WASD</b> move</div><div><b>Mouse</b> aim</div>
-            <div><b>LMB</b> fire</div><div><b>Space</b> jump</div>
-            <div><b>Shift</b> sprint</div><div><b>C / Ctrl</b> crouch &amp; slide</div>
-            <div><b>R</b> reload</div><div><b>1-4 / wheel</b> weapons</div>
-            <div><b>Esc</b> pause</div><div><b>Headshots</b> 2× damage</div>
+          <div class="hud__modes" role="group" aria-label="Game mode">
+            <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves">${icon('flag')}<span>STANDARD</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="blitz" title="Shorter breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="onslaught" title="Heavy waves from wave 2, ×1.75 score">${icon('skull')}<span>ONSLAUGHT</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="rotator" title="Weapon swaps every kill, ×1.5 score">${icon('swap')}<span>ROTATION</span></button>
           </div>
+          <div class="hud__keys" data-keys></div>
           <div class="hud__settings">
-            <label>SENSITIVITY <input type="range" min="0.2" max="3" step="0.05" data-sens></label>
-            <label>VOLUME <input type="range" min="0" max="1" step="0.05" data-vol></label>
+            <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
+            <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
           </div>
-          <button class="hud__btn" data-start>DEPLOY</button>
+          <button class="hud__btn" data-start>${icon('play')}<span>DEPLOY</span></button>
         </div>
       </div>
       <div class="hud__pause hidden" data-pause>
         <div class="hud__menu-card">
-          <div class="hud__menu-title hud__menu-title--pause">PAUSED</div>
+          <div class="hud__menu-title hud__menu-title--pause">${icon('pause')}<span>PAUSED</span></div>
+          <div class="hud__pause-mode" data-pause-mode></div>
           <div class="hud__settings">
-            <label>SENSITIVITY <input type="range" min="0.2" max="3" step="0.05" data-sens></label>
-            <label>VOLUME <input type="range" min="0" max="1" step="0.05" data-vol></label>
+            <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
+            <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
           </div>
           <div class="hud__btn-row">
-            <button class="hud__btn" data-resume>RESUME</button>
-            <button class="hud__btn hud__btn--ghost" data-quit>ABANDON RUN</button>
+            <button class="hud__btn" data-resume>${icon('play')}<span>RESUME</span></button>
+            <button class="hud__btn hud__btn--ghost" data-quit>${icon('exit')}<span>ABANDON RUN</span></button>
           </div>
         </div>
       </div>
       <div class="hud__death hidden" data-death>
         <div class="hud__menu-card">
           <div class="hud__menu-title hud__menu-title--dead">K.I.A.</div>
-          <div class="hud__record" data-record hidden>NEW RECORD</div>
+          <div class="hud__record" data-record hidden>${icon('trophy')}<span>NEW RECORD</span></div>
           <div class="hud__death-stats" data-death-stats></div>
           <div class="hud__btn-row">
-            <button class="hud__btn" data-restart>REDEPLOY</button>
-            <button class="hud__btn hud__btn--ghost" data-to-menu>MAIN MENU</button>
+            <button class="hud__btn" data-restart>${icon('reload')}<span>REDEPLOY</span></button>
+            <button class="hud__btn hud__btn--ghost" data-to-menu>${icon('grid')}<span>MAIN MENU</span></button>
           </div>
         </div>
       </div>
@@ -181,8 +239,8 @@ export class Hud {
       Array.from(this.root.querySelectorAll<T>(sel));
 
     this.healthFill = q('[data-health-fill]');
+    this.healthHead = q('.hud__health-head');
     this.healthText = q('[data-health]');
-    this.weaponName = q('[data-weapon-name]');
     this.ammoEl = q('[data-ammo]');
     this.ammoMag = q('[data-mag]');
     this.ammoResv = q('[data-resv]');
@@ -190,11 +248,9 @@ export class Hud {
     this.waveBanner = q('[data-banner]');
     this.bannerTitle = q('[data-banner-title]');
     this.bannerSub = q('[data-banner-sub]');
-    this.waveText = q('[data-wave]');
-    this.enemiesText = q('[data-enemies]');
-    this.scoreText = q('[data-score]');
-    this.bestText = q('[data-best]');
-    this.killsText = q('[data-kills]');
+    this.waveText = q('[data-wave-n]');
+    this.scoreText = q('[data-score-n]');
+    this.killsText = q('[data-kills-n]');
     this.crosshair = q('[data-crosshair]');
     this.hitmarker = q('[data-hitmarker]');
     this.vignette = q('[data-vignette]');
@@ -205,13 +261,39 @@ export class Hud {
     this.deathStats = q('[data-death-stats]');
     this.menuBest = q('[data-menu-best]');
     this.recordEl = q('[data-record]');
+    this.pauseModeEl = q('[data-pause-mode]');
+    this.allyEl = q('[data-ally]');
+    this.allyFill = q('[data-ally-fill]');
+    this.allyN = q('[data-ally-n]');
     this.radarCtx = q<HTMLCanvasElement>('[data-radar]').getContext('2d');
 
+    this.buildKeys(q('[data-keys]'));
+    const popsEl = q('[data-pops]');
+    for (let i = 0; i < 6; i++) {
+      const pop = document.createElement('div');
+      pop.className = 'hud__pop';
+      popsEl.appendChild(pop);
+      this.pops.push(pop);
+    }
+    this.modeChips.push(...qa<HTMLButtonElement>('[data-mode]'));
+    for (const chip of this.modeChips) {
+      chip.addEventListener('click', () => {
+        const m = chip.dataset.mode as GameMode | undefined;
+        if (m && Object.hasOwn(MODE_META, m)) this.onMode?.(m);
+      });
+    }
+    this.enHostiles = q('[data-en-hostiles]');
+    this.enTimer = q('[data-en-timer]');
+    this.enClear = q('[data-en-clear]');
+    this.enemiesN = q('[data-enemies-n]');
+    this.timerN = q('[data-timer-n]');
+
     const slotsEl = q('[data-slots]');
+    const slotIcons: IconName[] = ['rifle', 'smg', 'shotgun', 'railgun'];
     for (let i = 0; i < 4; i++) {
       const slot = document.createElement('div');
       slot.className = 'hud__slot';
-      slot.textContent = String(i + 1);
+      slot.innerHTML = icon(slotIcons[i] ?? 'rifle');
       slotsEl.appendChild(slot);
       this.slots.push(slot);
     }
@@ -244,42 +326,65 @@ export class Hud {
 
   public update(dt: number, s: HudState): void {
     const hpPct = Math.max(0, s.health / s.maxHealth) * 100;
-    this.healthFill.style.width = `${hpPct}%`;
+    this.setStyle('hpw', this.healthFill, 'width', `${hpPct}%`);
     this.healthFill.classList.toggle('low', hpPct <= 30);
-    this.healthText.textContent = String(Math.ceil(s.health));
+    this.healthHead.classList.toggle('low', hpPct <= 30);
+    this.setText('hp', this.healthText, String(Math.ceil(s.health)));
     this.vignette.classList.toggle('lowhp', hpPct <= 30 && hpPct > 0);
 
-    this.weaponName.textContent = s.weaponName;
     this.ammoEl.classList.toggle('reloading', s.reloading);
     this.ammoEl.classList.toggle('empty', !s.reloading && s.mag === 0);
     if (!s.reloading) {
-      this.ammoMag.textContent = String(s.mag);
-      this.ammoResv.textContent = `/ ${s.reserve}`;
+      this.setText('mag', this.ammoMag, String(s.mag));
+      this.setText('resv', this.ammoResv, `/ ${s.reserve}`);
     }
-    this.reloadBar.style.transform = `scaleX(${s.reloading ? s.reloadProgress : 0})`;
+    this.setStyle(
+      'rlx',
+      this.reloadBar,
+      'transform',
+      `scaleX(${s.reloading ? s.reloadProgress : 0})`,
+    );
 
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
       if (slot) slot.classList.toggle('active', i === s.weaponIndex);
     }
 
-    this.waveText.textContent = `WAVE ${s.wave}`;
-    this.scoreText.textContent = `SCORE ${s.score}`;
-    this.bestText.textContent = `BEST ${s.bestScore}`;
-    this.killsText.textContent = `KILLS ${s.kills}`;
-    this.enemiesText.textContent =
-      s.phase === 'combat' || s.phase === 'spawning'
-        ? `${s.enemiesLeft} HOSTILES`
-        : s.phase === 'intermission'
-          ? `NEXT WAVE IN ${Math.ceil(s.intermission)}`
-          : 'AREA CLEAR';
+    this.setText('wave', this.waveText, String(s.wave));
+    this.setText('score', this.scoreText, String(s.score));
+    this.setText('kills', this.killsText, String(s.kills));
+
+    this.allyEl.hidden = !s.allyActive;
+    if (s.allyActive) {
+      const pct = Math.max(0, Math.min(100, (s.allyHp / Math.max(1, s.allyMax)) * 100));
+      this.setStyle('allyw', this.allyFill, 'width', `${pct}%`);
+      if (this.lastAllyN !== s.allyCount) {
+        this.lastAllyN = s.allyCount;
+        this.allyN.textContent = s.allyCount > 0 ? `×${s.allyCount}` : '';
+      }
+    }
+
+    // Status line: hostiles count / next-wave timer / area clear — icon states
+    const combat = s.phase === 'combat' || s.phase === 'spawning';
+    const inter = s.phase === 'intermission';
+    this.enHostiles.hidden = !combat;
+    this.enTimer.hidden = !inter;
+    this.enClear.hidden = combat || inter;
+    if (combat) this.setText('enemiesN', this.enemiesN, String(s.enemiesLeft));
+    if (inter) this.setText('timerN', this.timerN, String(Math.max(0, Math.ceil(s.phaseTimer))));
 
     this.updateHint(s);
-    this.drawRadar(s);
+    if (s.inGame) {
+      this.drawRadar(s);
+      this.radarVisible = true;
+    } else if (this.radarVisible) {
+      this.radarCtx?.clearRect(0, 0, RADAR_SIZE, RADAR_SIZE);
+      this.radarVisible = false;
+    }
 
     // Dynamic crosshair spread
     const gap = 4 + s.spread * 14;
-    this.crosshair.style.setProperty('--ch-gap', `${gap.toFixed(1)}px`);
+    this.setStyle('chgap', this.crosshair, '--ch-gap', `${gap.toFixed(1)}px`);
 
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
@@ -292,17 +397,60 @@ export class Hud {
       this.hint.hidden = true;
       return;
     }
-    let text = '';
-    if (s.phase === 'intermission') text = 'Resupply — pickups are respawning';
-    else if (s.mag === 0 && s.reserve > 0) text = 'MAG EMPTY — press R';
-    else if (s.mag / Math.max(1, s.magSize) <= 0.25) text = 'LOW AMMO — R to reload';
-    else if (s.health / s.maxHealth <= 0.3) text = 'INTEGRITY CRITICAL — find health';
-    if (text) {
-      this.hint.textContent = text;
+    let html = '';
+    let tone = '';
+    if (s.mag === 0 && s.reserve === 0) {
+      html = `${icon('bullet')}`; // dry — no R prompt, reload would be rejected
+      tone = 'hud__hint--warn';
+    } else if (s.mag === 0 && s.reserve > 0) {
+      html = `${icon('reload')}<kbd>R</kbd>`;
+      tone = 'hud__hint--warn';
+    } else if (s.reserve > 0 && s.mag / Math.max(1, s.magSize) <= 0.25) {
+      html = `${icon('bullet')}<kbd>R</kbd>`;
+      tone = 'hud__hint--warn';
+    } else if (s.health / s.maxHealth <= 0.3) {
+      html = `${icon('shield')}`;
+      tone = 'hud__hint--danger';
+    } else if (s.phase === 'intermission') {
+      html = `${icon('crate')}`;
+      tone = '';
+    }
+    if (html) {
+      if (this.hint.dataset.sig !== html) {
+        this.hint.innerHTML = html;
+        this.hint.dataset.sig = html;
+      }
+      const className = `hud__hint ${tone}`.trim();
+      if (this.hint.className !== className) this.hint.className = className;
       this.hint.hidden = false;
     } else {
       this.hint.hidden = true;
     }
+  }
+
+  /** Keycap-glyph control diagram — one row per action, no prose (Kenney/IxDF). */
+  private buildKeys(container: HTMLElement): void {
+    const cap = (label: string): string => `<kbd>${label}</kbd>`;
+    const rows: Array<[IconName, string, string]> = [
+      ['move', `${cap('W')}${cap('A')}${cap('S')}${cap('D')}`, 'Move'],
+      ['mouse', `${cap('LMB')}`, 'Fire'],
+      ['crosshair', `${cap('MOUSE')}`, 'Aim'],
+      ['jump', `${cap('SPACE')}`, 'Jump'],
+      ['sprint', `${cap('SHIFT')}`, 'Sprint'],
+      ['crouch', `${cap('C')}`, 'Crouch & slide'],
+      ['reload', `${cap('R')}`, 'Reload'],
+      ['swap', `${cap('1')}–${cap('4')}`, 'Switch weapon'],
+      ['pause', `${cap('ESC')}`, 'Pause'],
+      ['target', `${cap('×2')}`, 'Headshot damage'],
+    ];
+    container.innerHTML = rows
+      .map(
+        ([ic, keys, label]) =>
+          `<div class="hud__key" title="${label}">${icon(ic)}` +
+          `<span class="hud__key-caps">${keys}</span>` +
+          `<span class="sr-only">${label}</span></div>`,
+      )
+      .join('');
   }
 
   private drawRadar(s: HudState): void {
@@ -315,12 +463,12 @@ export class Hud {
     ctx.translate(r, r);
 
     // Grid rings + sweep wedge
-    ctx.strokeStyle = 'rgba(140, 170, 255, 0.3)';
+    ctx.strokeStyle = 'rgba(222, 210, 170, 0.35)';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(0, 0, r - 2, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(140, 170, 255, 0.14)';
+    ctx.strokeStyle = 'rgba(222, 210, 170, 0.15)';
     ctx.beginPath(); ctx.arc(0, 0, (r - 2) * 0.5, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = 'rgba(95, 140, 255, 0.12)';
+    ctx.fillStyle = 'rgba(255, 159, 28, 0.16)';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, r - 2, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55);
@@ -328,15 +476,17 @@ export class Hud {
     ctx.fill();
 
     // Player marker
-    ctx.fillStyle = 'rgba(232, 238, 255, 0.95)';
+    ctx.fillStyle = 'rgba(236, 231, 216, 0.95)';
     ctx.beginPath();
     ctx.moveTo(0, -4); ctx.lineTo(3, 3); ctx.lineTo(0, 1.4); ctx.lineTo(-3, 3);
     ctx.closePath(); ctx.fill();
 
-    for (const blip of s.radar) {
+    for (let i = 0; i < s.radarCount; i++) {
+      const blip = s.radar[i];
+      if (!blip) continue;
       const px = blip.x * (r - 7);
       const py = -blip.z * (r - 7);
-      ctx.fillStyle = `#${blip.color.toString(16).padStart(6, '0')}`;
+      ctx.fillStyle = blip.colorCss;
       ctx.beginPath();
       ctx.arc(px, py, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -347,6 +497,7 @@ export class Hud {
   public showBanner(title: string, sub: string): void {
     this.bannerTitle.textContent = title;
     this.bannerSub.textContent = sub;
+    this.bannerSub.hidden = !sub;
     this.waveBanner.classList.add('show');
     this.bannerTimer = 2.4;
   }
@@ -385,6 +536,21 @@ export class Hud {
     this.syncOverlay();
   }
 
+  public showFatal(message: string): void {
+    this.menu.classList.remove('hidden');
+    const card = this.menu.querySelector('.hud__menu-card');
+    if (!card) return;
+    card.replaceChildren();
+    const title = document.createElement('div');
+    title.className = 'hud__menu-title';
+    title.textContent = 'RENDERER OFFLINE';
+    const detail = document.createElement('p');
+    detail.className = 'hud__fatal';
+    detail.textContent = message;
+    card.append(title, detail);
+    this.syncOverlay();
+  }
+
   public showPause(visible: boolean): void {
     this.pause.classList.toggle('hidden', !visible);
     this.syncOverlay();
@@ -393,11 +559,16 @@ export class Hud {
   public showDeath(visible: boolean, stats?: DeathStats): void {
     this.death.classList.toggle('hidden', !visible);
     if (stats) {
+      const row = (ic: IconName, label: string, value: number | string): string =>
+        `<div title="${label}">${icon(ic)}<span>${value}</span>` +
+        `<span class="sr-only">${label}</span></div>`;
+      const meta = MODE_META[stats.mode];
       this.deathStats.innerHTML =
-        `<div>Wave reached <b>${stats.wave}</b></div>` +
-        `<div>Kills <b>${stats.kills}</b></div>` +
-        `<div>Score <b>${stats.score}</b></div>` +
-        `<div>Best <b>${stats.bestScore}</b></div>`;
+        (meta ? row(meta.icon, 'Mode', meta.label) : '') +
+        row('flag', 'Waves survived', stats.wave) +
+        row('skull', 'Kills', stats.kills) +
+        row('score', 'Score', stats.score) +
+        row('trophy', 'Best', stats.bestScore);
       this.recordEl.hidden = !stats.isNewRecord;
     }
     this.syncOverlay();
@@ -410,11 +581,37 @@ export class Hud {
       !this.pause.classList.contains('hidden') ||
       !this.death.classList.contains('hidden');
     this.root.classList.toggle('hud--overlay', open);
+    this.menu.inert = this.menu.classList.contains('hidden');
+    this.pause.inert = this.pause.classList.contains('hidden');
+    this.death.inert = this.death.classList.contains('hidden');
   }
 
   public setMenuBest(score: number, wave: number): void {
-    this.menuBest.textContent =
-      score > 0 ? `BEST — ${score} PTS · WAVE ${wave}` : 'NO RUNS YET — DEPLOY TO SET A RECORD';
+    this.menuBest.innerHTML =
+      score > 0
+        ? `${icon('trophy')}<span>${score} · WAVE ${wave}</span>`
+        : `${icon('trophy')}<span>NO RECORD</span>`;
+  }
+
+  /** Reflect the selected mode on menu chips + the pause-card readout. */
+  public syncMode(mode: GameMode): void {
+    for (const chip of this.modeChips) {
+      chip.classList.toggle('active', chip.dataset.mode === mode);
+    }
+    const m = MODE_META[mode];
+    if (m) this.pauseModeEl.innerHTML = `${icon(m.icon)}<span>${m.label}</span>`;
+  }
+
+  /** Floating +points at the crosshair on a kill — number only, fades up. */
+  public popScore(amount: number): void {
+    const el = this.pops[this.popCursor];
+    this.popCursor = (this.popCursor + 1) % this.pops.length;
+    if (!el) return;
+    el.textContent = `+${amount}`;
+    el.style.setProperty('--pop-x', `${Math.round(Math.random() * 44 - 22)}px`);
+    el.classList.remove('show');
+    void el.offsetWidth; // restart animation
+    el.classList.add('show');
   }
 
   public syncSettings(sensitivity: number, volume: number): void {

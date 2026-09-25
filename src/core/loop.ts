@@ -11,7 +11,7 @@ export class GameLoop {
 
   public constructor(
     private readonly update: (dt: number) => void,
-    private readonly render: () => void,
+    private readonly render: (frameDt: number) => void,
   ) {}
 
   public start(): void {
@@ -39,7 +39,7 @@ export class GameLoop {
       steps += 1;
     }
     if (this.acc > STEP) this.acc = 0; // drop backlog instead of spiraling
-    this.render();
+    this.render(frameTime);
     this.rafId = requestAnimationFrame(this.frame);
   };
 }

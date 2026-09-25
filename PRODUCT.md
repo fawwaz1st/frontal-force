@@ -19,6 +19,7 @@ Gritty, dark, military. The interface reads like a combat visor's readout: funct
 ## Anti-references
 
 - Generic AI-generated UI: default palettes, decorative glassmorphism, gradient text, hero-metric cards, section eyebrows.
+- The retired navy-neon "gamer HUD" (2026-09): blue-on-blue glowing glass chips, backdrop blur, rounded cards, cobalt-on-navy everything. Replaced by the stencil-crate system (amber signal / khaki / bone / chamfers).
 - Playful/casual arcade aesthetics (bouncy easing, cartoon colors, cheerfully exclamation-marked copy).
 - Over-decorated "gamer" chrome (angular everything, gratuitous scanlines and glow on every element).
 

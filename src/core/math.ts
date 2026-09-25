@@ -1,7 +1,7 @@
 export const clamp = (v: number, min: number, max: number): number =>
   v < min ? min : v > max ? max : v;
 
-export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 /** Frame-rate independent exponential smoothing. */
 export const damp = (current: number, target: number, lambda: number, dt: number): number =>

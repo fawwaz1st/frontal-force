@@ -1,3 +1,5 @@
+import { clamp } from '../core/math';
+
 export interface InputFrame {
   moveX: number;
   moveZ: number;
@@ -5,12 +7,13 @@ export interface InputFrame {
   lookY: number;
   fireHeld: boolean;
   firePressed: boolean;
-  jumpHeld: boolean;
+  aimHeld: boolean;
+  jumpPressed: boolean;
   sprintHeld: boolean;
   crouchHeld: boolean;
   reloadPressed: boolean;
   slotPressed: number;
-  cycleWeapon: number;
+  wheelSteps: number;
   locked: boolean;
 }
 
@@ -18,23 +21,29 @@ export class Input {
   public onLockChange: ((locked: boolean) => void) | null = null;
   /** Fired on Esc/P keypress (native Esc also releases pointer lock separately). */
   public onPauseKey: (() => void) | null = null;
+  public onFocusLost: (() => void) | null = null;
 
   private readonly keys = new Set<string>();
   private lookX = 0;
   private lookY = 0;
   private fireHeld = false;
   private firePressed = false;
+  private jumpPressed = false;
+  private aimHeld = false;
   private reloadPressed = false;
   private slotPressed = 0;
-  private cycleWeapon = 0;
+  private wheelSteps = 0;
   private locked = false;
   private target: HTMLElement | null = null;
+  private attached = false;
 
   public get lockedNow(): boolean {
     return this.locked;
   }
 
   public attach(target: HTMLElement): void {
+    if (this.attached) return;
+    this.attached = true;
     this.target = target;
     document.addEventListener('keydown', this.onKeyDown);
     document.addEventListener('keyup', this.onKeyUp);
@@ -43,10 +52,15 @@ export class Input {
     document.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('wheel', this.onWheel, { passive: true });
     document.addEventListener('pointerlockchange', this.onLockChangeNative);
+    // RMB is ADS now — keep the context menu off the canvas
+    target.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('blur', this.onBlur);
   }
 
   public detach(): void {
+    if (!this.attached) return;
+    this.attached = false;
+    this.resetTransient();
     document.removeEventListener('keydown', this.onKeyDown);
     document.removeEventListener('keyup', this.onKeyUp);
     document.removeEventListener('mousemove', this.onMouseMove);
@@ -54,7 +68,23 @@ export class Input {
     document.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('pointerlockchange', this.onLockChangeNative);
+    this.target?.removeEventListener('contextmenu', this.onContextMenu);
+    this.target = null;
     window.removeEventListener('blur', this.onBlur);
+  }
+
+  /** Clear held and one-frame state after blur, lock loss, pause, or teardown. */
+  public resetTransient(): void {
+    this.keys.clear();
+    this.lookX = 0;
+    this.lookY = 0;
+    this.fireHeld = false;
+    this.firePressed = false;
+    this.jumpPressed = false;
+    this.aimHeld = false;
+    this.reloadPressed = false;
+    this.slotPressed = 0;
+    this.wheelSteps = 0;
   }
 
   /** Must be called from inside a user gesture (click/keydown). */
@@ -65,7 +95,17 @@ export class Input {
         requestPointerLock: (options?: { unadjustedMovement?: boolean }) => Promise<void> | void;
       };
       const result = el.requestPointerLock({ unadjustedMovement: true });
-      if (result instanceof Promise) result.catch(() => undefined);
+      if (result instanceof Promise) {
+        result.catch(() => {
+          if (this.locked || !this.target) return;
+          try {
+            const fallback = this.target.requestPointerLock();
+            if (fallback instanceof Promise) fallback.catch(() => undefined);
+          } catch {
+            /* pointer lock unsupported */
+          }
+        });
+      }
     } catch {
       try {
         this.target.requestPointerLock();
@@ -84,20 +124,22 @@ export class Input {
       lookY: this.lookY,
       fireHeld: this.fireHeld,
       firePressed: this.firePressed,
-      jumpHeld: this.keys.has('Space'),
+      aimHeld: this.aimHeld,
+      jumpPressed: this.jumpPressed,
       sprintHeld: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
       crouchHeld: this.keys.has('ControlLeft') || this.keys.has('KeyC'),
       reloadPressed: this.reloadPressed,
       slotPressed: this.slotPressed,
-      cycleWeapon: this.cycleWeapon,
+      wheelSteps: this.wheelSteps,
       locked: this.locked,
     };
     this.lookX = 0;
     this.lookY = 0;
     this.firePressed = false;
+    this.jumpPressed = false;
     this.reloadPressed = false;
     this.slotPressed = 0;
-    this.cycleWeapon = 0;
+    this.wheelSteps = 0;
     return frame;
   }
 
@@ -107,6 +149,7 @@ export class Input {
     // (Tab order, Space to activate buttons).
     if (this.locked && (e.code === 'Space' || e.code === 'Tab')) e.preventDefault();
     this.keys.add(e.code);
+    if (e.code === 'Space') this.jumpPressed = true;
     if (e.code === 'KeyR') this.reloadPressed = true;
     if (e.code === 'Escape' || e.code === 'KeyP') this.onPauseKey?.();
     if (e.code.startsWith('Digit')) {
@@ -126,31 +169,37 @@ export class Input {
   };
 
   private onMouseDown = (e: MouseEvent): void => {
-    if (!this.locked || e.button !== 0) return;
-    this.fireHeld = true;
-    this.firePressed = true;
+    if (!this.locked || (e.button !== 0 && e.button !== 2)) return;
+    if (e.button === 0) {
+      this.fireHeld = true;
+      this.firePressed = true;
+    } else {
+      this.aimHeld = true;
+    }
   };
 
   private onMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.fireHeld = false;
+    else if (e.button === 2) this.aimHeld = false;
   };
 
   private onWheel = (e: WheelEvent): void => {
-    if (!this.locked) return;
-    this.cycleWeapon += e.deltaY > 0 ? 1 : -1;
+    if (!this.locked || e.deltaY === 0) return;
+    this.wheelSteps = clamp(this.wheelSteps + Math.sign(e.deltaY), -8, 8);
   };
 
   private onLockChangeNative = (): void => {
     this.locked = document.pointerLockElement === this.target;
-    if (!this.locked) {
-      this.keys.clear();
-      this.fireHeld = false;
-    }
+    if (!this.locked) this.resetTransient();
     this.onLockChange?.(this.locked);
   };
 
   private onBlur = (): void => {
-    this.keys.clear();
-    this.fireHeld = false;
+    this.resetTransient();
+    this.onFocusLost?.();
+  };
+
+  private onContextMenu = (e: Event): void => {
+    e.preventDefault();
   };
 }
