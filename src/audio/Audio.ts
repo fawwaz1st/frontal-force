@@ -161,22 +161,26 @@ export class GameAudio {
   }
 
   public shot(kind: ShotSound): void {
+    // Per-shot jitter keeps repeated fire from sounding like one frozen sample:
+    // ±6% pitch and ±10% level on every trigger pull.
+    const jitter = 1 + (Math.random() - 0.5) * 0.12;
+    const level = 0.9 + Math.random() * 0.2;
     switch (kind) {
       case 'ar':
-        this.noise({ dur: 0.09, freq: 1800, type: 'highpass', gain: 0.5 });
-        this.tone({ freq: 220, end: 60, dur: 0.08, type: 'triangle', gain: 0.3 });
+        this.noise({ dur: 0.09, freq: 1800 * jitter, type: 'highpass', gain: 0.5 * level });
+        this.tone({ freq: 220 * jitter, end: 60, dur: 0.08, type: 'triangle', gain: 0.3 * level });
         break;
       case 'smg':
-        this.noise({ dur: 0.06, freq: 2400, type: 'highpass', gain: 0.34 });
-        this.tone({ freq: 320, end: 90, dur: 0.05, type: 'triangle', gain: 0.2 });
+        this.noise({ dur: 0.06, freq: 2400 * jitter, type: 'highpass', gain: 0.34 * level });
+        this.tone({ freq: 320 * jitter, end: 90, dur: 0.05, type: 'triangle', gain: 0.2 * level });
         break;
       case 'shotgun':
-        this.noise({ dur: 0.24, freq: 900, type: 'lowpass', gain: 0.7 });
-        this.tone({ freq: 140, end: 40, dur: 0.18, type: 'sine', gain: 0.5 });
+        this.noise({ dur: 0.24, freq: 900 * jitter, type: 'lowpass', gain: 0.7 * level });
+        this.tone({ freq: 140 * jitter, end: 40, dur: 0.18, type: 'sine', gain: 0.5 * level });
         break;
       case 'rail':
-        this.tone({ freq: 1200, end: 80, dur: 0.3, type: 'sawtooth', gain: 0.32 });
-        this.noise({ dur: 0.16, freq: 3000, type: 'highpass', gain: 0.3 });
+        this.tone({ freq: 1200 * jitter, end: 80, dur: 0.3, type: 'sawtooth', gain: 0.32 * level });
+        this.noise({ dur: 0.16, freq: 3000 * jitter, type: 'highpass', gain: 0.3 * level });
         break;
     }
   }

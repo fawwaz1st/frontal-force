@@ -140,6 +140,7 @@ export class World {
     this.octree.clear();
     this.group.updateMatrixWorld(true);
     this.octree.fromGraphNode(this.group);
+    if (this.sunLight) this.sunLight.shadow.needsUpdate = true;
   }
 
   public update(dt: number): void {
@@ -584,6 +585,10 @@ private buildRangeDetails(): void {
     this.sunLight.shadow.camera.near = 1;
     this.sunLight.shadow.camera.far = 130;
     this.sunLight.shadow.bias = -0.00035;
+    // Sun is static: bake the shadow map once instead of re-rendering all
+    // casters every frame; rebuild() re-arms it after cover geometry changes.
+    this.sunLight.shadow.autoUpdate = false;
+    this.sunLight.shadow.needsUpdate = true;
     this.sunLight.target.position.set(0, 0, 0);
     scene.add(this.sunLight, this.sunLight.target);
 

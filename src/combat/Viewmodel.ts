@@ -343,8 +343,10 @@ export class Viewmodel {
   }
 
   private accentMat(color: number): THREE.MeshStandardMaterial {
+    // ei 1.6 clipped to white under the 2.2 ACES exposure — even 0.6 still
+    // reaches ~1.0 after exposure, so keep it low enough to stay saturated.
     return new THREE.MeshStandardMaterial({
-      color: 0x0a0f1c, emissive: color, emissiveIntensity: 1.6, roughness: 0.4,
+      color: 0x0a0f1c, emissive: color, emissiveIntensity: 0.25, roughness: 0.4,
     });
   }
 
