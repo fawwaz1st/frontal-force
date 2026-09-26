@@ -52,6 +52,8 @@ export interface Enemy {
   collider: Capsule;
   attackTimer: number;
   strafeSeed: number;
+  /** Cooldown for the blind-search objective refresh. */
+  searchSyncT: number;
   tacticalId: number;
   state: 'advance' | 'cover' | 'peek' | 'search' | 'flank' | 'suppress';
   lastKnown: THREE.Vector3;
@@ -86,6 +88,8 @@ const CORPSE_LIFE = 6;
 const FLOOR_Y = 0;
 const BODY_EMISSIVE = 0.26;
 const ATTACK_WINDUP = 0.35;
+/** Blind agents re-orient lastKnown toward the objective at this cadence. */
+const SEARCH_SYNC_INTERVAL = 3;
 const PERCEPTION_INTERVAL = 0.125;
 const SEARCH_MEMORY = 4.5;
 const MAX_ACTIVE_SHOOTERS = 4;
@@ -110,6 +114,8 @@ export class EnemyManager {
   private readonly tactics = new TacticalDirector();
   private nextTacticalId = 1;
   private simTime = 0;
+  private readonly lastPlayerPos = new THREE.Vector3();
+  private hasPlayerPos = false;
   private readonly bodyMats = new Map<EnemyKind, THREE.MeshStandardMaterial>();
   private readonly frameMat = new THREE.MeshStandardMaterial({
     color: 0x1a2130, roughness: 0.55, metalness: 0.7,
@@ -232,11 +238,14 @@ export class EnemyManager {
       legL: model.legL, legR: model.legR, armL: model.armL, armR: model.armR,
       walkPhase: Math.random() * Math.PI * 2,
       collider,
+      // Seed the objective at spawn: without this, blind agents search their
+      // own spawn point and freeze outside perception range forever.
+      lastKnown: this.hasPlayerPos ? this.lastPlayerPos.clone() : position.clone(),
       attackTimer: randRange(0.5, def.attackCooldown),
       strafeSeed: Math.random() * Math.PI * 2,
+      searchSyncT: randRange(0.4, SEARCH_SYNC_INTERVAL),
       tacticalId: this.nextTacticalId++,
       state: kind === 'rusher' ? 'flank' : 'advance',
-      lastKnown: position.clone(),
       claim: null,
       perceptionTimer: Math.random() * PERCEPTION_INTERVAL,
       visible: false,
@@ -301,6 +310,8 @@ export class EnemyManager {
     lastShot?: THREE.Vector3 | null,
   ): void {
     this.simTime += dt;
+    this.lastPlayerPos.copy(playerPos);
+    this.hasPlayerPos = true;
     // Fade out + dispose dead enemies after a short linger
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
@@ -362,6 +373,16 @@ export class EnemyManager {
     playerVel?: THREE.Vector3,
   ): void {
     this.updatePerception(enemy, dt, playerPos, playerDead);
+    // Blind sweep: while searching with no contact memory, re-orient the
+    // objective toward the actual target every few seconds so a spawn that
+    // starts outside perception still closes instead of freezing in place.
+    if (enemy.state === 'search' && enemy.memory <= 0) {
+      enemy.searchSyncT -= dt;
+      if (enemy.searchSyncT <= 0 && this.hasPlayerPos) {
+        enemy.searchSyncT = SEARCH_SYNC_INTERVAL;
+        enemy.lastKnown.copy(this.lastPlayerPos);
+      }
+    }
     const target = enemy.visible ? playerPos : enemy.lastKnown;
     const toTarget = this.tmp.copy(target).sub(enemy.group.position);
     toTarget.y = 0;
