@@ -118,6 +118,11 @@ export class TouchControls {
     target.addEventListener('pointercancel', this.onPointerUp);
     target.addEventListener('lostpointercapture', this.onPointerUp);
     target.addEventListener('contextmenu', this.onContextMenu);
+    // Safety net: if setPointerCapture failed, a finger lifting over a HUD
+    // sibling of the canvas never reaches the canvas listener and the button
+    // would stay held. Window-level listeners always fire.
+    window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerUp);
     this.layout();
   }
 
@@ -131,6 +136,8 @@ export class TouchControls {
     target.removeEventListener('pointerup', this.onPointerUp);
     target.removeEventListener('pointercancel', this.onPointerUp);
     target.removeEventListener('lostpointercapture', this.onPointerUp);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerUp);
     target.removeEventListener('contextmenu', this.onContextMenu);
     this.target = null;
     this.reset();
@@ -151,25 +158,37 @@ export class TouchControls {
 
   /** Recompute button rects. Call on resize/orientationchange. */
   public layout(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    // The VISUAL viewport is what the pointer coordinates are relative to, and
+    // on iOS it differs from innerWidth/innerHeight whenever the address bar
+    // is showing or the page is zoomed. Using innerHeight here would offset
+    // every hit-rect vertically.
+    const vv = window.visualViewport;
+    const w = Math.round(vv?.width ?? window.innerWidth);
+    const h = Math.round(vv?.height ?? window.innerHeight);
     this.viewportW = w;
     this.viewportH = h;
+    // Notch / home-indicator insets, read from the CSS custom properties so
+    // there is exactly one source of truth for the safe area.
+    const cs = getComputedStyle(document.documentElement);
+    const safeB = parseFloat(cs.getPropertyValue('--safe-b')) || 0;
+    const safeL = parseFloat(cs.getPropertyValue('--safe-l')) || 0;
+    const safeR = parseFloat(cs.getPropertyValue('--safe-r')) || 0;
     const r = Math.max(30, Math.min(46, w * 0.055));
     const pad = r + Math.max(10, w * 0.02);
     this.buttons.length = 0;
     const add = (id: ButtonId, x: number, y: number, radius = r): void => {
       this.buttons.push({ id, x, y, radius, pointerId: null });
     };
-    // Right cluster: primary actions, thumb-reachable arc.
-    add('fire', w - pad, h - pad, r * 1.22);
-    add('aim', w - pad - r * 2.5, h - pad * 1.25);
-    add('jump', w - pad - r * 2.2, h - pad * 2.9);
+    // Right cluster: primary actions, thumb-reachable arc. Inset by the safe
+    // area so FIRE never sits under the home indicator.
+    add('fire', w - pad - safeR, h - pad - safeB, r * 1.22);
+    add('aim', w - pad - safeR - r * 2.5, h - pad * 1.25 - safeB);
+    add('jump', w - pad - safeR - r * 2.2, h - pad * 2.9 - safeB);
     // Left cluster: utility, above the stick zone.
-    add('sprint', pad, h - pad * 3.6, r * 0.86);
-    add('crouch', pad + r * 2.2, h - pad * 3.6, r * 0.86);
-    add('reload', pad, h - pad * 5.6, r * 0.86);
-    add('cycle', pad + r * 2.2, h - pad * 5.6, r * 0.86);
+    add('sprint', pad + safeL, h - pad * 3.6 - safeB, r * 0.86);
+    add('crouch', pad + safeL + r * 2.2, h - pad * 3.6 - safeB, r * 0.86);
+    add('reload', pad + safeL, h - pad * 5.6 - safeB, r * 0.86);
+    add('cycle', pad + safeL + r * 2.2, h - pad * 5.6 - safeB, r * 0.86);
   }
 
   /** Hit-test the buttons; returns the button under a point, or null. */

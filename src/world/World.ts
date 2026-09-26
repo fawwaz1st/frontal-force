@@ -143,6 +143,17 @@ export class World {
     if (this.sunLight) this.sunLight.shadow.needsUpdate = true;
   }
 
+  /**
+   * Apply a quality-tier shadow map size and re-arm the bake. The sun's
+   * `autoUpdate` is disabled for the static arena, so a size or enabled change
+   * must set `needsUpdate` or the map would never re-render.
+   */
+  public setShadowMapSize(size: number): void {
+    if (!this.sunLight) return;
+    this.sunLight.shadow.mapSize.set(size, size);
+    this.sunLight.shadow.needsUpdate = true;
+  }
+
   public update(dt: number): void {
     if (this.dust) this.dust.rotation.y += dt * 0.008;
     if (this.lightningTime < 0) {

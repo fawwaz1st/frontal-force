@@ -10,6 +10,7 @@ import {
   type TacticalClaim,
 } from '../game/Tactics';
 import {
+  GRUDGE_WINDOW,
   grudgeAt,
   RETARGET_INTERVAL,
   RETARGET_STAGGER,
@@ -137,7 +138,6 @@ const BURST_MAX = 3;
 export class EnemyManager {
   private readonly group = new THREE.Group();
   public onEnemyKilled: ((enemy: Enemy, byPlayer: boolean) => void) | null = null;
-  public onPlayerHit: ((damage: number, from: THREE.Vector3) => void) | null = null;
   /** Player yaw for the current frame — lets enemy sfx pan to their screen side. */
   public playerYaw = 0;
   /** Escort bots that intercept bolts before they reach the player. */
@@ -298,11 +298,11 @@ export class EnemyManager {
 
   /**
    * Threat-table entry: the target that just damaged this agent. Called by
-   * whatever routed the damage so the AI can hold a grudge for GRUDGE_WINDOW s.
+   * `damageEnemy` so the AI holds a grudge for GRUDGE_WINDOW seconds.
    */
   public markAggressor(enemy: Enemy, attackerId: number): void {
     enemy.grudgeId = attackerId;
-    enemy.grudgeT = 4;
+    enemy.grudgeT = GRUDGE_WINDOW;
   }
 
   /**
@@ -320,7 +320,11 @@ export class EnemyManager {
     // A downed or unregistered target is dropped immediately — no hysteresis.
     if (current && !current.targetable) enemy.target = null;
     if (enemy.retargetT > 0) return;
-    enemy.retargetT = RETARGET_INTERVAL + enemy.tacticalId * RETARGET_STAGGER * 0.1;
+    // Stagger across the roster so the whole wave never re-scores on one frame.
+    // `tacticalId` grows without bound across a session, so wrap it — an
+    // unwrapped offset would stretch the re-score period into seconds by late
+    // waves and leave targets stale.
+    enemy.retargetT = RETARGET_INTERVAL + (enemy.tacticalId % 32) * RETARGET_STAGGER;
 
     const incumbent = enemy.target;
     let best: CombatTarget | null = null;
@@ -338,7 +342,9 @@ export class EnemyManager {
       const score = threatScore({
         distance,
         role: candidate.threatRole,
-        aggression: enemy.grudgeId === candidate.targetId ? grudgeAt(4 - enemy.grudgeT) : 0,
+        aggression: enemy.grudgeId === candidate.targetId
+          ? grudgeAt(GRUDGE_WINDOW - enemy.grudgeT)
+          : 0,
         hpFraction: candidate.hpFraction,
         aimPressure: candidate.aimPressureAt(enemy.group.position),
         visibility,
@@ -357,7 +363,9 @@ export class EnemyManager {
       const incumbentScore = threatScore({
         distance: enemy.group.position.distanceTo(incumbent.position),
         role: incumbent.threatRole,
-        aggression: enemy.grudgeId === incumbent.targetId ? grudgeAt(4 - enemy.grudgeT) : 0,
+        aggression: enemy.grudgeId === incumbent.targetId
+          ? grudgeAt(GRUDGE_WINDOW - enemy.grudgeT)
+          : 0,
         hpFraction: incumbent.hpFraction,
         aimPressure: incumbent.aimPressureAt(enemy.group.position),
         visibility: 1,
@@ -447,8 +455,11 @@ export class EnemyManager {
     return best;
   }
 
-  /** `byPlayer` marks damage that came from the player's own weapon — escort
+  /**
+   * `byPlayer` marks damage that came from the player's own weapon — escort
    *  bot kills must not feed the kill-combo meter.
+   *  `attackerId` records WHO shot this agent so its threat table can hold a
+   *  grudge; omit it for environmental/unknown damage.
    *  Returns the hit result so callers can render distinct feedback for a
    *  shot a warden's plate absorbed. */
   public damageEnemy(
@@ -457,8 +468,13 @@ export class EnemyManager {
     point: THREE.Vector3,
     force?: THREE.Vector3,
     byPlayer = false,
+    attackerId = -1,
   ): { killed: boolean; blocked: boolean } {
     if (enemy.dead) return { killed: false, blocked: false };
+    // Always record who shot us: the grudge is what makes an enemy switch OFF
+    // its current victim onto whoever is actually hurting it, so suppressing it
+    // when the attacker IS the current victim would defeat the point.
+    if (attackerId >= 0) this.markAggressor(enemy, attackerId);
     // Wardens gate damage through their shield: frontal shots are absorbed
     // (or halved) until the guard breaks; flank shots punish for 1.5×.
     let damage = amount;
@@ -1200,6 +1216,40 @@ export class EnemyManager {
           proj.mesh.visible = false;
           continue;
         }
+      }
+
+      // Escort interception: a bolt whose path crosses a guard's body is eaten.
+      // Only bolts that actually intersect are absorbed — a broad proximity
+      // test would make every bot a global shield and stop the player taking
+      // fire at all (the bug this replaced).
+      let eaten = false;
+      for (const guard of this.interceptors) {
+        if (!guard.active) continue;
+        const toVictim = this.tmp2.set(
+          victim ? victim.position.x : proj.mesh.position.x,
+          (victim ? victim.position.y : proj.mesh.position.y) + 1,
+          victim ? victim.position.z : proj.mesh.position.z,
+        ).sub(proj.mesh.position);
+        const lenSq = toVictim.lengthSq();
+        if (lenSq < 1e-6) continue;
+        const tGuard = clamp(
+          this.tmp3.set(guard.position.x, guard.position.y + 1, guard.position.z)
+            .sub(proj.mesh.position).dot(toVictim) / lenSq,
+          0,
+          1,
+        );
+        const closest = this.tmp3.copy(proj.mesh.position).addScaledVector(toVictim, tGuard);
+        if (closest.distanceToSquared(this.tmp4.set(guard.position.x, guard.position.y + 1, guard.position.z)) < 0.6 * 0.6) {
+          guard.takeDamage(proj.damage);
+          this.effects.burst(closest.clone(), 0xff9f1c, 5, 1.4);
+          eaten = true;
+          break;
+        }
+      }
+      if (eaten) {
+        proj.active = false;
+        proj.mesh.visible = false;
+        continue;
       }
 
       if (proj.life <= 0 || Math.abs(proj.mesh.position.x) > 66 || Math.abs(proj.mesh.position.z) > 66) {

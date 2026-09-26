@@ -202,10 +202,16 @@ check('quality: low disables AA + shadows and renders below native', () => {
   assert.equal(low[2], 'false');
   assert.equal(low[3], 'false');
 });
-check('quality: governor only steps down past the first tier', () => {
-  // The step-back-up branch must be guarded by `stepIndex === 0`.
-  assert.match(qualitySrc, /if \(this\.stepIndex === 0\) \{[\s\S]*?return false;/);
+check('quality: governor rate-limits steps and gates recovery', () => {
   assert.match(qualitySrc, /SCALE_STEPS = \[1, 0\.79, 0\.62, 0\.5, 0\.4, 0\.31, 0\.25\]/);
+  // One step per second max — each one reallocates framebuffers.
+  assert.match(qualitySrc, /MIN_STEP_INTERVAL = 1/);
+  // Recovery from a downgrade must be gated behind a sustained fast window,
+  // or the resolution would pump.
+  assert.match(qualitySrc, /RECOVERY_SECONDS = 5/);
+  assert.match(qualitySrc, /if \(this\.fastFor < FrameTimeGovernor\.RECOVERY_SECONDS\) return false;/);
+  // Never step below the floor of SCALE_STEPS.
+  assert.match(qualitySrc, /if \(this\.stepIndex >= steps\.length - 1\) return false;/);
 });
 
 // ---------- threat scoring (src/combat/Combatant.ts) ----------

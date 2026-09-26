@@ -9,6 +9,17 @@ import { WEAPON_ORDER, createWeaponState, type WeaponState } from './weapons';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/** Seconds between rounds inside one burst group (≈288 rpm — reads as a
+ *  deliberate 3-round group rather than a full-auto dump). */
+const BURST_ROUND_INTERVAL = 1 / 4.8;
+
+/** Hard ceiling on self-inflicted blast damage. Without it the endless damage
+ *  ramp (×40 by wave 34) turns a point-blank rocket into instant suicide. */
+const MAX_SELF_BLAST = 35;
+
+/** CombatTarget id of the human player — shared with the enemy threat table. */
+export const PLAYER_TARGET_ID = 1;
+
 export interface WeaponView {
   index: number;
   mag: number;
@@ -134,14 +145,13 @@ export class WeaponController {
     // Burst weapons keep cycling their group while the trigger is held down:
     // the first round is fired by the branch above, the rest here.
     this.burstT -= dt;
-    const burstCount = weapon.def.burstCount ?? 0;
     if (this.burstLeft > 0 && this.burstT <= 0) {
       if (weapon.mag <= 0 || weapon.reloading || !frame.locked) {
         this.burstLeft = 0;
       } else {
         this.fire(weapon, this.player.isAiming);
         this.burstLeft -= 1;
-        this.burstT = 1 / (burstCount > 0 ? burstCount * 4 : 12);
+        this.burstT = BURST_ROUND_INTERVAL;
       }
     }
   }
@@ -150,6 +160,10 @@ export class WeaponController {
     if (index === this.index) return;
     const current = this.states[this.index];
     if (current) current.reloading = false;
+    // A weapon swap aborts any burst in flight — otherwise the new weapon
+    // would fire the previous weapon's remaining rounds on its own cadence.
+    this.burstLeft = 0;
+    this.burstT = 0;
     this.index = index;
     const next = this.states[index];
     if (next) next.cooldown = Math.max(next.cooldown, 0.18);
@@ -178,9 +192,15 @@ export class WeaponController {
   private fire(weapon: WeaponState, aiming: boolean): void {
     weapon.mag -= 1;
     weapon.cooldown = 1 / weapon.def.fireRate;
-    // A burst weapon arms its follow-up rounds on the first shot of a group.
+    // A burst weapon arms its follow-up rounds here, INCLUDING the first
+    // inter-round delay — arming only `burstLeft` would fire round two on the
+    // very same frame (burstT was never set) and the group would read as a
+    // 2+1 rather than three evenly spaced rounds.
     const burstCount = weapon.def.burstCount ?? 0;
-    if (burstCount > 1) this.burstLeft = burstCount - 1;
+    if (burstCount > 1) {
+      this.burstLeft = burstCount - 1;
+      this.burstT = BURST_ROUND_INTERVAL;
+    }
     this.player.addRecoil(weapon.def.recoil);
     this.audio.shot(weapon.def.sound);
     this.onFired?.(weapon);
@@ -264,7 +284,7 @@ export class WeaponController {
       if (distance > radius) return;
       const falloff = Math.max(floor, 1 - distance / radius);
       const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
-      this.enemies.damageEnemy(enemy, center * falloff, at, undefined, true);
+      this.enemies.damageEnemy(enemy, center * falloff, at, undefined, true, PLAYER_TARGET_ID);
     });
     // Self-damage: smaller radius, and the falloff is applied to the PLAYER's
     // own position so backing off is the counter-play.
@@ -273,7 +293,8 @@ export class WeaponController {
       const selfDist = this.player.position.distanceTo(point);
       if (selfDist <= selfRadius) {
         const falloff = Math.max(0, 1 - selfDist / selfRadius);
-        const selfDamage = center * (def.selfBlastFraction ?? 0) * falloff;
+        // Capped: the endless damage ramp must not turn a rocket into suicide.
+        const selfDamage = Math.min(MAX_SELF_BLAST, def.damage * (def.selfBlastFraction ?? 0) * falloff);
         if (selfDamage > 0) this.player.damage(selfDamage, point);
       }
     }
@@ -294,6 +315,7 @@ export class WeaponController {
         point,
         dir, // knockback impulse along the shot line
         true, // player-owned kill: feeds the combo meter
+        PLAYER_TARGET_ID, // threat-table identity, so enemies can hold a grudge
       );
       this.effects.ring(point, 0xffffff, 1.2, 0.18);
       if (showTracer) this.effects.tracer(origin, point, weapon.def.tracerColor);

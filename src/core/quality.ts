@@ -94,12 +94,15 @@ export class FrameTimeGovernor {
   private static readonly MAX_AVG_CHANGE_MS = 5;
   /** Minimum seconds between steps — each one reallocates framebuffers. */
   private static readonly MIN_STEP_INTERVAL = 1;
+  /** Seconds continuously below the low-water mark before stepping back up. */
+  private static readonly RECOVERY_SECONDS = 5;
 
   private avg = FrameTimeGovernor.RESET_MS;
   private stepIndex = 0;
   private sinceStep = 0;
   private samples = 0;
-  private locked = false;
+  /** Seconds spent continuously below the low-water mark — recovery gate. */
+  private fastFor = 0;
 
   /** Current multiplier to apply on top of the preset's pixel-ratio cap. */
   public get scale(): number {
@@ -115,7 +118,7 @@ export class FrameTimeGovernor {
     this.stepIndex = 0;
     this.sinceStep = 0;
     this.samples = 0;
-    this.locked = false;
+    this.fastFor = 0;
   }
 
   /**
@@ -133,33 +136,32 @@ export class FrameTimeGovernor {
     );
     this.avg += clamped;
     this.sinceStep += deltaMs / 1000;
-    if (this.locked || this.samples < 20) return false;
+    if (this.samples < 20) return false;
     if (this.sinceStep < FrameTimeGovernor.MIN_STEP_INTERVAL) return false;
     const steps = FrameTimeGovernor.SCALE_STEPS;
     if (this.avg > FrameTimeGovernor.HIGH_MS) {
-      if (this.stepIndex >= steps.length - 1) {
-        // Already at the floor and still slow: stop trying, further steps
-        // cannot help and only cost framebuffer churn.
-        this.locked = true;
-        return false;
-      }
+      this.fastFor = 0;
+      if (this.stepIndex >= steps.length - 1) return false;
       this.stepIndex += 1;
       this.avg = FrameTimeGovernor.RESET_MS;
       this.sinceStep = 0;
       return true;
     }
     if (this.avg < FrameTimeGovernor.LOW_MS) {
-      // Stepping back UP is only allowed before the first downgrade, so the
-      // image never pumps between resolutions during play.
-      if (this.stepIndex === 0) {
-        this.locked = true;
-        return false;
-      }
+      // Recovery is gated behind a long sustained fast window, so a device
+      // that was only briefly throttled (thermal ramp, another tab) climbs
+      // back instead of being stuck at 25% resolution for the session. The
+      // 5 s gate is what prevents resolution pumping.
+      this.fastFor += this.sinceStep;
+      if (this.fastFor < FrameTimeGovernor.RECOVERY_SECONDS) return false;
+      if (this.stepIndex === 0) return false;
       this.stepIndex -= 1;
+      this.fastFor = 0;
       this.avg = FrameTimeGovernor.RESET_MS;
       this.sinceStep = 0;
       return true;
     }
+    this.fastFor = 0;
     return false;
   }
 }

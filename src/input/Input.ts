@@ -171,7 +171,7 @@ export class Input {
 
   /** Returns accumulated input and resets per-frame deltas. */
   public read(): InputFrame {
-    const touchFrame = this.touchMode ? this.touch.read() : null;
+    const touchFrame = this.touchMode ? this.touch.read(this.touch.isHeld('aim') ? 1 : 0) : null;
     const frame: InputFrame = {
       moveX: touchFrame ? touchFrame.moveX : (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
       moveZ: touchFrame ? touchFrame.moveZ : (this.keys.has('KeyS') ? 1 : 0) - (this.keys.has('KeyW') ? 1 : 0),
@@ -224,13 +224,16 @@ export class Input {
   };
 
   private onMouseMove = (e: MouseEvent): void => {
-    if (!this.locked) return;
+    // Gate on `lockedNow`, not `locked`: in touch mode the pointer lock never
+    // engages, and gating on it would permanently kill mouse look on a hybrid
+    // laptop the moment someone taps the screen.
+    if (!this.lockedNow) return;
     this.lookX += e.movementX;
     this.lookY += e.movementY;
   };
 
   private onMouseDown = (e: MouseEvent): void => {
-    if (!this.locked || (e.button !== 0 && e.button !== 2)) return;
+    if (!this.lockedNow || (e.button !== 0 && e.button !== 2)) return;
     if (e.button === 0) {
       this.fireHeld = true;
       this.firePressed = true;
@@ -245,7 +248,7 @@ export class Input {
   };
 
   private onWheel = (e: WheelEvent): void => {
-    if (!this.locked || e.deltaY === 0) return;
+    if (!this.lockedNow || e.deltaY === 0) return;
     this.wheelSteps = clamp(this.wheelSteps + Math.sign(e.deltaY), -8, 8);
   };
 

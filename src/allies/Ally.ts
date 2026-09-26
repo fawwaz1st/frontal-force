@@ -565,7 +565,14 @@ class Bot implements Interceptor, CombatTarget {
     const point = center.clone().add(
       this.tmpC.set(randRange(-0.2, 0.2), randRange(-0.25, 0.25), randRange(-0.2, 0.2)),
     );
-    const hit = enemies.damageEnemy(target, SHOT_DMG * this.damageScale, point, undefined, false);
+    const hit = enemies.damageEnemy(
+      target,
+      SHOT_DMG * this.damageScale,
+      point,
+      undefined,
+      false,
+      this.id,
+    );
     if (hit.killed) this.victim = null;
     const forward = -Math.sin(this.yaw);
     const forwardZ = -Math.cos(this.yaw);
@@ -666,6 +673,12 @@ export class Ally {
       const sibling = i === 0 ? (second ?? null) : (first ?? null);
       bot.update(dt, ownerPos, enemies, sibling);
     }
+    // A redeploy can land a bot on the role its partner already holds; enforce
+    // the split AFTER updates so the pair is never mirrored for a whole cycle.
+    if (first && second && first.active && second.active
+      && first.roleLabel === second.roleLabel && first.roleLabel !== 'RETREAT') {
+      second.assignRole(first.roleLabel === 'FLANKER' ? 'overwatch' : 'flanker');
+    }
   }
 
   /**
@@ -681,7 +694,13 @@ export class Ally {
     if (!a || !b) return;
     const distA = a.currentVictim ? a.position.distanceTo(a.currentVictim.group.position) : Infinity;
     const distB = b.currentVictim ? b.position.distanceTo(b.currentVictim.group.position) : Infinity;
-    if (distA === Infinity && distB === Infinity) return;
+    if (distA === Infinity && distB === Infinity) {
+      // Nobody engaged: keep the pair split by index so they never both hold
+      // the same role (a fresh deploy can land one bot on the other's role).
+      a.assignRole('flanker');
+      b.assignRole('overwatch');
+      return;
+    }
     const aFlanks = distA <= distB;
     a.assignRole(aFlanks ? 'flanker' : 'overwatch');
     b.assignRole(aFlanks ? 'overwatch' : 'flanker');

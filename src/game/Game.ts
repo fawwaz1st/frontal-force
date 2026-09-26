@@ -6,7 +6,7 @@ import { World } from '../world/World';
 import { Player } from '../player/Player';
 import { Effects } from '../combat/Effects';
 import { EnemyManager, type Enemy } from '../enemies/Enemies';
-import { WeaponController } from '../combat/WeaponController';
+import { WeaponController, PLAYER_TARGET_ID } from '../combat/WeaponController';
 import { Viewmodel } from '../combat/Viewmodel';
 import { Ally } from '../allies/Ally';
 import { Pickups } from '../items/Pickups';
@@ -41,7 +41,7 @@ class PlayerTarget implements CombatTarget {
   public constructor(private readonly player: Player) {}
 
   public get targetId(): number {
-    return 1;
+    return PLAYER_TARGET_ID;
   }
 
   public get position(): THREE.Vector3 {
@@ -188,12 +188,10 @@ export class Game {
       // Chrome ignores this for WebGPU, but the WebGL2 fallback and
       // Firefox/Safari honour it, and 'low-power' would be wrong for a game.
       powerPreference: 'high-performance',
-    });
-    this.renderer.setPixelRatio(this.pixelRatio());
+    });    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.autoClear = false;
     this.renderer.shadowMap.enabled = this.quality.shadows;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 2.2;
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
@@ -283,7 +281,6 @@ export class Game {
 
   private wireCallbacks(): void {
     this.enemies.onEnemyKilled = this.handleKill;
-    this.enemies.onPlayerHit = this.handlePlayerHit;
     this.player.onDamaged = (from) => {
       this.hud.damageFlash();
       this.combo = 0;
@@ -344,6 +341,11 @@ export class Game {
     this.input.attach(this.renderer.domElement);
     this.renderer.domElement.addEventListener('click', this.onCanvasClick);
     window.addEventListener('resize', this.onResize);
+    // iOS Safari moves the visual viewport (address bar) WITHOUT a reliable
+    // window resize, and does it on scroll too — without these the touch
+    // buttons drift away from their hit-rects.
+    window.visualViewport?.addEventListener('resize', this.onResize);
+    window.visualViewport?.addEventListener('scroll', this.onResize);
     // Closing the tab mid-run must still bank the lifetime counters —
     // recordRun() is otherwise only reached on death or quit-to-menu.
     window.addEventListener('pagehide', this.onPageHide);
@@ -514,11 +516,24 @@ export class Game {
     this.governor.reset();
     this.renderer.shadowMap.enabled = this.quality.shadows;
     this.renderer.setPixelRatio(this.pixelRatio());
+    if (this.quality.shadows) this.refreshShadows();
   }
 
-  /** Preset cap times the governor's step, floored so it never hits zero. */
+  /** Preset cap times the governor's step, floored so it never hits zero.
+   *  The cap bounds `devicePixelRatio` — it is NOT an absolute ratio, or a
+   *  dpr-1 monitor would be forced to render ABOVE its native resolution. */
   private pixelRatio(): number {
-    return Math.max(0.25, this.quality.pixelRatioCap * this.governor.scale);
+    const cap = this.quality.pixelRatioCap * this.governor.scale;
+    return Math.max(0.25, Math.min(window.devicePixelRatio || 1, cap));
+  }
+
+  /**
+   * Re-arm the baked static shadow map. World disables `autoUpdate` for the
+   * sun (static geometry), so toggling shadows back on would otherwise leave
+   * the stale/empty map from whenever it was last baked.
+   */
+  private refreshShadows(): void {
+    this.world.setShadowMapSize(this.quality.shadowMapSize);
   }
 
   /** Menu shows the record belonging to the currently selected mode. */
@@ -663,10 +678,6 @@ export class Game {
     // Teach the mechanic the first time it actually matters (×2 unlocks here).
     if (firstTier && mult > 1) this.hud.showBanner(`COMBO ×${mult}`, 'CHAIN KILLS TO RAISE IT');
     if (this.waves.isRotator) this.weapons.rotate();
-  };
-
-  private handlePlayerHit = (damage: number, from: THREE.Vector3): void => {
-    this.player.damage(damage, from);
   };
 
   /** Screen-space-relative angle of an attacker for the damage arc UI. */
