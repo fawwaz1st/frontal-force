@@ -436,6 +436,21 @@ kbd {
 }
 
 .hud__weapon { text-align: right; }
+/* Weapon name + slot index — ten weapons will not fit as an icon wall, so the
+   HUD names the active one and shows a 3-slot window around it. */
+.hud__weapon-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.hud__weapon-name { color: var(--text); }
+.hud__slot-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .hud__slots { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 8px; }
 .hud__slot {
   width: 34px; height: 26px;
@@ -450,6 +465,9 @@ kbd {
 }
 .hud__slot .ic { width: 20px; height: 20px; }
 .hud__slot.active { border-color: var(--accent); color: var(--accent); background: rgba(255, 159, 28, 0.1); }
+/* Prev/next slots sit back so the active one reads first. */
+.hud__slot--edge { opacity: 0.55; }
+.hud__slot--edge .ic { width: 16px; height: 16px; }
 
 .hud__ammo {
   display: flex;

@@ -3,6 +3,7 @@ import type { Octree } from 'three/addons/math/Octree.js';
 import type { EnemyManager, Enemy, Interceptor } from '../enemies/Enemies';
 import type { Effects } from '../combat/Effects';
 import type { GameAudio } from '../audio/Audio';
+import type { CombatTarget } from '../combat/Combatant';
 import { ARENA_LIMIT } from '../world/World';
 import { clamp, damp, dampAngle, randRange } from '../core/math';
 
@@ -13,19 +14,57 @@ const RESPAWN_TIME = 18;
 const BOUNDS = ARENA_LIMIT;
 const FIRE_RANGE = 34;
 const SPEED = 7;
+const SPRINT_MULT = 1.35;
 const TRACER = 0xffc266;
 const SPAWN_OFFSETS: Array<[number, number]> = [
   [-2.4, 1.8],
   [2.4, 1.8],
 ];
 
+/* ---------- Autonomy tuning: anchor + leash + role slot ---------- */
+
+/** Idle slot offset from the anchor — a rotated seat, not the anchor itself. */
+const SLOT_SIDE = 3;
+const SLOT_BACK = 2;
+/** Re-quantize the anchor only after the owner moves this far (kills jitter). */
+const ANCHOR_REFRESH_DISTANCE = 3;
+/** Soft leash: past this the bot heads home at full speed. */
+const LEASH_SOFT = 18;
+/** Hard leash: past this the bot breaks off entirely and sprints back. */
+const LEASH_HARD = 26;
+/** Combat standoff per role — flankers close, overwatch holds a lane. */
+const FLANK_STANDOFF = 8;
+const FLANK_MAX_RANGE = 12;
+const OVERWATCH_STANDOFF = 15;
+const OVERWATCH_MIN_RANGE = 10;
+const OVERWATCH_MAX_RANGE = 20;
+/** Roles are re-auctioned on this cadence so the pair keeps different angles. */
+const ROLE_AUCTION_INTERVAL = 2;
+/** Victim re-score cadence — NOT per frame (that is what causes target flicker). */
+const VICTIM_RESCORE = 0.4;
+/** Retreat below this health fraction; re-engage above the upper band. */
+const RETREAT_HP = 0.3;
+const REENGAGE_HP = 0.55;
+/** Hard cap so a bot can never kite forever. */
+const RETREAT_MAX_TIME = 8;
+/** Nearest-enemy distance that justifies breaking contact. */
+const RETREAT_TRIGGER_RANGE = 20;
+
+type BotRole = 'flanker' | 'overwatch';
+
 /**
- * Humanoid escort bot — runs on the ground with a real gait, picks its own
- * target (nearest live enemy), flanks the player on its own, checks its own
- * LOS, fires its own rifle, and eats bolts aimed at the player until it drops.
- * Redeploys itself at full strength after 18 s. Zero player input.
+ * Humanoid escort bot — fully autonomous. It owns its own objective anchor,
+ * its own victim selection, its own engagement range and its own retreat
+ * decision. The human is an anchor it prefers, not a leash it obeys.
+ *
+ * Design (research-backed): anchor + leash + role slot. The anchor is the
+ * owner position quantized to a grid so a walking human does not drag the bots
+ * around every frame; the leash has soft and hard radii; and the two bots
+ * auction flanker/overwatch so they never stack on one firing line.
+ *
+ * Implements `CombatTarget`, so enemy AI scores it exactly like the player.
  */
-class Bot implements Interceptor {
+class Bot implements Interceptor, CombatTarget {
   private readonly group = new THREE.Group();
   public hp = 100;
   public active = false;
@@ -41,8 +80,22 @@ class Bot implements Interceptor {
   private gait = 0;
   private recoilT = 0;
   private simTime = 0;
-  private patrolX: number | null = null;
-  private patrolZ: number | null = null;
+  private role: BotRole = 'flanker';
+  private retreating = false;
+  private retreatT = 0;
+  private leashBroken = false;
+  private readonly anchor = new THREE.Vector2();
+  private hasAnchor = false;
+  private readonly lastPos = new THREE.Vector3();
+  private hasLastPos = false;
+  /** Current victim — re-scored on a timer, never per frame. */
+  private victim: Enemy | null = null;
+  private victimTimer = 0;
+  /** World velocity for enemy ballistic lead. */
+  public readonly velocity = new THREE.Vector3();
+  /** Escorts draw less fire than the human (player 1.0, escort 0.45). */
+  public readonly threatRole = 0.45;
+  public readonly team = 'escort' as const;
   private readonly torsoMesh: THREE.Mesh;
   private readonly visorMat: THREE.MeshStandardMaterial;
   private readonly rifle: THREE.Object3D;
@@ -62,6 +115,8 @@ class Bot implements Interceptor {
     private readonly octree: Octree,
     private readonly effects: Effects,
     private readonly audio: GameAudio,
+    /** Stable id for the enemy threat table (never reused across respawns). */
+    private readonly id: number,
   ) {
     const armor = new THREE.MeshStandardMaterial({ color: 0xd8d2c0, roughness: 0.55, metalness: 0.25 });
     const joint = new THREE.MeshStandardMaterial({ color: 0x22251c, roughness: 0.7, metalness: 0.4 });
@@ -148,18 +203,67 @@ class Bot implements Interceptor {
     return this.group.position;
   }
 
+  // ---------- CombatTarget ----------
+
+  public get targetId(): number {
+    return this.id;
+  }
+
+  public get eyeHeight(): number {
+    return 1.4;
+  }
+
+  public get hpFraction(): number {
+    return this.hp / MAX_HP;
+  }
+
+  public get targetable(): boolean {
+    return this.active && this.hp > 0;
+  }
+
+  /** How squarely this bot is aiming back at `from` (0..1, squared falloff). */
+  public aimPressureAt(from: THREE.Vector3): number {
+    if (!this.active) return 0;
+    const dx = from.x - this.group.position.x;
+    const dz = from.z - this.group.position.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return 1;
+    // Bot forward is -Z at yaw 0.
+    const fx = -Math.sin(this.yaw);
+    const fz = -Math.cos(this.yaw);
+    const dot = (dx / len) * fx + (dz / len) * fz;
+    if (dot <= 0) return 0;
+    return dot * dot;
+  }
+
+  /** An enemy attack landed on this bot — routed by the enemy manager. */
+  public receiveDamage(amount: number, from: THREE.Vector3): void {
+    if (!this.active) return;
+    this.hp -= amount;
+    this.effects.burst(this.group.position.clone().setY(1.2), 0xff9f1c, 4, 1.2);
+    if (this.hp <= 0) {
+      this.down(from);
+    }
+  }
+
   /** Bolt connected — armor absorbs it; down at 0, redeploy on timer. */
   public takeDamage(amount: number): void {
     if (!this.active) return;
     this.hp -= amount;
-    if (this.hp <= 0) {
-      this.hp = 0;
-      this.active = false;
-      this.group.visible = false;
-      this.respawnT = RESPAWN_TIME;
-      this.effects.burst(this.group.position.clone().setY(1.2), 0xff9f1c, 14, 2);
-      this.audio.slam();
-    }
+    if (this.hp <= 0) this.down(this.group.position);
+  }
+
+  private down(from: THREE.Vector3): void {
+    this.hp = 0;
+    this.active = false;
+    this.group.visible = false;
+    this.respawnT = RESPAWN_TIME;
+    this.victim = null;
+    this.retreating = false;
+    this.retreatT = 0;
+    this.effects.burst(this.group.position.clone().setY(1.2), 0xff9f1c, 14, 2);
+    void from;
+    this.audio.slam();
   }
 
   public deploy(at: THREE.Vector3, idx: number): void {
@@ -174,8 +278,15 @@ class Bot implements Interceptor {
     this.walkPhase = 0;
     this.gait = 0;
     this.recoilT = 0;
-    this.patrolX = null;
-    this.patrolZ = null;
+    this.victim = null;
+    this.victimTimer = 0;
+    this.retreating = false;
+    this.retreatT = 0;
+    this.leashBroken = false;
+    this.hasAnchor = false;
+    this.hasLastPos = false;
+    this.velocity.set(0, 0, 0);
+    this.role = idx === 0 ? 'flanker' : 'overwatch';
     this.rifle.position.z = this.rifleRestZ;
     this.rifle.rotation.x = 0;
     const off = SPAWN_OFFSETS[idx % SPAWN_OFFSETS.length] ?? [-2.4, 1.8];
@@ -195,72 +306,164 @@ class Bot implements Interceptor {
     // Without this the !active branch instantly redeploys on the next frame
     // (respawnT was already 0). deploy() re-arms the timer.
     this.respawnT = Number.POSITIVE_INFINITY;
+    this.victim = null;
+    this.retreating = false;
   }
 
+  /**
+   * `ownerPos` is a PREFERENCE, not a leash: the bot anchors to it while idle
+   * but fights toward its own contact point once the squad is engaged.
+   */
   public update(
     dt: number,
-    playerPos: THREE.Vector3,
-    playerYaw: number,
+    ownerPos: THREE.Vector3,
     enemies: EnemyManager,
+    /** Sibling bot — used so the pair never doubles up on one victim. */
+    sibling: Bot | null,
   ): void {
     if (!this.active) {
       this.respawnT -= dt;
-      if (this.respawnT <= 0) this.deploy(playerPos, this.idx);
+      if (this.respawnT <= 0) this.deploy(ownerPos, this.idx);
       return;
     }
 
     this.simTime += dt;
     this.visorMat.emissiveIntensity = 2.4 + Math.sin(this.simTime * 5 + this.idx * 2.1) * 0.8;
-    const target = enemies.nearestEnemy(this.group.position);
-    const playerDistance = Math.hypot(
-      playerPos.x - this.group.position.x,
-      playerPos.z - this.group.position.z,
-    );
-    const intent = this.chooseMoveTarget(playerPos, target, playerDistance);
+
+    // World velocity for enemy ballistic lead — enemies now aim with real motion.
+    if (this.hasLastPos && dt > 1e-5) {
+      this.velocity.subVectors(this.group.position, this.lastPos).divideScalar(dt);
+      this.velocity.clampLength(0, 12);
+    }
+    this.lastPos.copy(this.group.position);
+    this.hasLastPos = true;
+
+    this.updateAnchor(ownerPos);
+    this.updateVictim(dt, enemies, sibling);
+    this.updateRetreat(dt, enemies);
+    const intent = this.chooseMoveTarget(ownerPos, enemies);
     const moved = this.moveToward(intent.x, intent.y, dt);
     this.updateGait(moved, dt);
-    this.faceTarget(playerPos, playerYaw, target, playerDistance, dt);
-    this.updateFire(dt, target, playerDistance, playerPos, playerYaw, enemies);
+    this.faceTarget(ownerPos, dt);
+    this.updateFire(dt, enemies);
   }
 
-  private chooseMoveTarget(
-    playerPos: THREE.Vector3,
-    target: Enemy | null,
-    playerDistance: number,
-  ): THREE.Vector2 {
+  /**
+   * Anchor = owner position quantized to a grid, so a walking human does not
+   * drag the bots around every frame. Refreshed only on real movement.
+   */
+  private updateAnchor(ownerPos: THREE.Vector3): void {
+    if (!this.hasAnchor
+      || Math.hypot(this.anchor.x - ownerPos.x, this.anchor.y - ownerPos.z) > ANCHOR_REFRESH_DISTANCE) {
+      this.anchor.set(ownerPos.x, ownerPos.z);
+      this.hasAnchor = true;
+    }
+  }
+
+  /**
+   * Roles are assigned by the squad, never flipped independently: two bots
+   * each running their own timer can (and did) land on the same role, which
+   * makes them stack on one firing line. The closer bot takes the flank.
+   */
+  public assignRole(role: BotRole): void {
+    this.role = role;
+  }
+
+  /**
+   * Pick a victim and keep it. Re-scoring on a 0.4 s timer (rather than every
+   * frame) plus preferring an unclaimed target is what stops the classic
+   * companion target flicker.
+   */
+  private updateVictim(dt: number, enemies: EnemyManager, sibling: Bot | null): void {
+    this.victimTimer -= dt;
+    if (this.victim && this.victim.dead) this.victim = null;
+    if (this.victimTimer > 0 && this.victim) return;
+    this.victimTimer = VICTIM_RESCORE;
+    const claimed = sibling?.victim ?? null;
+    this.victim = enemies.nearestEnemyExcluding(this.group.position, [claimed], FIRE_RANGE)
+      ?? enemies.nearestEnemyExcluding(this.group.position, [], FIRE_RANGE);
+  }
+
+  /**
+   * Self-preservation with a hard ceiling: retreat below 30 %, re-engage at
+   * 55 %, and never kite longer than 8 s — the standard pattern that avoids
+   * the "companion runs away forever" failure.
+   */
+  private updateRetreat(dt: number, enemies: EnemyManager): void {
+    if (this.retreating) {
+      this.retreatT += dt;
+      if (this.hpFraction >= REENGAGE_HP || this.retreatT >= RETREAT_MAX_TIME) {
+        this.retreating = false;
+        this.retreatT = 0;
+      }
+      return;
+    }
+    if (this.hpFraction > RETREAT_HP) return;
+    // Only break contact if something is actually near enough to finish us.
+    const threat = enemies.nearestEnemy(this.group.position);
+    if (threat && threat.group.position.distanceTo(this.group.position) < RETREAT_TRIGGER_RANGE) {
+      this.retreating = true;
+      this.retreatT = 0;
+    }
+  }
+
+  private chooseMoveTarget(ownerPos: THREE.Vector3, enemies: EnemyManager): THREE.Vector2 {
     const position = this.group.position;
-    const strafe = Math.sin(this.simTime * 1.2 + this.idx * 1.7) * 1.6;
-    let x: number;
-    let z: number;
-    if (playerDistance > 22) {
-      const dx = playerPos.x - position.x;
-      const dz = playerPos.z - position.z;
+    const ownerDistance = Math.hypot(ownerPos.x - position.x, ownerPos.z - position.z);
+    this.leashBroken = ownerDistance > LEASH_HARD;
+
+    // Hard leash: too far from the squad — break off and sprint home.
+    if (this.leashBroken) {
+      const dx = ownerPos.x - position.x;
+      const dz = ownerPos.z - position.z;
       const length = Math.hypot(dx, dz) || 1;
-      x = playerPos.x - (dx / length) * 6;
-      z = playerPos.z - (dz / length) * 6;
-    } else if (target) {
-      const enemy = target.group.position;
+      return this.moveTarget.set(
+        clamp(ownerPos.x - (dx / length) * SLOT_BACK, -BOUNDS, BOUNDS),
+        clamp(ownerPos.z - (dz / length) * SLOT_BACK, -BOUNDS, BOUNDS),
+      );
+    }
+
+    if (this.retreating) {
+      // Break contact: run away from the nearest enemy, staying inside bounds.
+      const threat = enemies.nearestEnemy(position);
+      if (threat) {
+        const dx = position.x - threat.group.position.x;
+        const dz = position.z - threat.group.position.z;
+        const length = Math.hypot(dx, dz) || 1;
+        return this.moveTarget.set(
+          clamp(position.x + (dx / length) * 12, -BOUNDS, BOUNDS),
+          clamp(position.z + (dz / length) * 12, -BOUNDS, BOUNDS),
+        );
+      }
+    }
+
+    if (this.victim) {
+      const enemy = this.victim.group.position;
       const dx = position.x - enemy.x;
       const dz = position.z - enemy.z;
       const length = Math.hypot(dx, dz) || 1;
-      x = enemy.x + (dx / length) * 9 - (dz / length) * strafe;
-      z = enemy.z + (dz / length) * 9 + (dx / length) * strafe;
-    } else {
-      let patrolX = this.patrolX;
-      let patrolZ = this.patrolZ;
-      if (patrolX === null || patrolZ === null || Math.hypot(patrolX - position.x, patrolZ - position.z) < 2) {
-        patrolX = randRange(-38, 38);
-        patrolZ = randRange(-38, 38);
-        this.patrolX = patrolX;
-        this.patrolZ = patrolZ;
-      }
-      x = patrolX;
-      z = patrolZ;
+      const standoff = this.role === 'flanker' ? FLANK_STANDOFF : OVERWATCH_STANDOFF;
+      // Opposite tangential signs per bot: they orbit from different sides
+      // instead of trailing each other around the same arc.
+      const side = this.idx === 0 ? 1 : -1;
+      const strafe = side * Math.sin(this.simTime * 1.2 + this.idx * 1.7)
+        * (this.role === 'flanker' ? 1.6 : 0.8);
+      // Radial standoff plus a tangential offset: flankers orbit, overwatch holds.
+      return this.moveTarget.set(
+        clamp(enemy.x + (dx / length) * standoff - (dz / length) * strafe, -BOUNDS, BOUNDS),
+        clamp(enemy.z + (dz / length) * standoff + (dx / length) * strafe, -BOUNDS, BOUNDS),
+      );
     }
-    return this.moveTarget.set(
-      clamp(x, -BOUNDS, BOUNDS),
-      clamp(z, -BOUNDS, BOUNDS),
-    );
+
+    // Idle: hold a rotated slot beside the anchor rather than standing on it.
+    const angle = this.idx * Math.PI * 0.5 + 0.6;
+    const slotX = this.anchor.x + Math.cos(angle) * SLOT_SIDE;
+    const slotZ = this.anchor.y + Math.sin(angle) * SLOT_SIDE + SLOT_BACK;
+    if (ownerDistance > LEASH_SOFT
+      || Math.hypot(slotX - position.x, slotZ - position.z) > 2.5) {
+      return this.moveTarget.set(clamp(slotX, -BOUNDS, BOUNDS), clamp(slotZ, -BOUNDS, BOUNDS));
+    }
+    return this.moveTarget.set(position.x, position.z);
   }
 
   private moveToward(x: number, z: number, dt: number): boolean {
@@ -271,7 +474,8 @@ class Bot implements Interceptor {
     this.tmpRay.set(this.tmpB.set(position.x, position.y + 1, position.z), direction);
     const hit = this.octree.rayIntersect(this.tmpRay);
     if (hit && hit.distance <= 1.4) return false;
-    const speed = distance > 8 ? SPEED * 1.35 : SPEED;
+    const sprinting = this.retreating || this.leashBroken || distance > 8;
+    const speed = sprinting ? SPEED * SPRINT_MULT : SPEED;
     position.x += direction.x * speed * dt;
     position.z += direction.z * speed * dt;
     return true;
@@ -291,50 +495,51 @@ class Bot implements Interceptor {
       : 0;
   }
 
-  private faceTarget(
-    playerPos: THREE.Vector3,
-    playerYaw: number,
-    target: Enemy | null,
-    playerDistance: number,
-    dt: number,
-  ): void {
+  /**
+   * Face the victim when engaged, otherwise face the anchor. The owner's
+   * position is only a fallback for a bot with nothing else to look at.
+   */
+  private faceTarget(ownerPos: THREE.Vector3, dt: number): void {
     const position = this.group.position;
     let faceX: number;
     let faceZ: number;
-    if (playerDistance > 22) {
-      faceX = playerPos.x;
-      faceZ = playerPos.z;
-    } else if (target) {
-      faceX = target.group.position.x;
-      faceZ = target.group.position.z;
-    } else if (this.patrolX !== null && this.patrolZ !== null) {
-      faceX = this.patrolX;
-      faceZ = this.patrolZ;
+    if (this.victim) {
+      faceX = this.victim.group.position.x;
+      faceZ = this.victim.group.position.z;
+    } else if (this.hasAnchor) {
+      faceX = this.anchor.x;
+      faceZ = this.anchor.y;
     } else {
-      faceX = playerPos.x - Math.sin(playerYaw) * 8;
-      faceZ = playerPos.z - Math.cos(playerYaw) * 8;
+      faceX = ownerPos.x;
+      faceZ = ownerPos.z;
     }
     const dx = faceX - position.x;
     const dz = faceZ - position.z;
+    if (dx * dx + dz * dz < 1e-4) return;
     this.yaw = dampAngle(this.yaw, Math.atan2(-dx, -dz), 8, dt);
     this.group.rotation.y = this.yaw;
   }
 
-  private updateFire(
-    dt: number,
-    target: Enemy | null,
-    playerDistance: number,
-    playerPos: THREE.Vector3,
-    playerYaw: number,
-    enemies: EnemyManager,
-  ): void {
+  /**
+   * Fire at the victim when the current role's engagement band allows it.
+   * Flankers commit at close range; overwatch holds a mid-range lane. A
+   * retreating bot holds fire — that is what makes the retreat read as one.
+   */
+  private updateFire(dt: number, enemies: EnemyManager): void {
     this.fireT -= dt;
     this.recoilT = Math.max(0, this.recoilT - dt * 6);
     this.rifle.position.z = this.rifleRestZ + this.recoilT * 0.06;
     this.rifle.rotation.x = this.recoilT * 0.18;
-    if (!target || playerDistance > 22 || this.fireT > 0) return;
+    const target = this.victim;
+    if (!target || this.fireT > 0 || this.retreating) return;
 
     const position = this.group.position;
+    const engageRange = position.distanceTo(target.group.position);
+    if (this.role === 'flanker') {
+      if (engageRange > FLANK_MAX_RANGE) return;
+    } else if (engageRange < OVERWATCH_MIN_RANGE || engageRange > OVERWATCH_MAX_RANGE) {
+      return;
+    }
     const center = this.tmpA.set(
       target.collider.start.x,
       (target.collider.start.y + target.collider.end.y) / 2,
@@ -342,15 +547,15 @@ class Bot implements Interceptor {
     );
     const eye = this.tmpB.set(position.x, position.y + 1.5, position.z);
     const toTarget = this.tmpC.copy(center).sub(eye);
-    const range = toTarget.length();
-    if (range <= 0.6 || range > FIRE_RANGE) {
+    const distance = toTarget.length();
+    if (distance <= 0.6 || distance > FIRE_RANGE) {
       this.fireT = 0.25;
       return;
     }
-    toTarget.divideScalar(range);
+    toTarget.divideScalar(distance);
     this.tmpRay.set(eye, toTarget);
     const wall = this.octree.rayIntersect(this.tmpRay);
-    if (wall && wall.distance <= range - 0.5) {
+    if (wall && wall.distance <= distance - 0.5) {
       this.fireT = 0.12;
       return;
     }
@@ -360,27 +565,43 @@ class Bot implements Interceptor {
     const point = center.clone().add(
       this.tmpC.set(randRange(-0.2, 0.2), randRange(-0.25, 0.25), randRange(-0.2, 0.2)),
     );
-    enemies.damageEnemy(target, SHOT_DMG * this.damageScale, point);
+    const hit = enemies.damageEnemy(target, SHOT_DMG * this.damageScale, point, undefined, false);
+    if (hit.killed) this.victim = null;
     const forward = -Math.sin(this.yaw);
     const forwardZ = -Math.cos(this.yaw);
     const muzzle = this.tmpC.set(position.x + forward * 0.55, position.y + 1.34, position.z + forwardZ * 0.55);
     this.effects.tracer(muzzle, point, TRACER);
     this.effects.burst(muzzle, TRACER, 2, 1.2);
-    this.onShot?.(this.pan(position, playerPos, playerYaw));
+    // Pan is resolved by the owner (it knows the listener frame); the bot just
+    // reports its own world position so it works with any listener.
+    this.onShot?.(this.pan(position));
   }
 
-  /** Screen-space pan (−1 left … +1 right) of a point for stereo placement. */
-  private pan(p: THREE.Vector3, playerPos: THREE.Vector3, yaw: number): number {
-    const dx = p.x - playerPos.x;
-    const dz = p.z - playerPos.z;
-    const len = Math.hypot(dx, dz) || 1;
-    return clamp((dx / len) * Math.cos(yaw) - (dz / len) * Math.sin(yaw), -1, 1);
+  /** Screen-space pan (−1 left … +1 right) resolved by the owner's listener. */
+  private pan(p: THREE.Vector3): number {
+    return this.panProvider ? this.panProvider(p) : 0;
+  }
+
+  /** Injected by Ally: turns a world point into a stereo pan value. */
+  public panProvider: ((p: THREE.Vector3) => number) | null = null;
+
+  /** Live role label for HUD/debug. */
+  public get roleLabel(): string {
+    return this.retreating ? 'RETREAT' : this.role.toUpperCase();
+  }
+
+  /** Current victim — exposed so the sibling can avoid doubling up. */
+  public get currentVictim(): Enemy | null {
+    return this.victim;
   }
 }
 
 /**
- * The escort squad: two humanoid bots that fight beside the player.
- * Game wires this once; every method fans out to the bots.
+ * The escort squad: two autonomous bots that fight beside the player.
+ *
+ * They are NOT leashed to the player: the owner position is only an idle
+ * anchor. Both implement `CombatTarget`, so enemy AI scores them exactly like
+ * the human and will shoot them when they are the better target.
  */
 export class Ally {
   public readonly bots: Bot[];
@@ -392,11 +613,19 @@ export class Ally {
     effects: Effects,
     audio: GameAudio,
   ) {
-    this.bots = [new Bot(scene, octree, effects, audio), new Bot(scene, octree, effects, audio)];
+    this.bots = [
+      new Bot(scene, octree, effects, audio, 9001),
+      new Bot(scene, octree, effects, audio, 9002),
+    ];
     for (const bot of this.bots) {
+      bot.panProvider = (p) => this.panProvider?.(p) ?? 0;
       bot.onShot = (pan) => this.onShot?.(pan);
     }
   }
+
+  /** Set by Game: world point → stereo pan, using the live listener frame. */
+  public panProvider: ((p: THREE.Vector3) => number) | null = null;
+  private roleTimer = ROLE_AUCTION_INTERVAL;
 
   public get active(): boolean {
     return this.bots.some((b) => b.active);
@@ -424,14 +653,37 @@ export class Ally {
 
   public update(
     dt: number,
-    playerPos: THREE.Vector3,
-    playerYaw: number,
+    ownerPos: THREE.Vector3,
     enemies: EnemyManager,
     damageScale = 1,
   ): void {
-    for (const bot of this.bots) {
+    this.auctionRoles(dt);
+    const [first, second] = this.bots;
+    for (let i = 0; i < this.bots.length; i++) {
+      const bot = this.bots[i];
+      if (!bot) continue;
       bot.damageScale = damageScale;
-      bot.update(dt, playerPos, playerYaw, enemies);
+      const sibling = i === 0 ? (second ?? null) : (first ?? null);
+      bot.update(dt, ownerPos, enemies, sibling);
     }
+  }
+
+  /**
+   * Squad-level role auction on a slow cadence: the bot nearest its victim
+   * flanks, the other holds overwatch. Assigned centrally so the pair can
+   * never both hold the same role.
+   */
+  private auctionRoles(dt: number): void {
+    this.roleTimer -= dt;
+    if (this.roleTimer > 0) return;
+    this.roleTimer = ROLE_AUCTION_INTERVAL;
+    const [a, b] = this.bots;
+    if (!a || !b) return;
+    const distA = a.currentVictim ? a.position.distanceTo(a.currentVictim.group.position) : Infinity;
+    const distB = b.currentVictim ? b.position.distanceTo(b.currentVictim.group.position) : Infinity;
+    if (distA === Infinity && distB === Infinity) return;
+    const aFlanks = distA <= distB;
+    a.assignRole(aFlanks ? 'flanker' : 'overwatch');
+    b.assignRole(aFlanks ? 'overwatch' : 'flanker');
   }
 }

@@ -1,6 +1,8 @@
 import { clamp } from '../core/math';
 
-export type ShotSound = 'ar' | 'smg' | 'shotgun' | 'rail';
+export type ShotSound =
+  | 'ar' | 'smg' | 'shotgun' | 'rail'
+  | 'dmr' | 'lmg' | 'pistol' | 'launcher' | 'beam' | 'burst';
 
 interface ToneOpts {
   freq: number;
@@ -182,7 +184,43 @@ export class GameAudio {
         this.tone({ freq: 1200 * jitter, end: 80, dur: 0.3, type: 'sawtooth', gain: 0.32 * level });
         this.noise({ dur: 0.16, freq: 3000 * jitter, type: 'highpass', gain: 0.3 * level });
         break;
+      // DMR: one sharp crack with a long tail — reads as "one shot, one kill".
+      case 'dmr':
+        this.noise({ dur: 0.14, freq: 1500 * jitter, type: 'highpass', gain: 0.55 * level });
+        this.tone({ freq: 180 * jitter, end: 50, dur: 0.14, type: 'triangle', gain: 0.34 * level });
+        break;
+      // LMG: heavier, lower, slightly longer than the AR so the cadence reads.
+      case 'lmg':
+        this.noise({ dur: 0.11, freq: 1400 * jitter, type: 'highpass', gain: 0.46 * level });
+        this.tone({ freq: 165 * jitter, end: 52, dur: 0.1, type: 'square', gain: 0.26 * level });
+        break;
+      // Pistol: dry, snappy, minimal low end — the backup, not the star.
+      case 'pistol':
+        this.noise({ dur: 0.055, freq: 2600 * jitter, type: 'highpass', gain: 0.34 * level });
+        this.tone({ freq: 420 * jitter, end: 140, dur: 0.05, type: 'square', gain: 0.2 * level });
+        break;
+      // Launcher: a thump, not a crack — the payload does the talking.
+      case 'launcher':
+        this.tone({ freq: 120 * jitter, end: 34, dur: 0.26, type: 'sine', gain: 0.6 * level });
+        this.noise({ dur: 0.3, freq: 600 * jitter, type: 'lowpass', gain: 0.5 * level });
+        break;
+      // Beam: a tight synth tick — at 20 Hz it must not smear into a drone.
+      case 'beam':
+        this.tone({ freq: 1750 * jitter, end: 1500, dur: 0.03, type: 'sawtooth', gain: 0.2 * level });
+        break;
+      // Burst: the AR crack, pitched up so a 3-round group reads as one sound.
+      case 'burst':
+        this.noise({ dur: 0.07, freq: 2100 * jitter, type: 'highpass', gain: 0.42 * level });
+        this.tone({ freq: 280 * jitter, end: 110, dur: 0.06, type: 'triangle', gain: 0.24 * level });
+        break;
     }
+  }
+
+  /** Explosive round detonation — a deep boom plus a debris tail. */
+  public blast(pan = 0): void {
+    this.tone({ freq: 90, end: 28, dur: 0.5, type: 'sine', gain: 0.7, pan });
+    this.noise({ dur: 0.55, freq: 700, type: 'lowpass', gain: 0.6 });
+    this.noise({ dur: 0.3, freq: 2400, type: 'highpass', gain: 0.22 });
   }
 
   public empty(): void {

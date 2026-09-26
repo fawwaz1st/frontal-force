@@ -62,7 +62,8 @@ export class Player {
     this.shake = Math.min(this.shake + amount, 0.55);
   }
 
-  private readonly velocity = new THREE.Vector3();
+  /** World-space velocity. Read-only for consumers (enemy ballistic lead). */
+  public readonly velocity = new THREE.Vector3();
   private readonly feetPosition = new THREE.Vector3();
   private readonly standTest = new Capsule(
     new THREE.Vector3(),
@@ -78,7 +79,8 @@ export class Player {
   private recoil = 0;
   private bobPhase = 0;
   private bobAmp = 0;
-  private eyeHeight = EYE_STAND;
+  /** Current eye height above the capsule end — crouch lowers it. */
+  public eyeHeight = EYE_STAND;
   private slideTimer = 0;
   private wasCrouching = false;
   private stamina = STAMINA_MAX;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { EnemyManager } from '../enemies/Enemies';
+import type { EnemyManager, Enemy } from '../enemies/Enemies';
 import type { Player } from '../player/Player';
 import type { InputFrame } from '../input/Input';
 import type { Effects } from './Effects';
@@ -38,6 +38,9 @@ export class WeaponController {
   private readonly tmpMuzzle = new THREE.Vector3();
   private readonly tmpRight = new THREE.Vector3();
   private readonly tmpUp = new THREE.Vector3();
+  /** Rounds still owed to the current burst group. */
+  private burstLeft = 0;
+  private burstT = 0;
 
   public onFired: ((weapon: WeaponState) => void) | null = null;
   public onSwitched: (() => void) | null = null;
@@ -128,6 +131,19 @@ export class WeaponController {
         this.fire(weapon, this.player.isAiming);
       }
     }
+    // Burst weapons keep cycling their group while the trigger is held down:
+    // the first round is fired by the branch above, the rest here.
+    this.burstT -= dt;
+    const burstCount = weapon.def.burstCount ?? 0;
+    if (this.burstLeft > 0 && this.burstT <= 0) {
+      if (weapon.mag <= 0 || weapon.reloading || !frame.locked) {
+        this.burstLeft = 0;
+      } else {
+        this.fire(weapon, this.player.isAiming);
+        this.burstLeft -= 1;
+        this.burstT = 1 / (burstCount > 0 ? burstCount * 4 : 12);
+      }
+    }
   }
 
   private switchTo(index: number): void {
@@ -162,6 +178,9 @@ export class WeaponController {
   private fire(weapon: WeaponState, aiming: boolean): void {
     weapon.mag -= 1;
     weapon.cooldown = 1 / weapon.def.fireRate;
+    // A burst weapon arms its follow-up rounds on the first shot of a group.
+    const burstCount = weapon.def.burstCount ?? 0;
+    if (burstCount > 1) this.burstLeft = burstCount - 1;
     this.player.addRecoil(weapon.def.recoil);
     this.audio.shot(weapon.def.sound);
     this.onFired?.(weapon);
@@ -223,6 +242,43 @@ export class WeaponController {
     this.effects.smoke(muzzle, this.tmpDir);
   }
 
+  /**
+   * Explosive splash. Linear falloff from the centre to `blastFloor` at the
+   * edge; the direct hit is excluded so it is never damaged twice. Self-damage
+   * uses a SEPARATE, smaller radius so point-blank shots stay punishing without
+   * letting the blast substitute for a jump (research: cap the vertical impulse).
+   */
+  private explode(point: THREE.Vector3, weapon: WeaponState, direct: Enemy | null): void {
+    const def = weapon.def;
+    const radius = def.blastRadius ?? 0;
+    if (radius <= 0) return;
+    const floor = def.blastFloor ?? 0;
+    const center = def.damage * this.damageScale;
+    this.effects.ring(point, def.tracerColor, radius * 2.4, 0.4);
+    this.effects.burst(point, def.tracerColor, 16, 2.2);
+    this.effects.smoke(point);
+    this.audio.blast();
+    this.enemies.forEachLive((enemy) => {
+      if (enemy === direct) return;
+      const distance = enemy.group.position.distanceTo(point);
+      if (distance > radius) return;
+      const falloff = Math.max(floor, 1 - distance / radius);
+      const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
+      this.enemies.damageEnemy(enemy, center * falloff, at, undefined, true);
+    });
+    // Self-damage: smaller radius, and the falloff is applied to the PLAYER's
+    // own position so backing off is the counter-play.
+    const selfRadius = def.selfBlastRadius ?? 0;
+    if (selfRadius > 0 && !this.player.dead) {
+      const selfDist = this.player.position.distanceTo(point);
+      if (selfDist <= selfRadius) {
+        const falloff = Math.max(0, 1 - selfDist / selfRadius);
+        const selfDamage = center * (def.selfBlastFraction ?? 0) * falloff;
+        if (selfDamage > 0) this.player.damage(selfDamage, point);
+      }
+    }
+  }
+
   /** 0 miss, 1 hit, 2 headshot, 3 kill, 4 blocked by armour. */
   private fireRay(origin: THREE.Vector3, dir: THREE.Vector3, weapon: WeaponState, showTracer: boolean): 0 | 1 | 2 | 3 | 4 {
     this.ray.set(origin, dir);
@@ -241,6 +297,7 @@ export class WeaponController {
       );
       this.effects.ring(point, 0xffffff, 1.2, 0.18);
       if (showTracer) this.effects.tracer(origin, point, weapon.def.tracerColor);
+      if (weapon.def.blastRadius) this.explode(point, weapon, enemyHit.enemy);
       if (hit.killed) return 3;
       if (hit.blocked) return 4;
       return enemyHit.headshot ? 2 : 1;
@@ -250,9 +307,15 @@ export class WeaponController {
       this.effects.impact(wallHit.position, normal);
       this.effects.decal(wallHit.position, normal);
       if (showTracer) this.effects.tracer(origin, wallHit.position, weapon.def.tracerColor);
+      // A wall hit still detonates — that is the whole point of a launcher.
+      if (weapon.def.blastRadius) {
+        const point = this.tmpPoint.copy(wallHit.position);
+        this.explode(point, weapon, null);
+      }
     } else if (showTracer) {
       const end = this.tmpPoint.copy(origin).addScaledVector(dir, weapon.def.range);
       this.effects.tracer(origin, end, weapon.def.tracerColor);
+      if (weapon.def.blastRadius) this.explode(end, weapon, null);
     }
     return 0;
   }

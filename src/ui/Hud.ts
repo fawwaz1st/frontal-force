@@ -28,6 +28,8 @@ export interface HudState {
   reloading: boolean;
   reloadProgress: number;
   weaponIndex: number;
+  /** Display name of the equipped weapon (10-slot arsenal). */
+  weaponName: string;
   wave: number;
   enemiesLeft: number;
   phase: WavePhase;
@@ -84,6 +86,7 @@ export class Hud {
   private readonly ammoResv: HTMLElement;
   private readonly reloadBar: HTMLElement;
   private readonly slots: HTMLElement[] = [];
+  private readonly weaponNameEl: HTMLElement;
   private readonly waveBanner: HTMLElement;
   private readonly bannerTitle: HTMLElement;
   private readonly bannerSub: HTMLElement;
@@ -112,6 +115,9 @@ export class Hud {
   private readonly sensInputs: HTMLInputElement[] = [];
   private readonly volInputs: HTMLInputElement[] = [];
   private readonly modeChips: HTMLButtonElement[] = [];
+  /** Icon per weapon slot, in WEAPON_ORDER — drives the 3-slot window. */
+  private slotIcons: IconName[] = [];
+  private readonly slotCount: HTMLElement;
   private readonly pauseModeEl: HTMLElement;
   private readonly allyEl: HTMLElement;
   private readonly allyFill: HTMLElement;
@@ -181,6 +187,10 @@ export class Hud {
           </div>
         </div>
         <div class="hud__weapon">
+          <div class="hud__weapon-row">
+            <span class="hud__weapon-name" data-weapon-name></span>
+            <span class="hud__slot-count" data-slot-count>1/10</span>
+          </div>
           <div class="hud__slots" data-slots></div>
           <div class="hud__ammo" data-ammo>
             ${icon('bullet', 'hud__ammo-ic')}
@@ -299,14 +309,22 @@ export class Hud {
     this.timerN = q('[data-timer-n]');
 
     const slotsEl = q('[data-slots]');
-    const slotIcons: IconName[] = ['rifle', 'smg', 'shotgun', 'railgun'];
-    for (let i = 0; i < 4; i++) {
+    const slotIcons: IconName[] = [
+      'rifle', 'smg', 'shotgun', 'railgun', 'dmr',
+      'lmg', 'pistol', 'launcher', 'beam', 'burst',
+    ];
+    // Ten weapons would be an unreadable icon wall, so the HUD shows a
+    // three-slot window (previous / current / next) plus an index counter.
+    for (let i = 0; i < 3; i++) {
       const slot = document.createElement('div');
       slot.className = 'hud__slot';
       slot.innerHTML = icon(slotIcons[i] ?? 'rifle');
       slotsEl.appendChild(slot);
       this.slots.push(slot);
     }
+    this.slotIcons = slotIcons;
+    this.slotCount = q('[data-slot-count]');
+    this.weaponNameEl = q('[data-weapon-name]');
 
     const dmgContainer = q('[data-dmg-container]');
     for (let i = 0; i < 6; i++) {
@@ -357,8 +375,17 @@ export class Hud {
 
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
-      if (slot) slot.classList.toggle('active', i === s.weaponIndex);
+      if (!slot) continue;
+      // Window of three around the active weapon: prev / current / next.
+      const total = this.slotIcons.length;
+      const offset = i - 1;
+      const idx = ((s.weaponIndex + offset) % total + total) % total;
+      slot.innerHTML = icon(this.slotIcons[idx] ?? 'rifle');
+      slot.classList.toggle('active', i === 1);
+      slot.classList.toggle('hud__slot--edge', i !== 1);
     }
+    this.setText('slotn', this.slotCount, `${s.weaponIndex + 1}/${this.slotIcons.length}`);
+    this.setText('wname', this.weaponNameEl, s.weaponName);
 
     this.setText('wave', this.waveText, String(s.wave));
     this.setText('score', this.scoreText, String(s.score));

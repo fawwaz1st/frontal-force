@@ -15,12 +15,67 @@ import { Hud, type HudState, type RadarBlip, type SettingsPatch } from '../ui/Hu
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { loadSave, persistSave, type SaveData } from '../core/storage';
 import { clamp } from '../core/math';
+import type { CombatTarget } from '../combat/Combatant';
 
 type GamePhase = 'menu' | 'playing' | 'paused' | 'dead';
 
 /** Kill-combo: refresh window per kill, tier decay after it lapses (research: ×8 cap). */
 const COMBO_WINDOW = 3;
 const COMBO_DECAY = 0.5;
+
+/**
+ * Adapter: makes the human a `CombatTarget` without teaching Player about
+ * enemy AI. Kept in the orchestrator so the player module stays renderer-only.
+ */
+class PlayerTarget implements CombatTarget {
+  public readonly team = 'player' as const;
+  /** The human is the most attractive victim on the field. */
+  public readonly threatRole = 1;
+
+  public constructor(private readonly player: Player) {}
+
+  public get targetId(): number {
+    return 1;
+  }
+
+  public get position(): THREE.Vector3 {
+    return this.player.position;
+  }
+
+  public get velocity(): THREE.Vector3 {
+    return this.player.velocity;
+  }
+
+  public get eyeHeight(): number {
+    return this.player.eyeHeight;
+  }
+
+  public get hpFraction(): number {
+    return this.player.health / this.player.maxHealth;
+  }
+
+  public get targetable(): boolean {
+    return !this.player.dead;
+  }
+
+  public aimPressureAt(from: THREE.Vector3): number {
+    if (this.player.dead) return 0;
+    const dx = from.x - this.player.position.x;
+    const dz = from.z - this.player.position.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return 1;
+    const yaw = this.player.yawAngle;
+    const fx = -Math.sin(yaw);
+    const fz = -Math.cos(yaw);
+    const dot = (dx / len) * fx + (dz / len) * fz;
+    if (dot <= 0) return 0;
+    return dot * dot;
+  }
+
+  public receiveDamage(amount: number, from: THREE.Vector3): void {
+    this.player.damage(amount, from);
+  }
+}
 
 export class Game {
   private renderer!: THREE.WebGPURenderer;
@@ -36,6 +91,8 @@ export class Game {
   private waves!: WaveManager;
   private readonly viewmodel = new Viewmodel();
   private ally!: Ally;
+  /** Player-as-target adapter — registered with the enemy threat table. */
+  private playerTarget!: PlayerTarget;
   private readonly hud = new Hud();
   private loop!: GameLoop;
   private readonly save: SaveData;
@@ -68,6 +125,7 @@ export class Game {
     reloading: false,
     reloadProgress: 0,
     weaponIndex: 0,
+    weaponName: '',
     wave: 1,
     enemiesLeft: 0,
     phase: 'intermission',
@@ -145,6 +203,7 @@ export class Game {
     this.world.build(this.scene);
     this.player = new Player(this.world.octree);
     this.player.setSensitivity(this.save.sensitivity);
+    this.playerTarget = new PlayerTarget(this.player);
     this.scene.add(this.player.camera, this.player.body);
     this.effects = new Effects(this.scene);
     this.enemies = new EnemyManager(this.scene, this.world.octree, this.effects, this.audio);
@@ -172,7 +231,19 @@ export class Game {
     };
     this.ally = new Ally(this.scene, this.world.octree, this.effects, this.audio);
     this.ally.onShot = (pan) => this.audio.allyShot(pan);
+    // Escort stereo placement needs the live listener frame, which only the
+    // orchestrator has — the bots just report world positions.
+    this.ally.panProvider = (p) => {
+      const dx = p.x - this.player.position.x;
+      const dz = p.z - this.player.position.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const yaw = this.player.yawAngle;
+      return Math.max(-1, Math.min(1, (dx / len) * Math.cos(yaw) - (dz / len) * Math.sin(yaw)));
+    };
     this.enemies.interceptors.push(...this.ally.bots);
+    // Enemy AI scores this registry instead of hard-coding "the player", so a
+    // downed human does not make the whole roster go passive.
+    this.enemies.targets.push(this.playerTarget, ...this.ally.bots);
     this.pickups = new Pickups(this.scene, this.audio, this.effects);
     this.waves = new WaveManager(this.enemies, this.world);
     this.waves.setMode(this.save.mode);
@@ -463,7 +534,7 @@ export class Game {
       this.weapons.lastShot,
     );
     this.weapons.lastShot = null;
-    this.ally.update(dt, this.player.position, this.player.yawAngle, this.enemies, this.waves.damageScale);
+    this.ally.update(dt, this.player.position, this.enemies, this.waves.damageScale);
 
     // Footsteps: stride-linked distance cadence while grounded
     const speed = this.player.horizontalSpeed;
@@ -560,6 +631,7 @@ export class Game {
     state.reloading = view.reloading;
     state.reloadProgress = view.reloadProgress;
     state.weaponIndex = view.index;
+    state.weaponName = weapon.def.name;
     state.wave = Math.max(1, this.waves.wave);
     state.enemiesLeft = this.enemies.aliveCount;
     state.phase = this.waves.phase;

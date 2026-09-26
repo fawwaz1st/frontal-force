@@ -8,7 +8,8 @@ export type IconName =
   | 'reload' | 'clock' | 'check' | 'play' | 'exit' | 'grid'
   | 'target' | 'speaker' | 'mouse' | 'move' | 'jump' | 'sprint'
   | 'crouch' | 'swap' | 'pause' | 'crate' | 'crosshair' | 'infinity' | 'bot'
-  | 'rifle' | 'smg' | 'shotgun' | 'railgun';
+  | 'rifle' | 'smg' | 'shotgun' | 'railgun'
+  | 'dmr' | 'lmg' | 'pistol' | 'launcher' | 'beam' | 'burst';
 
 const ICON_PATHS: Record<IconName, string> = {
   // Score: concentric target
@@ -65,6 +66,24 @@ const ICON_PATHS: Record<IconName, string> = {
     '<path d="M2.5 9.5h10v3.5H6l-.7 3H2.9l.6-3H2.5v-3.5Z"/><path d="M12.5 10.2h9M12.5 12.3h9"/><path d="M13.5 13.5h3.5v2h-3.5z"/>',
   railgun:
     '<path d="M2.5 10h8v3.5H6l-.6 3H3l.5-3H2.5V10Z"/><path d="M10.5 11h11"/><path d="M12.5 11V8.2h4.5V11"/><circle cx="14.8" cy="7.4" r="0.4"/>',
+  // Long barrel + tall scope: reads as "precision" at 15 px.
+  dmr:
+    '<path d="M3 9.8h8v3.6H6.6l-.6 3H3.6l.5-3H3V9.8Z"/><path d="M11 11.4h10.5"/><path d="M8.6 8.6V6.8h5.6v1.8"/><circle cx="11.4" cy="7.7" r="0.5"/><path d="M7 13.4v4.4M5.4 18.2h3.2"/>',
+  // Box mag + bipod legs: bulky on purpose.
+  lmg:
+    '<path d="M2.6 9.2h9.4v4.2H6.4l-.6 2.8H3.2l.5-2.8H2.6V9.2Z"/><path d="M12 10.6h8.5M20.5 10.6h1.5"/><path d="M8.4 13.4v5.6M6.2 19h4.4M14.5 13.6l-2.6 5M14.5 13.6l2.6 5"/>',
+  // Compact slide, short barrel, no stock.
+  pistol:
+    '<path d="M6.5 8.6h8.2v3.2H9.8l-1 4.2H6l1-4.2H6.5V8.6Z"/><path d="M14.7 9.6h5"/><path d="M9.4 11.8 8 15.6"/>',
+  // Fat tube + wide bore: obviously a launcher, not a rifle.
+  launcher:
+    '<path d="M2.6 9h13.4v4.6H6.4l-.7 3H3.2l.6-3H2.6V9Z"/><ellipse cx="17.6" cy="11.3" rx="1.6" ry="2.6"/><path d="M7.4 13.6v5M5.6 18.6h3.6"/><circle cx="10.6" cy="7.4" r="1.1"/>',
+  // Emitter coil + bolt glyph: energy, not kinetic.
+  beam:
+    '<path d="M3 10.4h7.6v3.2H6.2l-.6 2.6H3.4l.5-2.6H3v-3.2Z"/><path d="M10.6 12h3.2"/><circle cx="16.2" cy="12" r="2.6"/><path d="M16.2 6.8v2.6M16.2 14.6v2.6M11 12H8.4M21.4 12h-2.6"/><path d="M6.4 13.6v4.6M4.8 18.2h3.2"/>',
+  // Three-tube cluster: the burst count is literally in the silhouette.
+  burst:
+    '<path d="M3.4 9.2h8.2v3.6H6.8l-.6 3H3.8l.5-3H3.4V9.2Z"/><path d="M11.6 10h4.2M11.6 12.6h4.2M11.6 15.2h4.2"/><path d="M15.8 8.6v8"/><path d="M18.6 8.6h3v8h-3z"/><path d="M6.8 12.8v4.8M5.2 17.6h3.2"/>',
 };
 
 /** Inline SVG markup helper. Size/color come from CSS classes. */

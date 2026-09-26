@@ -9,6 +9,15 @@ import {
   type CoverSpotData,
   type TacticalClaim,
 } from '../game/Tactics';
+import {
+  grudgeAt,
+  RETARGET_INTERVAL,
+  RETARGET_STAGGER,
+  TARGET_COMMIT_TIME,
+  TARGET_SWITCH_HYSTERESIS,
+  threatScore,
+  type CombatTarget,
+} from '../combat/Combatant';
 
 export type EnemyKind = 'grunt' | 'rusher' | 'gunner' | 'warden';
 
@@ -64,6 +73,18 @@ export interface Enemy {
   staggerT: number;
   tacticalId: number;
   state: 'advance' | 'cover' | 'peek' | 'search' | 'flank' | 'suppress';
+  /** Current chosen victim. Null only before the first resolve pass. */
+  target: CombatTarget | null;
+  /** Seconds until the next target re-score (staggered per agent). */
+  retargetT: number;
+  /** Seconds of forced commitment to the current target. */
+  commitT: number;
+  /** Seconds left on the grudge against `grudgeId` (a target that hurt me). */
+  grudgeT: number;
+  /** Which target hurt me most recently — grudge is aimed at this one only. */
+  grudgeId: number;
+  /** Last resolve result for the current target: was it in sight? */
+  targetVisible: boolean;
   lastKnown: THREE.Vector3;
   claim: TacticalClaim | null;
   perceptionTimer: number;
@@ -82,6 +103,9 @@ export interface Projectile {
   damage: number;
   life: number;
   active: boolean;
+  /** Identity of the target this bolt was aimed at — bolts only hurt their
+   *  intended victim's team, so a stray round never hits a bystander. */
+  targetId: number;
 }
 
 /** Anything that can intercept a bolt before it reaches the player. */
@@ -105,7 +129,8 @@ const WARDEN_STAGGER = 1.2;
 /** Blind agents re-orient lastKnown toward the objective at this cadence. */
 const SEARCH_SYNC_INTERVAL = 3;
 const PERCEPTION_INTERVAL = 0.125;
-const SEARCH_MEMORY = 4.5;
+/** Alerted contact memory (seconds) — longer than the unalerted baseline. */
+const SEARCH_MEMORY = 6;
 const MAX_ACTIVE_SHOOTERS = 4;
 const BURST_MAX = 3;
 
@@ -117,6 +142,12 @@ export class EnemyManager {
   public playerYaw = 0;
   /** Escort bots that intercept bolts before they reach the player. */
   public readonly interceptors: Interceptor[] = [];
+  /**
+   * Every valid victim, registered by Game each frame (player + escorts).
+   * Enemy AI never references "the player" directly — it scores this list, so
+   * adding a friendly type costs one push and no AI changes.
+   */
+  public readonly targets: CombatTarget[] = [];
 
   /** Reinitialize cover claims after World regenerates its layout. */
   public setCoverSpots(spots: readonly CoverSpotData[]): void {
@@ -202,7 +233,9 @@ export class EnemyManager {
       bolt.add(glow);
       bolt.visible = false;
       this.group.add(bolt);
-      this.projectiles.push({ mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false });
+      this.projectiles.push({
+        mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false, targetId: -1,
+      });
     }
   }
 
@@ -230,6 +263,113 @@ export class EnemyManager {
       nearest = enemy;
     }
     return nearest;
+  }
+
+  /**
+   * The enemy this position should shoot at: live enemies only, and never one
+   * that is already inside `exclude` (so an escort never wastes shots on the
+   * target its partner is already committed to).
+   */
+  public nearestEnemyExcluding(
+    position: THREE.Vector3,
+    exclude: readonly (Enemy | null)[] = [],
+    maxRange = Number.POSITIVE_INFINITY,
+  ): Enemy | null {
+    let nearest: Enemy | null = null;
+    let bestDistanceSq = maxRange === Number.POSITIVE_INFINITY
+      ? Number.MAX_SAFE_INTEGER
+      : maxRange * maxRange;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      let skip = false;
+      for (const ex of exclude) {
+        if (ex === enemy) { skip = true; break; }
+      }
+      if (skip) continue;
+      const dx = enemy.group.position.x - position.x;
+      const dz = enemy.group.position.z - position.z;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq >= bestDistanceSq) continue;
+      bestDistanceSq = distanceSq;
+      nearest = enemy;
+    }
+    return nearest;
+  }
+
+  /**
+   * Threat-table entry: the target that just damaged this agent. Called by
+   * whatever routed the damage so the AI can hold a grudge for GRUDGE_WINDOW s.
+   */
+  public markAggressor(enemy: Enemy, attackerId: number): void {
+    enemy.grudgeId = attackerId;
+    enemy.grudgeT = 4;
+  }
+
+  /**
+   * Score every registered target and commit to the best one.
+   * Staggered per agent (RETARGET_STAGGER) and rate-limited (RETARGET_INTERVAL)
+   * so the whole roster never re-scores on the same frame. Switching away from
+   * the incumbent requires beating it by TARGET_SWITCH_HYSTERESIS, which is
+   * what stops the per-frame target thrashing that utility AI is prone to.
+   */
+  private resolveTarget(enemy: Enemy, dt: number): void {
+    enemy.retargetT -= dt;
+    enemy.commitT = Math.max(0, enemy.commitT - dt);
+    enemy.grudgeT = Math.max(0, enemy.grudgeT - dt);
+    const current = enemy.target;
+    // A downed or unregistered target is dropped immediately — no hysteresis.
+    if (current && !current.targetable) enemy.target = null;
+    if (enemy.retargetT > 0) return;
+    enemy.retargetT = RETARGET_INTERVAL + enemy.tacticalId * RETARGET_STAGGER * 0.1;
+
+    const incumbent = enemy.target;
+    let best: CombatTarget | null = null;
+    let bestScore = 0;
+    for (const candidate of this.targets) {
+      if (!candidate.targetable) continue;
+      const distance = enemy.group.position.distanceTo(candidate.position);
+      const maxDistance = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 34 : 28;
+      const inSight = distance <= maxDistance
+        && this.hasLineOfSight(enemy.group.position, candidate.position);
+      // A target we can see scores full; one we only remember scores a fraction.
+      const remembered = candidate === incumbent && enemy.memory > 0 && enemy.targetVisible;
+      const visibility = inSight ? 1 : remembered ? 0.35 : 0;
+      if (visibility <= 0) continue;
+      const score = threatScore({
+        distance,
+        role: candidate.threatRole,
+        aggression: enemy.grudgeId === candidate.targetId ? grudgeAt(4 - enemy.grudgeT) : 0,
+        hpFraction: candidate.hpFraction,
+        aimPressure: candidate.aimPressureAt(enemy.group.position),
+        visibility,
+      });
+      if (score <= bestScore) continue;
+      bestScore = score;
+      best = candidate;
+    }
+
+    if (!best) {
+      // Nothing visible: keep the last victim as the memory anchor.
+      return;
+    }
+    if (incumbent && incumbent.targetable && best !== incumbent) {
+      if (enemy.commitT > 0) return;
+      const incumbentScore = threatScore({
+        distance: enemy.group.position.distanceTo(incumbent.position),
+        role: incumbent.threatRole,
+        aggression: enemy.grudgeId === incumbent.targetId ? grudgeAt(4 - enemy.grudgeT) : 0,
+        hpFraction: incumbent.hpFraction,
+        aimPressure: incumbent.aimPressureAt(enemy.group.position),
+        visibility: 1,
+      });
+      if (bestScore < incumbentScore * TARGET_SWITCH_HYSTERESIS) return;
+    }
+    if (best !== incumbent) {
+      enemy.target = best;
+      enemy.commitT = TARGET_COMMIT_TIME;
+      // New victim: the old memory anchor is stale.
+      enemy.lastKnown.copy(best.position);
+    }
   }
 
   public spawn(kind: EnemyKind, position: THREE.Vector3, hpMul = 1, spdMul = 1, atkMul = 1): void {
@@ -267,6 +407,12 @@ export class EnemyManager {
       searchSyncT: randRange(0.4, SEARCH_SYNC_INTERVAL),
       tacticalId: this.nextTacticalId++,
       state: kind === 'rusher' ? 'flank' : kind === 'warden' ? 'suppress' : 'advance',
+      target: null,
+      retargetT: Math.random() * RETARGET_INTERVAL,
+      commitT: 0,
+      grudgeT: 0,
+      grudgeId: -1,
+      targetVisible: false,
       claim: null,
       perceptionTimer: Math.random() * PERCEPTION_INTERVAL,
       visible: false,
@@ -430,6 +576,12 @@ export class EnemyManager {
         this.enemies.splice(i, 1);
       }
     }
+    // Target acquisition runs before perception so `visible` describes the
+    // CHOSEN victim, not whichever friendly happens to be closest.
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      this.resolveTarget(enemy, dt);
+    }
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
       if (enemy.staggerT > 0) enemy.staggerT = Math.max(0, enemy.staggerT - dt);
@@ -458,7 +610,7 @@ export class EnemyManager {
       if (enemy.dead) continue;
       this.updateEnemy(enemy, dt, playerPos, playerDead, playerVel);
     }
-    this.updateProjectiles(dt, playerPos, playerDead);
+    this.updateProjectiles(dt);
   }
 
   public clear(): void {
@@ -488,25 +640,31 @@ export class EnemyManager {
     playerDead: boolean,
     playerVel?: THREE.Vector3,
   ): void {
-    this.updatePerception(enemy, dt, playerPos, playerDead);
+    this.updatePerception(enemy, dt, playerDead);
     // Blind sweep: while searching with no contact memory, re-orient the
     // objective toward the actual target every few seconds so a spawn that
     // starts outside perception still closes instead of freezing in place.
     if (enemy.state === 'search' && enemy.memory <= 0) {
       enemy.searchSyncT -= dt;
-      if (enemy.searchSyncT <= 0 && this.hasPlayerPos) {
+      if (enemy.searchSyncT <= 0) {
         enemy.searchSyncT = SEARCH_SYNC_INTERVAL;
-        enemy.lastKnown.copy(this.lastPlayerPos);
+        const anchor = enemy.target?.position ?? (this.hasPlayerPos ? this.lastPlayerPos : null);
+        if (anchor) enemy.lastKnown.copy(anchor);
       }
     }
-    const target = enemy.visible ? playerPos : enemy.lastKnown;
-    const toTarget = this.tmp.copy(target).sub(enemy.group.position);
+    // The aim objective is the chosen victim when in sight, otherwise the last
+    // place that victim was seen. With no victim at all, fall back to the
+    // player's position so a fresh spawn still advances into the fight.
+    const fallback = this.hasPlayerPos ? this.lastPlayerPos : playerPos;
+    const objective = enemy.target
+      ? (enemy.targetVisible ? enemy.target.position : enemy.lastKnown)
+      : fallback;
+    const toTarget = this.tmp.copy(objective).sub(enemy.group.position);
     toTarget.y = 0;
     const targetDistance = toTarget.length();
     if (targetDistance > 0.001) toTarget.divideScalar(targetDistance);
 
-    const facePoint = enemy.visible ? playerPos : enemy.lastKnown;
-    const toFace = this.tmp2.copy(facePoint).sub(enemy.group.position);
+    const toFace = this.tmp2.copy(objective).sub(enemy.group.position);
     toFace.y = 0;
     if (toFace.lengthSq() > 0.001) {
       // Model forward is -Z; adding +PI makes agents walk away.
@@ -514,37 +672,53 @@ export class EnemyManager {
       enemy.group.rotation.y = dampAngle(enemy.group.rotation.y, targetYaw, 10, dt);
     }
 
-    if (!playerDead) {
-      this.moveEnemy(enemy, dt, toTarget, targetDistance, playerPos);
-      this.updateAttack(enemy, dt, playerPos, playerVel);
+    // A dead human no longer freezes the AI: escorts are still valid victims,
+    // so the roster keeps fighting instead of going passive.
+    const anyVictim = this.targets.some((t) => t.targetable);
+    if (anyVictim) {
+      this.moveEnemy(enemy, dt, toTarget, targetDistance, objective);
+      this.updateAttack(enemy, dt, playerDead ? undefined : playerVel);
     }
-    this.animateEnemy(enemy, dt, targetDistance, playerDead);
+    this.animateEnemy(enemy, dt, targetDistance, !anyVictim);
   }
 
-private updatePerception(
-    enemy: Enemy,
-    dt: number,
-    playerPos: THREE.Vector3,
-    playerDead: boolean,
-  ): void {
+  /**
+   * Perceive the CHOSEN victim. `visible` therefore means "I can see the thing
+   * I am shooting at", which is what every downstream branch assumes.
+   */
+  private updatePerception(enemy: Enemy, dt: number, playerDead: boolean): void {
     enemy.memory = Math.max(0, enemy.memory - dt);
-    if (playerDead) {
+    const victim = enemy.target;
+    if (!victim || !victim.targetable) {
       enemy.visible = false;
+      enemy.targetVisible = false;
+      enemy.seenFor = 0;
       enemy.state = 'search';
+      if (enemy.claim) {
+        this.tactics.release(enemy.tacticalId);
+        enemy.claim = null;
+      }
       return;
     }
 
     enemy.perceptionTimer -= dt;
     if (enemy.perceptionTimer > 0) return;
     enemy.perceptionTimer = PERCEPTION_INTERVAL;
-    const distance = enemy.group.position.distanceTo(playerPos);
-    const maxDistance = enemy.kind === 'gunner' ? 34 : enemy.kind === 'rusher' ? 22 : 28;
-    const visible = distance <= maxDistance && this.hasLineOfSight(enemy.group.position, playerPos);
-    if (visible) {
+    const distance = enemy.group.position.distanceTo(victim.position);
+    // Two radii (sight vs keep-sight) kill the boundary flicker that a single
+    // threshold produces when a target strafes in and out of cover.
+    const maxDistance = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 34 : 28;
+    const acquire = distance <= maxDistance;
+    const keep = distance <= maxDistance * 1.2;
+    const inSight = (enemy.targetVisible ? keep : acquire)
+      && this.hasLineOfSight(enemy.group.position, victim.position);
+    enemy.targetVisible = inSight;
+    if (inSight) {
       enemy.visible = true;
       enemy.seenFor += PERCEPTION_INTERVAL;
+      // Alerted memory is longer than the unalerted baseline.
       enemy.memory = SEARCH_MEMORY;
-      enemy.lastKnown.copy(playerPos);
+      enemy.lastKnown.copy(victim.position);
       if (enemy.state === 'search') enemy.state = enemy.kind === 'rusher' ? 'flank' : 'advance';
     } else {
       enemy.visible = false;
@@ -558,7 +732,6 @@ private updatePerception(
         enemy.attackTimer = Math.max(enemy.attackTimer, 0.25);
       }
     }
-
     if (enemy.claim && !enemy.visible && enemy.memory <= 0) {
       this.tactics.release(enemy.tacticalId);
       enemy.claim = null;
@@ -577,6 +750,8 @@ private updatePerception(
       enemy.state = 'suppress';
       enemy.attackTimer = Math.min(enemy.attackTimer, EnemyManager.windupOf(enemy.kind) + 0.2);
     }
+    // A searching agent that has never seen anyone still needs a nudge.
+    if (!enemy.visible && enemy.memory <= 0 && playerDead) enemy.state = 'search';
   }
 
   private moveEnemy(
@@ -694,12 +869,17 @@ private updatePerception(
   private updateAttack(
     enemy: Enemy,
     dt: number,
-    playerPos: THREE.Vector3,
     playerVel: THREE.Vector3 | undefined,
   ): void {
     const def = enemy.def;
     enemy.attackTimer -= dt;
-    const distance = enemy.group.position.distanceTo(playerPos);
+    const victim = enemy.target;
+    if (!victim || !victim.targetable) {
+      if (enemy.telegraphed) enemy.telegraphed = false;
+      return;
+    }
+    const victimPos = victim.position;
+    const distance = enemy.group.position.distanceTo(victimPos);
     const inRange = distance <= def.attackRange;
     const windup = EnemyManager.windupOf(enemy.kind);
     // Snapshot from update(): subtract self when this agent is already ready.
@@ -731,7 +911,7 @@ private updatePerception(
       enemy.attackTimer > 0
     ) {
       enemy.telegraphed = true;
-      this.audio.charge(this.panToward(enemy.group.position, playerPos));
+      this.audio.charge(this.panToward(enemy.group.position, victimPos));
     }
     if (enemy.attackTimer > 0) return;
 
@@ -746,12 +926,12 @@ private updatePerception(
       this.readyShooters -= 1;
     }
     if (enemy.kind === 'rusher') {
-      if (!this.hasLineOfSight(enemy.group.position, playerPos)) return;
-      this.onPlayerHit?.(def.damage, enemy.group.position);
-      this.audio.melee(this.panToward(enemy.group.position, playerPos));
+      if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;
+      victim.receiveDamage(def.damage, enemy.group.position);
+      this.audio.melee(this.panToward(enemy.group.position, victimPos));
     } else {
-      this.fireProjectile(enemy, playerPos, playerVel);
-      this.audio.enemyShot(this.panToward(enemy.group.position, playerPos));
+      this.fireProjectile(enemy, victim, playerVel);
+      this.audio.enemyShot(this.panToward(enemy.group.position, victimPos));
       enemy.burst -= 1;
       if (enemy.burst <= 0) {
         enemy.burst = 1 + Math.floor(Math.random() * BURST_MAX);
@@ -937,22 +1117,23 @@ private updatePerception(
     return { root, body: torso, eye, legL, legR, armL, armR };
   }
 
-  private fireProjectile(enemy: Enemy, playerPos: THREE.Vector3, playerVel?: THREE.Vector3): void {
+  private fireProjectile(enemy: Enemy, victim: CombatTarget, victimVel?: THREE.Vector3): void {
     const proj = this.projectiles.find((p) => !p.active);
     if (!proj) return;
+    const victimPos = victim.position;
     const from = this.tmp.set(
       enemy.group.position.x,
       enemy.group.position.y + enemy.def.height * 0.75,
       enemy.group.position.z,
     );
     const speed = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 17 : 13;
-    const horizontal = Math.hypot(playerPos.x - from.x, playerPos.z - from.z);
+    const horizontal = Math.hypot(victimPos.x - from.x, victimPos.z - from.z);
     const flight = Math.max(0.2, horizontal / speed);
-    const aim = this.tmp2.set(playerPos.x, playerPos.y + 1.4, playerPos.z);
-    if (playerVel) aim.addScaledVector(playerVel, flight);
+    const aim = this.tmp2.set(victimPos.x, victimPos.y + 1.4, victimPos.z);
+    if (victimVel) aim.addScaledVector(victimVel, flight);
 
     const baseErr = enemy.kind === 'gunner' ? 0.015 : enemy.kind === 'warden' ? 0.02 : 0.05;
-    const speedErr = playerVel ? Math.min(0.035, Math.hypot(playerVel.x, playerVel.z) * 0.007) : 0;
+    const speedErr = victimVel ? Math.min(0.035, Math.hypot(victimVel.x, victimVel.z) * 0.007) : 0;
     const err = (baseErr + speedErr) * flight;
     aim.x += randRange(-err, err);
     aim.y += randRange(-err * 0.5, err * 0.5);
@@ -974,12 +1155,13 @@ private updatePerception(
     proj.mesh.lookAt(this.tmp3.copy(proj.mesh.position).add(proj.vel));
     proj.damage = enemy.def.damage;
     proj.life = 4;
+    proj.targetId = victim.targetId;
     proj.active = true;
     proj.mesh.visible = true;
     this.effects.burst(from, enemy.def.color, 3, 1.2);
   }
 
-  private updateProjectiles(dt: number, playerPos: THREE.Vector3, playerDead: boolean): void {
+  private updateProjectiles(dt: number): void {
     for (const proj of this.projectiles) {
       if (!proj.active) continue;
       proj.life -= dt;
@@ -1006,54 +1188,38 @@ private updatePerception(
         }
       }
 
-      // Player collision
-      if (!playerDead) {
-        const center = this.tmp.set(playerPos.x, playerPos.y + 1.0, playerPos.z);
+      // Intended victim: a bolt only hurts the friendly it was aimed at, so a
+      // stray round never clips an escort that walked into the line of fire.
+      const victim = this.targets.find((t) => t.targetId === proj.targetId);
+      if (victim && victim.targetable) {
+        const center = this.tmp.set(victim.position.x, victim.position.y + 1.0, victim.position.z);
         if (proj.mesh.position.distanceToSquared(center) < 0.75 * 0.75) {
-          this.onPlayerHit?.(proj.damage, proj.mesh.position);
+          this.markAggressorForTarget(proj.targetId, proj.mesh.position);
+          victim.receiveDamage(proj.damage, proj.mesh.position);
           proj.active = false;
           proj.mesh.visible = false;
           continue;
         }
       }
 
-      // Escort interception — only bolts that actually cross a guard's body.
-      // The old 0.8m sphere test made every bot a global shield: it soaked
-      // bolts aimed anywhere near it, so the player stopped taking fire.
-      let eaten = false;
-      const target = this.tmp.set(playerPos.x, playerPos.y + 1, playerPos.z);
-      for (const guard of this.interceptors) {
-        if (!guard.active) continue;
-        const seg = this.tmp2.copy(target).sub(proj.mesh.position);
-        const segLen2 = seg.lengthSq();
-        if (segLen2 < 1e-6) continue;
-        const tGuard = clamp(
-          this.tmp3.set(guard.position.x, guard.position.y + 1, guard.position.z)
-            .sub(proj.mesh.position).dot(seg) / segLen2,
-          0,
-          1,
-        );
-        const closest = this.tmp3.copy(proj.mesh.position).addScaledVector(seg, tGuard);
-        const gx = guard.position.x;
-        const gy = guard.position.y + 1;
-        const gz = guard.position.z;
-        if (closest.distanceToSquared(this.tmp4.set(gx, gy, gz)) < 0.6 * 0.6) {
-          guard.takeDamage(proj.damage);
-          this.effects.burst(closest.clone(), 0xff9f1c, 5, 1.4);
-          eaten = true;
-          break;
-        }
-      }
-      if (eaten) {
-        proj.active = false;
-        proj.mesh.visible = false;
-        continue;
-      }
-
       if (proj.life <= 0 || Math.abs(proj.mesh.position.x) > 66 || Math.abs(proj.mesh.position.z) > 66) {
         proj.active = false;
         proj.mesh.visible = false;
       }
+    }
+  }
+
+  /**
+   * Squad alert: when a friendly is hit, nearby enemies learn the shooter's
+   * position. One pass over the roster with a radius test — O(n), never O(n²).
+   */
+  private markAggressorForTarget(targetId: number, at: THREE.Vector3): void {
+    for (const enemy of this.enemies) {
+      if (enemy.dead || enemy.target?.targetId === targetId) continue;
+      if (enemy.group.position.distanceToSquared(at) > 25 * 25) continue;
+      enemy.lastKnown.copy(at);
+      enemy.memory = Math.max(enemy.memory, 2.5);
+      if (!enemy.visible) enemy.state = 'search';
     }
   }
 
