@@ -171,10 +171,88 @@ check('storage: SaveData declares every expected field', () => {
       'totalWavesCleared',
       'killsPerMode',
       'sensitivity',
+      'touchSensitivity',
+      'quality',
       'volume',
       'mode',
     ].sort(),
   );
+});
+check('storage: quality tiers are allowlisted', () => {
+  const m = /export const QUALITY_TIERS = \[([^\]]*)\]/.exec(storageSrc);
+  assert.ok(m, 'QUALITY_TIERS not found');
+  const tiers = [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1]);
+  assert.deepEqual(tiers, ['auto', 'low', 'medium', 'high']);
+});
+
+// ---------- quality presets (src/core/quality.ts) ----------
+const qualitySrc = readSrc('core/quality.ts');
+check('quality: every preset declares the full shape', () => {
+  for (const tier of ['low', 'medium', 'high']) {
+    assert.match(
+      qualitySrc,
+      new RegExp(`${tier}: \\{ tier: '${tier}', pixelRatioCap: [\\d.]+, antialias: (true|false), shadows: (true|false), shadowMapSize: \\d+ \\}`),
+    );
+  }
+});
+check('quality: low disables AA + shadows and renders below native', () => {
+  const low = /low: \{ tier: 'low', pixelRatioCap: ([\d.]+), antialias: (true|false), shadows: (true|false)/.exec(qualitySrc);
+  assert.ok(low, 'low preset not found');
+  assert.equal(Number(low[1]), 0.75);
+  assert.equal(low[2], 'false');
+  assert.equal(low[3], 'false');
+});
+check('quality: governor only steps down past the first tier', () => {
+  // The step-back-up branch must be guarded by `stepIndex === 0`.
+  assert.match(qualitySrc, /if \(this\.stepIndex === 0\) \{[\s\S]*?return false;/);
+  assert.match(qualitySrc, /SCALE_STEPS = \[1, 0\.79, 0\.62, 0\.5, 0\.4, 0\.31, 0\.25\]/);
+});
+
+// ---------- threat scoring (src/combat/Combatant.ts) ----------
+const combatantSrc = readSrc('combat/Combatant.ts');
+const threatWeights = (): Record<string, number> => {
+  const m = /THREAT_WEIGHTS = \{([\s\S]*?)\} as const/.exec(combatantSrc);
+  assert.ok(m, 'THREAT_WEIGHTS not found');
+  const out: Record<string, number> = {};
+  for (const x of m[1].matchAll(/([a-zA-Z]+): ([\d.]+)/g)) {
+    if (x[1] && x[2]) out[x[1]] = Number(x[2]);
+  }
+  return out;
+};
+check('threat: weights sum to 1', () => {
+  const w = threatWeights();
+  const sum = Object.values(w).reduce((a, b) => a + b, 0);
+  closeTo(sum, 1, 1e-9);
+  assert.deepEqual(Object.keys(w).sort(), [
+    'aggression', 'aimPressure', 'fragility', 'proximity', 'role',
+  ]);
+});
+check('threat: an invisible candidate scores zero', () => {
+  // Mirrors threatScore()'s early-out.
+  const score = (visibility: number): number => (visibility <= 0 ? 0 : 1);
+  assert.equal(score(0), 0);
+  assert.equal(score(0.35), 1);
+});
+check('threat: the human outranks an escort at equal distance', () => {
+  const w = threatWeights();
+  const proximity = 1 - 10 / 34;
+  const player = w.proximity! * proximity + w.role! * 1;
+  const escort = w.proximity! * proximity + w.role! * 0.45;
+  assert.ok(player > escort, 'player threatRole must be 1.0 and escort 0.45');
+  assert.match(combatantSrc, /readonly threatRole: number;/);
+});
+check('threat: grudge decays to zero over the window', () => {
+  const window = Number(/GRUDGE_WINDOW = ([\d.]+)/.exec(combatantSrc)?.[1]);
+  assert.equal(window, 4);
+  const grudgeAt = (t: number): number => (t >= window ? 0 : 1 - t / window);
+  assert.equal(grudgeAt(0), 1);
+  assert.equal(grudgeAt(2), 0.5);
+  assert.equal(grudgeAt(4), 0);
+  assert.equal(grudgeAt(9), 0);
+});
+check('threat: hysteresis above 1 so the incumbent wins ties', () => {
+  const h = Number(/TARGET_SWITCH_HYSTERESIS = ([\d.]+)/.exec(combatantSrc)?.[1]);
+  assert.ok(h > 1, `switch threshold must exceed 1 (got ${h})`);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

@@ -1,6 +1,7 @@
 import { icon, type IconName } from './icons';
 import { GAME_MODES, type GameMode, type SaveData } from '../core/storage';
 import type { WavePhase } from '../game/Waves';
+import type { QualitySetting } from '../core/storage';
 
 const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
   standard: { icon: 'flag', label: 'STANDARD' },
@@ -64,6 +65,10 @@ export interface DeathStats {
 
 export interface SettingsPatch {
   sensitivity?: number;
+  /** Touch look multiplier — separate from the mouse sensitivity. */
+  touchSensitivity?: number;
+  /** 'auto' lets the boot heuristic + frame-time governor decide. */
+  quality?: QualitySetting;
   volume?: number;
 }
 
@@ -77,6 +82,8 @@ export class Hud {
   public onQuit: (() => void) | null = null;
   public onSettings: ((patch: SettingsPatch) => void) | null = null;
   public onMode: ((mode: GameMode) => void) | null = null;
+  /** Touch: tapping a slot chip requests that weapon (1-based). */
+  public onSlotTap: ((slot: number) => void) | null = null;
 
   private readonly healthFill: HTMLElement;
   private readonly healthHead: HTMLElement;
@@ -118,6 +125,14 @@ export class Hud {
   /** Icon per weapon slot, in WEAPON_ORDER — drives the 3-slot window. */
   private slotIcons: IconName[] = [];
   private readonly slotCount: HTMLElement;
+  /** Touch overlay elements — shown only in touch mode. */
+  private readonly touchRoot: HTMLElement;
+  private readonly stickEl: HTMLElement;
+  private readonly stickNub: HTMLElement;
+  private readonly touchButtons = new Map<string, HTMLElement>();
+  private readonly touchSensInputs: HTMLInputElement[];
+  private readonly qualitySelects: HTMLSelectElement[];
+  private touchMode = false;
   private readonly pauseModeEl: HTMLElement;
   private readonly allyEl: HTMLElement;
   private readonly allyFill: HTMLElement;
@@ -176,6 +191,18 @@ export class Hud {
       </div>
       <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}"></canvas>
       <div class="hud__hint" data-hint hidden></div>
+      <!-- Touch overlay: only shown once a real touch is seen. Positioned by
+           layoutTouch() so the button rects match the input hit-tests. -->
+      <div class="hud__touch" data-touch hidden>
+        <div class="hud__stick" data-stick hidden><i data-stick-nub></i></div>
+        <div class="hud__tbtn" data-tbtn="fire" hidden>${icon('crosshair')}</div>
+        <div class="hud__tbtn" data-tbtn="aim" hidden>${icon('target')}</div>
+        <div class="hud__tbtn" data-tbtn="jump" hidden>${icon('jump')}</div>
+        <div class="hud__tbtn" data-tbtn="sprint" hidden>${icon('sprint')}</div>
+        <div class="hud__tbtn" data-tbtn="crouch" hidden>${icon('crouch')}</div>
+        <div class="hud__tbtn" data-tbtn="reload" hidden>${icon('reload')}</div>
+        <div class="hud__tbtn" data-tbtn="cycle" hidden>${icon('swap')}</div>
+      </div>
       <div class="hud__bottom">
         <div class="hud__health">
           <div class="hud__health-head">${icon('shield', 'hud__health-ic')}<span class="hud__health-num" data-health>100</span></div>
@@ -205,7 +232,6 @@ export class Hud {
           <div class="hud__menu-title">FRONTAL FORCE</div>
           <div class="hud__menu-best" data-menu-best></div>
           <div class="hud__menu-records" data-menu-records hidden></div>
-          <div class="hud__touch-note">Requires mouse &amp; keyboard — desktop only</div>
           <div class="hud__modes" role="group" aria-label="Game mode">
             <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
             <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
@@ -216,7 +242,9 @@ export class Hud {
           <div class="hud__keys" data-keys></div>
           <div class="hud__settings">
             <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
+            <label title="Touch look" class="hud__setting-touch">${icon('move')}<input type="range" min="0.2" max="3" step="0.05" data-touch-sens aria-label="Touch sensitivity"></label>
             <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
+            <label title="Graphics quality" class="hud__setting-quality">${icon('grid')}<select data-quality aria-label="Graphics quality"><option value="auto">AUTO</option><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select></label>
           </div>
           <button class="hud__btn" data-start>${icon('play')}<span>DEPLOY</span></button>
         </div>
@@ -227,7 +255,9 @@ export class Hud {
           <div class="hud__pause-mode" data-pause-mode></div>
           <div class="hud__settings">
             <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
+            <label title="Touch look" class="hud__setting-touch">${icon('move')}<input type="range" min="0.2" max="3" step="0.05" data-touch-sens aria-label="Touch sensitivity"></label>
             <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
+            <label title="Graphics quality" class="hud__setting-quality">${icon('grid')}<select data-quality aria-label="Graphics quality"><option value="auto">AUTO</option><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select></label>
           </div>
           <div class="hud__btn-row">
             <button class="hud__btn" data-resume>${icon('play')}<span>RESUME</span></button>
@@ -335,14 +365,41 @@ export class Hud {
     }
 
     this.sensInputs = qa<HTMLInputElement>('input[data-sens]');
+    this.touchSensInputs = qa<HTMLInputElement>('input[data-touch-sens]');
+    this.qualitySelects = qa<HTMLSelectElement>('select[data-quality]');
     this.volInputs = qa<HTMLInputElement>('input[data-vol]');
+    this.touchRoot = q('[data-touch]');
+    this.stickEl = q('[data-stick]');
+    this.stickNub = q('[data-stick-nub]');
+    for (const el of qa<HTMLElement>('[data-tbtn]')) {
+      const id = el.dataset.tbtn;
+      if (id) this.touchButtons.set(id, el);
+    }
     for (const input of this.sensInputs) {
       input.addEventListener('input', () =>
         this.onSettings?.({ sensitivity: Number(input.value) }));
     }
+    for (const input of this.touchSensInputs) {
+      input.addEventListener('input', () =>
+        this.onSettings?.({ touchSensitivity: Number(input.value) }));
+    }
+    for (const select of this.qualitySelects) {
+      select.addEventListener('change', () => {
+        const value = select.value;
+        if (value === 'auto' || value === 'low' || value === 'medium' || value === 'high') {
+          this.onSettings?.({ quality: value });
+        }
+      });
+    }
     for (const input of this.volInputs) {
       input.addEventListener('input', () =>
         this.onSettings?.({ volume: Number(input.value) }));
+    }
+    // Slot chips are also the touch weapon selector.
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (!slot) continue;
+      slot.addEventListener('click', () => this.onSlotTap?.(i + 1));
     }
 
     q('[data-start]').addEventListener('click', () => this.onStart?.());
@@ -675,8 +732,69 @@ export class Hud {
     el.classList.add('show');
   }
 
-  public syncSettings(sensitivity: number, volume: number): void {
+  public syncSettings(
+    sensitivity: number,
+    volume: number,
+    touchSensitivity = 1,
+    quality: QualitySetting = 'auto',
+  ): void {
     for (const input of this.sensInputs) input.value = String(sensitivity);
+    for (const input of this.touchSensInputs) input.value = String(touchSensitivity);
+    for (const select of this.qualitySelects) select.value = quality;
     for (const input of this.volInputs) input.value = String(volume);
   }
+
+  /** Show the touch overlay. Called once a real touch is detected. */
+  public setTouchMode(on: boolean): void {
+    this.touchMode = on;
+    this.touchRoot.hidden = !on;
+    this.root.classList.toggle('hud--touch', on);
+    for (const el of this.touchButtons.values()) el.hidden = !on;
+    this.stickEl.hidden = !on;
+    this.layoutTouch();
+  }
+
+  /**
+   * Position the touch overlay from the input layer's own hit-rects, so what
+   * the player sees is exactly what the hit-test uses — one source of truth.
+   */
+  public layoutTouch(): void {
+    if (!this.touchMode) return;
+    for (const [id, el] of this.touchButtons) {
+      const btn = this.touchButtonRects?.find((b) => b.id === id);
+      if (!btn) continue;
+      el.style.left = `${btn.x - btn.radius}px`;
+      el.style.top = `${btn.y - btn.radius}px`;
+      el.style.width = `${btn.radius * 2}px`;
+      el.style.height = `${btn.radius * 2}px`;
+    }
+  }
+
+  /** Live stick visual — origin plus current deflection. */
+  public updateTouch(
+    stick: { active: boolean; originX: number; originY: number; x: number; y: number },
+    radius: number,
+  ): void {
+    if (!this.touchMode) return;
+    this.stickEl.hidden = !stick.active;
+    if (!stick.active) return;
+    this.stickEl.style.left = `${stick.originX - radius}px`;
+    this.stickEl.style.top = `${stick.originY - radius}px`;
+    this.stickEl.style.width = `${radius * 2}px`;
+    this.stickEl.style.height = `${radius * 2}px`;
+    const dx = stick.x - stick.originX;
+    const dy = stick.y - stick.originY;
+    const len = Math.hypot(dx, dy) || 1;
+    const clamped = Math.min(len, radius) / len;
+    this.stickNub.style.transform = `translate(${dx * clamped}px, ${dy * clamped}px)`;
+  }
+
+  /** Pressed-state feedback for the touch buttons. */
+  public setTouchHeld(id: string, held: boolean): void {
+    const el = this.touchButtons.get(id);
+    if (el) el.classList.toggle('active', held);
+  }
+
+  /** Injected by Game so the HUD can mirror the input hit-rects verbatim. */
+  public touchButtonRects: readonly { id: string; x: number; y: number; radius: number }[] | null = null;
 }

@@ -13,7 +13,13 @@ import { Pickups } from '../items/Pickups';
 import { WaveManager } from './Waves';
 import { Hud, type HudState, type RadarBlip, type SettingsPatch } from '../ui/Hud';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { loadSave, persistSave, type SaveData } from '../core/storage';
+import { loadSave, persistSave, resolveTier, type SaveData } from '../core/storage';
+import {
+  detectTier,
+  FrameTimeGovernor,
+  presetFor,
+  type QualityPreset,
+} from '../core/quality';
 import { clamp } from '../core/math';
 import type { CombatTarget } from '../combat/Combatant';
 
@@ -96,6 +102,10 @@ export class Game {
   private readonly hud = new Hud();
   private loop!: GameLoop;
   private readonly save: SaveData;
+  /** Resolved render preset — a floor on quality, lowered by the governor. */
+  private quality!: QualityPreset;
+  /** Runtime frame-time probe: only ever steps the pixel ratio down. */
+  private readonly governor = new FrameTimeGovernor();
 
   private phase: GamePhase = 'menu';
   private score = 0;
@@ -145,16 +155,26 @@ export class Game {
   private menuTime = 0;
 
   public constructor(private readonly container: HTMLElement) {
-    this.configureRenderer();
+    // Save MUST load before the renderer: the quality preset comes from it.
     this.save = loadSave();
+    this.configureRenderer();
     this.audio.setVolume(this.save.volume);
     this.createSystems();
     this.wireCallbacks();
     this.attachLifecycle();
-    this.hud.syncSettings(this.save.sensitivity, this.save.volume);
+    this.hud.syncSettings(this.save.sensitivity, this.save.volume, this.save.touchSensitivity, this.save.quality);
     this.hud.syncMode(this.save.mode);
     this.hud.setMenuBest(this.save.bestScore, this.recordWave);
     this.hud.setMenuRecords(this.save);
+    this.input.touch.setSensitivity(this.save.touchSensitivity);
+    // The HUD draws the touch buttons from the SAME rects the input hit-tests,
+    // so a visible button is always a tappable button.
+    this.hud.touchButtonRects = this.input.touch.buttonsForRender;
+    this.input.onTouchMode = () => {
+      this.hud.setTouchMode(true);
+      // Slot chips double as touch weapon selectors: tapping one switches.
+      this.hud.onSlotTap = (slot) => this.input.touch.requestSlot(slot);
+    };
     (window as unknown as { __game?: Game }).__game = this;
     this.resetPlayer();
     this.hud.showMenu(true);
@@ -162,15 +182,27 @@ export class Game {
   }
 
   private configureRenderer(): void {
-    this.renderer = new THREE.WebGPURenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.quality = presetFor(resolveTier(this.save.quality, detectTier()));
+    this.renderer = new THREE.WebGPURenderer({
+      antialias: this.quality.antialias,
+      // Chrome ignores this for WebGPU, but the WebGL2 fallback and
+      // Firefox/Safari honour it, and 'low-power' would be wrong for a game.
+      powerPreference: 'high-performance',
+    });
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.autoClear = false;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.quality.shadows;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 2.2;
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
+
+    // Touch surfaces: `touch-action: none` must be on every element that
+    // receives pointer events (it is not inherited), or the browser steals
+    // pan/pinch mid-drag.
+    this.renderer.domElement.style.touchAction = 'none';
+    this.hud.root.style.touchAction = 'none';
 
     this.scene.background = new THREE.Color(0x060a14);
     this.scene.fog = new THREE.FogExp2(0x060a14, 0.005);
@@ -454,12 +486,39 @@ export class Game {
       this.save.sensitivity = clamp(patch.sensitivity, 0.2, 3);
       this.player.setSensitivity(this.save.sensitivity);
     }
+    if (patch.touchSensitivity !== undefined) {
+      this.save.touchSensitivity = clamp(patch.touchSensitivity, 0.2, 3);
+      this.input.touch.setSensitivity(this.save.touchSensitivity);
+    }
+    if (patch.quality !== undefined) {
+      this.save.quality = patch.quality;
+      // Switching preset re-resolves the whole render configuration.
+      this.applyQuality();
+    }
     if (patch.volume !== undefined) {
       this.save.volume = clamp(patch.volume, 0, 1);
       this.audio.setVolume(this.save.volume);
     }
     persistSave(this.save);
-    this.hud.syncSettings(this.save.sensitivity, this.save.volume);
+    this.hud.syncSettings(
+      this.save.sensitivity,
+      this.save.volume,
+      this.save.touchSensitivity,
+      this.save.quality,
+    );
+  }
+
+  /** Re-resolve the quality preset and push it at the renderer. */
+  private applyQuality(): void {
+    this.quality = presetFor(resolveTier(this.save.quality, detectTier()));
+    this.governor.reset();
+    this.renderer.shadowMap.enabled = this.quality.shadows;
+    this.renderer.setPixelRatio(this.pixelRatio());
+  }
+
+  /** Preset cap times the governor's step, floored so it never hits zero. */
+  private pixelRatio(): number {
+    return Math.max(0.25, this.quality.pixelRatioCap * this.governor.scale);
   }
 
   /** Menu shows the record belonging to the currently selected mode. */
@@ -693,6 +752,12 @@ export class Game {
     if (this.phase === 'playing') this.buildRadar();
     else this.radarCount = 0;
     this.player.body.visible = this.phase === 'playing' || this.phase === 'paused';
+    // Runtime quality probe: a downgrade reallocates framebuffers, so it is
+    // rate-limited inside the governor and only ever steps down.
+    if (this.phase === 'playing' && this.governor.sample(frameDt * 1000)) {
+      this.renderer.setPixelRatio(this.pixelRatio());
+    }
+    this.syncTouchVisuals();
     // Overlays freeze their banner timer; only active gameplay animates HUD.
     this.hud.update(this.phase === 'playing' ? frameDt : 0, this.hudState());
     this.renderer.clear();
@@ -702,12 +767,28 @@ export class Game {
     }
   };
 
+  /** Mirror the input layer's touch state onto the HUD overlay. */
+  private syncTouchVisuals(): void {
+    if (!this.input.isTouchMode) return;
+    const touch = this.input.touch;
+    this.hud.updateTouch(touch.stickState, 62);
+    for (const button of touch.buttonsForRender) {
+      this.hud.setTouchHeld(button.id, touch.isHeld(button.id));
+    }
+  }
+
   private onResize = (): void => {
-    const w = this.container.clientWidth || window.innerWidth;
-    const h = this.container.clientHeight || window.innerHeight;
+    // `visualViewport` tracks the mobile address bar, which changes the visual
+    // viewport WITHOUT firing a reliable window resize on iOS Safari.
+    const vv = window.visualViewport;
+    const w = Math.round(vv?.width ?? this.container.clientWidth ?? window.innerWidth);
+    const h = Math.round(vv?.height ?? this.container.clientHeight ?? window.innerHeight);
+    if (w <= 0 || h <= 0) return;
     this.renderer.setSize(w, h);
     this.player.camera.aspect = w / h;
     this.player.camera.updateProjectionMatrix();
     this.viewmodel.setSize(w, h);
+    this.input.touch.layout();
+    this.hud.layoutTouch();
   };
 }

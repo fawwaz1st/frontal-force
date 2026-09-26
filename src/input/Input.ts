@@ -1,4 +1,5 @@
 import { clamp } from '../core/math';
+import { TouchControls } from './TouchControls';
 
 export interface InputFrame {
   moveX: number;
@@ -15,6 +16,8 @@ export interface InputFrame {
   slotPressed: number;
   wheelSteps: number;
   locked: boolean;
+  /** True when the current input came from touch (drives HUD scheme). */
+  touch: boolean;
 }
 
 export class Input {
@@ -22,6 +25,10 @@ export class Input {
   /** Fired on Esc/P keypress (native Esc also releases pointer lock separately). */
   public onPauseKey: (() => void) | null = null;
   public onFocusLost: (() => void) | null = null;
+  /** Fired once the input layer switches to the touch scheme. */
+  public onTouchMode: (() => void) | null = null;
+  /** Touch state, merged into every frame when a touch device is in use. */
+  public readonly touch = new TouchControls();
 
   private readonly keys = new Set<string>();
   private lookX = 0;
@@ -34,11 +41,24 @@ export class Input {
   private slotPressed = 0;
   private wheelSteps = 0;
   private locked = false;
+  /**
+   * Pointer lock is unavailable on iOS Safari (and pre-144 Android). When the
+   * lock request does not take, we fall back to touch look instead of gating
+   * every input behind a lock that will never arrive.
+   */
+  private touchLook = false;
+  private touchMode = false;
+  private lockAttemptT = 0;
   private target: HTMLElement | null = null;
   private attached = false;
 
   public get lockedNow(): boolean {
-    return this.locked;
+    return this.locked || this.touchLook;
+  }
+
+  /** True once the player has actually used touch — used to pick the scheme. */
+  public get isTouchMode(): boolean {
+    return this.touchMode;
   }
 
   public attach(target: HTMLElement): void {
@@ -55,6 +75,18 @@ export class Input {
     // RMB is ADS now — keep the context menu off the canvas
     target.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('blur', this.onBlur);
+    this.touch.attach(target);
+    this.touch.onFirstTouch = () => this.engageTouchMode();
+  }
+
+  /** Switch to the touch scheme exactly once, from a real touch gesture. */
+  private engageTouchMode(): void {
+    if (this.touchMode) return;
+    this.touchMode = true;
+    // A touch user never gets pointer lock, so drive look from the touch path.
+    this.touchLook = true;
+    this.onTouchMode?.();
+    this.onLockChange?.(true);
   }
 
   public detach(): void {
@@ -68,6 +100,7 @@ export class Input {
     document.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('pointerlockchange', this.onLockChangeNative);
+    this.touch.detach();
     this.target?.removeEventListener('contextmenu', this.onContextMenu);
     this.target = null;
     window.removeEventListener('blur', this.onBlur);
@@ -85,11 +118,22 @@ export class Input {
     this.reloadPressed = false;
     this.slotPressed = 0;
     this.wheelSteps = 0;
+    this.touch.reset();
   }
 
-  /** Must be called from inside a user gesture (click/keydown). */
+  /**
+   * Request pointer lock. On platforms where it never arrives (iOS Safari,
+   * Android < 144) this must NOT gate the game — the caller falls through to
+   * the touch path, which needs no permission.
+   */
   public requestLock(): void {
     if (!this.target || this.locked) return;
+    // A touch user never needs the lock; unlocking the audio is enough.
+    if (this.touchMode) {
+      this.onLockChange?.(true);
+      return;
+    }
+    this.lockAttemptT = performance.now();
     try {
       const el = this.target as HTMLElement & {
         requestPointerLock: (options?: { unadjustedMovement?: boolean }) => Promise<void> | void;
@@ -113,26 +157,40 @@ export class Input {
         /* pointer lock unsupported */
       }
     }
+    // If the lock has not landed shortly after the request, assume the platform
+    // will never grant it and switch to touch look. Silent no-op is the
+    // documented behaviour on pre-144 Android, so a timeout is the only signal.
+    window.setTimeout(() => {
+      if (this.locked || this.touchMode) return;
+      if (document.pointerLockElement === this.target) return;
+      if (performance.now() - this.lockAttemptT < 250) return;
+      this.touchLook = true;
+      this.onLockChange?.(true);
+    }, 320);
   }
 
   /** Returns accumulated input and resets per-frame deltas. */
   public read(): InputFrame {
+    const touchFrame = this.touchMode ? this.touch.read() : null;
     const frame: InputFrame = {
-      moveX: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
-      moveZ: (this.keys.has('KeyS') ? 1 : 0) - (this.keys.has('KeyW') ? 1 : 0),
-      lookX: this.lookX,
-      lookY: this.lookY,
-      fireHeld: this.fireHeld,
-      firePressed: this.firePressed,
-      aimHeld: this.aimHeld,
-      jumpPressed: this.jumpPressed,
-      sprintHeld: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
-      crouchHeld: this.keys.has('ControlLeft') || this.keys.has('KeyC'),
-      reloadPressed: this.reloadPressed,
-      slotPressed: this.slotPressed,
-      wheelSteps: this.wheelSteps,
-      locked: this.locked,
+      moveX: touchFrame ? touchFrame.moveX : (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
+      moveZ: touchFrame ? touchFrame.moveZ : (this.keys.has('KeyS') ? 1 : 0) - (this.keys.has('KeyW') ? 1 : 0),
+      lookX: touchFrame ? touchFrame.lookX : this.lookX,
+      lookY: touchFrame ? touchFrame.lookY : this.lookY,
+      fireHeld: touchFrame ? touchFrame.fireHeld : this.fireHeld,
+      firePressed: touchFrame ? touchFrame.fireHeld && !this.prevTouchFire : this.firePressed,
+      aimHeld: touchFrame ? touchFrame.aimHeld : this.aimHeld,
+      jumpPressed: touchFrame ? touchFrame.jumpPressed : this.jumpPressed,
+      sprintHeld: touchFrame ? touchFrame.sprintHeld : (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')),
+      crouchHeld: touchFrame ? touchFrame.crouchHeld : (this.keys.has('ControlLeft') || this.keys.has('KeyC')),
+      reloadPressed: touchFrame ? touchFrame.reloadPressed : this.reloadPressed,
+      slotPressed: touchFrame ? touchFrame.slotPressed : this.slotPressed,
+      wheelSteps: touchFrame ? touchFrame.cycleSteps : this.wheelSteps,
+      // Touch needs no lock: report engaged so the weapon/reload paths run.
+      locked: this.locked || this.touchMode,
+      touch: this.touchMode,
     };
+    this.prevTouchFire = touchFrame ? touchFrame.fireHeld : false;
     this.lookX = 0;
     this.lookY = 0;
     this.firePressed = false;
@@ -142,6 +200,9 @@ export class Input {
     this.wheelSteps = 0;
     return frame;
   }
+
+  /** Previous frame's touch fire state — derives firePressed from a held edge. */
+  private prevTouchFire = false;
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;

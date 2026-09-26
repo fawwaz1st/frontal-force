@@ -9,22 +9,42 @@
   --text: #ece7d8;
   --text-dim: rgba(222, 210, 170, 0.6);
   --ch-gap: 4px;
+  /* Notch/home-indicator insets — 0 on devices without them. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
 }
 
 * { box-sizing: border-box; }
 
 html, body, #app {
   width: 100%;
-  height: 100%;
+  /* `100vh` overshoots on iOS Safari (it equals lvh). dvh tracks the address
+     bar; the vh line is the fallback for engines without dvh. */
+  height: 100vh;
+  height: 100dvh;
   margin: 0;
 }
 
 body {
   overflow: hidden;
+  /* Kill rubber-banding and pull-to-refresh so a drag is always a game input. */
+  overscroll-behavior: none;
   background: #0a0b08;
   color: var(--text);
   font-family: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* touch-action is NOT inherited: every element that receives pointer events
+   needs it, or the browser steals pan/pinch mid-drag. `manipulation` is not
+   enough — it still permits pan. */
+#app, #app canvas, .hud, .hud__touch {
+  touch-action: none;
 }
 
 #app { position: relative; }
@@ -806,4 +826,148 @@ kbd {
     60% { opacity: 0.9; }
     100% { opacity: 0; }
   }
+}
+
+/* ---------- Touch overlay ---------- */
+/* Positions are written by Hud.layoutTouch() from the input layer's hit-rects,
+   so what is drawn is exactly what is tappable. */
+.hud__touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.hud__touch[hidden] { display: none; }
+.hud__stick {
+  position: absolute;
+  border: 2px solid var(--accent-soft);
+  border-radius: 50%;
+  background: rgba(255, 159, 28, 0.06);
+  display: grid;
+  place-items: center;
+}
+.hud__stick[hidden] { display: none; }
+.hud__stick i {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 159, 28, 0.3);
+  border: 2px solid var(--accent);
+  will-change: transform;
+}
+.hud__tbtn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  background: rgba(16, 17, 12, 0.42);
+  color: var(--text-dim);
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.hud__tbtn[hidden] { display: none; }
+.hud__tbtn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 159, 28, 0.18);
+}
+.hud__tbtn .ic { width: 45%; height: 45%; }
+/* In touch mode the gameplay HUD gives the thumbs their corners back. */
+.hud--touch .hud__bottom { bottom: calc(22px + var(--safe-b)); }
+.hud--touch .hud__radar { top: calc(20px + var(--safe-t)); right: calc(20px + var(--safe-r)); }
+.hud--touch .hud__slots { display: none; }
+.hud--touch .hud__slot-count { display: none; }
+
+/* ---------- Responsive layout ---------- */
+/* Short viewports (phones in landscape, small laptops): shrink the chrome so
+   the arena keeps the majority of the screen. */
+@media (max-height: 560px) {
+  .hud__radar { width: 104px; height: 104px; top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
+  .hud__top { top: calc(10px + var(--safe-t)); }
+  .hud__enemies { top: calc(46px + var(--safe-t)); }
+  .hud__bottom { bottom: calc(12px + var(--safe-b)); left: calc(16px + var(--safe-l)); right: calc(16px + var(--safe-r)); }
+  .hud__health { width: 220px; }
+  .hud__ammo { font-size: 26px; }
+  .hud__hint { bottom: calc(78px + var(--safe-b)); }
+  .hud__menu-title { font-size: 34px; }
+  .hud__menu-card { padding: 18px 28px; }
+  .hud__keys { grid-template-columns: 1fr 1fr 1fr; margin: 12px 0; }
+  .hud__modes { margin-top: 12px; gap: 6px; }
+  .hud__mode-chip { padding: 6px 10px; letter-spacing: 0.1em; }
+  .hud__settings { margin-top: 12px; }
+}
+
+/* Short laptops and landscape phones: the menu card must still fit whole. */
+@media (max-height: 700px) {
+  .hud__menu-card { padding: 16px 26px; margin: 10px 0; }
+  .hud__menu-title { font-size: 30px; margin-bottom: 6px; }
+  .hud__menu-best { margin-top: 6px; font-size: 14px; }
+  .hud__keys { margin: 10px 0; gap: 5px 16px; }
+  .hud__key { font-size: 12px; }
+  .hud__modes { margin-top: 10px; gap: 6px; }
+  .hud__mode-chip { padding: 6px 10px; font-size: 12px; }
+  .hud__settings { margin-top: 10px; gap: 8px; }
+  .hud__menu-records { margin-top: 8px; gap: 3px; font-size: 12px; }
+  .hud__btn { padding: 11px 26px; }
+}
+
+/* Narrow viewports (portrait phones): stack the bottom bar and shrink chips. */
+@media (max-width: 640px) {
+  .hud__top { top: calc(8px + var(--safe-t)); gap: 6px; }
+  .hud__chip { font-size: 13px; padding: 5px 8px; }
+  .hud__radar { width: 96px; height: 96px; top: calc(52px + var(--safe-t)); right: calc(10px + var(--safe-r)); }
+  .hud__bottom {
+    left: calc(12px + var(--safe-l));
+    right: calc(12px + var(--safe-r));
+    bottom: calc(14px + var(--safe-b));
+    gap: 10px;
+  }
+  .hud__health { width: 100%; max-width: 240px; }
+  .hud__weapon { flex: 1 1 auto; min-width: 0; }
+  .hud__ammo { font-size: 26px; }
+  .hud__weapon-row { font-size: 11px; gap: 6px; }
+  .hud__slots { gap: 4px; margin-bottom: 5px; }
+  .hud__slot { width: 28px; height: 22px; }
+  .hud__slot .ic { width: 16px; height: 16px; }
+  .hud__slot--edge .ic { width: 13px; height: 13px; }
+  .hud__banner { font-size: 30px; }
+  .hud__menu-title { font-size: 32px; }
+  .hud__menu-card { padding: 20px 22px; }
+  .hud__keys { grid-template-columns: 1fr 1fr; margin: 14px 0; gap: 6px 12px; }
+  .hud__key { font-size: 12px; }
+  .hud__key .ic { width: 15px; height: 15px; }
+  .hud__modes { gap: 6px; margin-top: 12px; }
+  .hud__mode-chip { padding: 6px 9px; font-size: 12px; letter-spacing: 0.08em; }
+  .hud__mode-chip .ic { width: 13px; height: 13px; }
+  .hud__menu-records { font-size: 12px; }
+  .hud__settings { flex-direction: column; align-items: stretch; gap: 8px; }
+  .hud__settings input[type='range'] { width: 100%; }
+  .hud__death-stats { grid-template-columns: 1fr 1fr; font-size: 12px; }
+}
+
+/* Coarse pointers: larger tap targets everywhere, and no hover-only affordance. */
+@media (pointer: coarse) {
+  .hud__btn { padding: 15px 30px; }
+  .hud__mode-chip { padding: 10px 14px; }
+  .hud__settings input[type='range'] { height: 30px; }
+  .hud__slot { width: 34px; height: 30px; }
+  /* Hover styles would stick on touch — neutralise them. */
+  .hud__btn:hover { transform: none; filter: none; }
+  .hud__mode-chip:hover { border-color: var(--line); color: var(--text-dim); }
+}
+
+/* Landscape phone: the menu card is taller than the viewport, so drop the
+   control diagram entirely and compact everything that remains. */
+@media (max-height: 430px) and (orientation: landscape) {
+  .hud__menu-card { padding: 10px 18px; margin: 6px 0; }
+  .hud__menu-title { font-size: 22px; margin-bottom: 2px; }
+  .hud__menu-best { font-size: 12px; margin-top: 2px; }
+  .hud__keys { display: none; }
+  .hud__menu-records { display: none; }
+  .hud__settings { margin-top: 8px; flex-direction: row; gap: 10px; }
+  .hud__settings input[type='range'] { width: 110px; }
+  .hud__modes { margin-top: 8px; gap: 5px; }
+  .hud__mode-chip { padding: 5px 8px; font-size: 11px; }
+  .hud__mode-chip .ic { width: 12px; height: 12px; }
+  .hud__btn { padding: 9px 20px; font-size: 14px; }
 }
