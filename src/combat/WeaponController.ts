@@ -57,7 +57,7 @@ export class WeaponController {
     private readonly world: World,
     private readonly effects: Effects,
     private readonly audio: GameAudio,
-    private readonly onHitFeedback: (kind: 'hit' | 'headshot') => void,
+    private readonly onHitFeedback: (kind: 'hit' | 'headshot' | 'blocked') => void,
   ) {}
 
   public get current(): WeaponState {
@@ -186,6 +186,7 @@ export class WeaponController {
 
     const spread = this.spreadFor(this.player.horizontalSpeed > 2, aiming);
     let hitAny = false;
+    let blockedAny = false;
     let headshotAny = false;
     let killedAny = false;
     const right = this.tmpRight.crossVectors(baseDir, UP);
@@ -202,12 +203,16 @@ export class WeaponController {
         .normalize();
       const result = this.fireRay(muzzle, dir, weapon, pellet === 0);
       hitAny ||= result !== 0;
+      blockedAny ||= result === 4;
       headshotAny ||= result === 2 || result === 3;
       killedAny ||= result === 3;
     }
     // One marker/audio per trigger pull, not per pellet. Kill feedback is owned
     // by EnemyManager.onEnemyKilled and must not be overwritten by hit feedback.
-    if (hitAny && !killedAny) this.onHitFeedback(headshotAny ? 'headshot' : 'hit');
+    // A blocked shot gets its own marker so the player never reads "my gun is
+    // weak" when a warden's plate is eating their damage.
+    if (blockedAny && !killedAny) this.onHitFeedback('blocked');
+    else if (hitAny && !killedAny) this.onHitFeedback(headshotAny ? 'headshot' : 'hit');
     // Brass ejects sideways/up; a smoke puff trails each shot (pooled physics props)
     const side = this.tmpNormal.crossVectors(this.tmpDir, UP);
     const k = 1.3 + Math.random() * 0.9;
@@ -218,8 +223,8 @@ export class WeaponController {
     this.effects.smoke(muzzle, this.tmpDir);
   }
 
-  /** 0 miss, 1 hit, 2 headshot, 3 kill. */
-  private fireRay(origin: THREE.Vector3, dir: THREE.Vector3, weapon: WeaponState, showTracer: boolean): 0 | 1 | 2 | 3 {
+  /** 0 miss, 1 hit, 2 headshot, 3 kill, 4 blocked by armour. */
+  private fireRay(origin: THREE.Vector3, dir: THREE.Vector3, weapon: WeaponState, showTracer: boolean): 0 | 1 | 2 | 3 | 4 {
     this.ray.set(origin, dir);
     const wallHit = this.world.octree.rayIntersect(this.ray);
     const wallDist = wallHit ? wallHit.distance : weapon.def.range;
@@ -227,7 +232,7 @@ export class WeaponController {
 
     if (enemyHit) {
       const point = this.tmpPoint.copy(origin).addScaledVector(dir, enemyHit.distance);
-      const killed = this.enemies.damageEnemy(
+      const hit = this.enemies.damageEnemy(
         enemyHit.enemy,
         (enemyHit.headshot ? weapon.def.damage * 2 : weapon.def.damage) * this.damageScale,
         point,
@@ -236,7 +241,9 @@ export class WeaponController {
       );
       this.effects.ring(point, 0xffffff, 1.2, 0.18);
       if (showTracer) this.effects.tracer(origin, point, weapon.def.tracerColor);
-      return killed ? 3 : enemyHit.headshot ? 2 : 1;
+      if (hit.killed) return 3;
+      if (hit.blocked) return 4;
+      return enemyHit.headshot ? 2 : 1;
     } else if (wallHit && wallDist <= weapon.def.range) {
       const normal = wallHit.triangle.getNormal(this.tmpNormal);
       if (normal.dot(dir) > 0) normal.negate();

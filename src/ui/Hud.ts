@@ -197,11 +197,11 @@ export class Hud {
           <div class="hud__menu-records" data-menu-records hidden></div>
           <div class="hud__touch-note">Requires mouse &amp; keyboard — desktop only</div>
           <div class="hud__modes" role="group" aria-label="Game mode">
-            <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves">${icon('flag')}<span>STANDARD</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="blitz" title="Shorter breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
+            <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
             <button type="button" class="hud__mode-chip" data-mode="onslaught" title="Heavy waves from wave 2, ×1.75 score">${icon('skull')}<span>ONSLAUGHT</span></button>
             <button type="button" class="hud__mode-chip" data-mode="rotator" title="Weapon swaps every kill, ×1.5 score">${icon('swap')}<span>ROTATION</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="overrun" title="Endless horde, escalating HP, ×1.5 score">${icon('infinity')}<span>OVERRUN</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="overrun" title="Endless: 24-alive cap, HP ×1.12 per wave, ×1.5 score, own best-wave record">${icon('infinity')}<span>OVERRUN</span></button>
           </div>
           <div class="hud__keys" data-keys></div>
           <div class="hud__settings">
@@ -445,14 +445,15 @@ export class Hud {
     const rows: Array<[IconName, string, string]> = [
       ['move', `${cap('W')}${cap('A')}${cap('S')}${cap('D')}`, 'Move'],
       ['mouse', `${cap('LMB')}`, 'Fire'],
-      ['crosshair', `${cap('MOUSE')}`, 'Aim'],
+      ['target', `${cap('RMB')}`, 'Aim down sights'],
       ['jump', `${cap('SPACE')}`, 'Jump'],
       ['sprint', `${cap('SHIFT')}`, 'Sprint'],
       ['crouch', `${cap('C')}`, 'Crouch & slide'],
       ['reload', `${cap('R')}`, 'Reload'],
       ['swap', `${cap('1')}–${cap('4')}`, 'Switch weapon'],
+      ['swap', `${cap('WHEEL')}`, 'Cycle weapon'],
       ['pause', `${cap('ESC')}`, 'Pause'],
-      ['target', `${cap('×2')}`, 'Headshot damage'],
+      ['crosshair', `${cap('×2')}`, 'Headshot damage'],
     ];
     container.innerHTML = rows
       .map(
@@ -513,11 +514,12 @@ export class Hud {
     this.bannerTimer = 2.4;
   }
 
-  public hitmarkerFlash(kind: 'hit' | 'headshot' | 'kill' = 'hit'): void {
-    this.hitmarker.classList.remove('flash', 'flash--head', 'flash--kill');
+  public hitmarkerFlash(kind: 'hit' | 'headshot' | 'kill' | 'blocked' = 'hit'): void {
+    this.hitmarker.classList.remove('flash', 'flash--head', 'flash--kill', 'flash--blocked');
     void this.hitmarker.offsetWidth; // restart animation
     if (kind === 'headshot') this.hitmarker.classList.add('flash--head');
     if (kind === 'kill') this.hitmarker.classList.add('flash--kill');
+    if (kind === 'blocked') this.hitmarker.classList.add('flash--blocked');
     this.hitmarker.classList.add('flash');
   }
 

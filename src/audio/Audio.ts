@@ -203,6 +203,13 @@ export class GameAudio {
     }
   }
 
+  /** Armour-plate impact: a short metallic clang, deliberately unlike the
+   *  clean hitmarker so the player hears that the shot was absorbed. */
+  public blocked(): void {
+    this.tone({ freq: 320, dur: 0.06, type: 'triangle', gain: 0.13 });
+    this.tone({ freq: 214, dur: 0.12, type: 'sawtooth', gain: 0.07, delay: 0.02 });
+  }
+
   public charge(pan = 0): void {
     // Attack windup tell — rising sine under the visor spike
     this.tone({ freq: 240, end: 720, dur: 0.3, type: 'sine', gain: 0.11, pan });

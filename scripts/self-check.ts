@@ -68,11 +68,17 @@ check('endless spawnTimer: wave 40 hits the 0.25 s floor', () => {
   closeTo(spawnTimer(40), 0.25);
 });
 check('Waves.ts still contains the endless formulas + constants', () => {
-  assert.match(wavesSrc, /Math\.min\(40, Math\.pow\(1\.12, this\.wave - 1\)\)/);
+  // hpMul is now the single source of truth shared by enemy health AND the
+  // player's damage ramp, so it must be a named static, not an inline copy.
+  assert.match(wavesSrc, /static hpMul\(wave: number\): number \{\s*return Math\.min\(40, Math\.pow\(1\.12, Math\.max\(0, wave - 1\)\)\);/);
   assert.match(wavesSrc, /Math\.min\(1\.3, 1 \+ 0\.02 \* Math\.min\(this\.wave, 15\)\)/);
   assert.match(wavesSrc, /Math\.max\(0\.25, Math\.pow\(0\.94, this\.wave - 1\)\)/);
   assert.equal(literal(wavesSrc, 'ENDLESS_ALIVE_CAP'), 24);
   assert.match(wavesSrc, /overrun: \{[^}]*endless: true \}/);
+  // Both the enemy spawn path and damageScale must route through hpMul.
+  const uses = wavesSrc.match(/WaveManager\.hpMul\(/g) ?? [];
+  assert.ok(uses.length >= 2, `hpMul must be shared by spawn + damageScale (found ${uses.length})`);
+  assert.match(wavesSrc, /endless \? WaveManager\.hpMul\(this\.wave\) : 1/);
 });
 
 // ---------- combo tiers (src/game/Game.ts) ----------

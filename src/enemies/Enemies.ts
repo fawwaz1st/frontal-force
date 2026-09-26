@@ -302,9 +302,17 @@ export class EnemyManager {
   }
 
   /** `byPlayer` marks damage that came from the player's own weapon — escort
-   *  bot kills must not feed the kill-combo meter. */
-  public damageEnemy(enemy: Enemy, amount: number, point: THREE.Vector3, force?: THREE.Vector3, byPlayer = false): boolean {
-    if (enemy.dead) return false;
+   *  bot kills must not feed the kill-combo meter.
+   *  Returns the hit result so callers can render distinct feedback for a
+   *  shot a warden's plate absorbed. */
+  public damageEnemy(
+    enemy: Enemy,
+    amount: number,
+    point: THREE.Vector3,
+    force?: THREE.Vector3,
+    byPlayer = false,
+  ): { killed: boolean; blocked: boolean } {
+    if (enemy.dead) return { killed: false, blocked: false };
     // Wardens gate damage through their shield: frontal shots are absorbed
     // (or halved) until the guard breaks; flank shots punish for 1.5×.
     let damage = amount;
@@ -333,9 +341,9 @@ export class EnemyManager {
       this.effects.burst(enemy.group.position.clone().setY(enemy.group.position.y + 1), enemy.def.color, 10, 1.6);
       this.audio.kill();
       this.onEnemyKilled?.(enemy, byPlayer);
-      return true;
+      return { killed: true, blocked };
     }
-    return false;
+    return { killed: false, blocked };
   }
 
   /**

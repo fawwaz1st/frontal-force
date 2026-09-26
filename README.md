@@ -33,7 +33,7 @@ npm run preview  # serve the production build
 | BLITZ | Shorter breaks, denser spawns; ×1.35 score. |
 | ONSLAUGHT | Heavy waves from wave 2; ×1.75 score. |
 | ROTATION | Weapon swaps on every kill; ×1.5 score. |
-| OVERRUN | Endless horde: 24-alive cap, HP ×1.12^wave (cap ×40), speed cap ×1.30, spawn cadence ×0.94^wave (floor 0.25 s), ×1.5 score, no wave-clear plate, own best-wave record. |
+| OVERRUN | Endless horde: 24-alive cap, HP ×1.12^(wave−1) (cap ×40), speed cap ×1.30, spawn cadence ×0.94^(wave−1) (floor 0.25 s), ×1.5 score, no wave-clear plate, own best-wave record. Player damage scales on the same curve. |
 
 ## Enemies
 

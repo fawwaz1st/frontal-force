@@ -30,6 +30,8 @@ class Bot implements Interceptor {
   public hp = 100;
   public active = false;
   public onShot: ((pan: number) => void) | null = null;
+  /** Endless modes scale enemy HP; escort fire scales with it (1 otherwise). */
+  public damageScale = 1;
 
   private idx = 0;
   private fireT = 0;
@@ -358,7 +360,7 @@ class Bot implements Interceptor {
     const point = center.clone().add(
       this.tmpC.set(randRange(-0.2, 0.2), randRange(-0.25, 0.25), randRange(-0.2, 0.2)),
     );
-    enemies.damageEnemy(target, SHOT_DMG, point);
+    enemies.damageEnemy(target, SHOT_DMG * this.damageScale, point);
     const forward = -Math.sin(this.yaw);
     const forwardZ = -Math.cos(this.yaw);
     const muzzle = this.tmpC.set(position.x + forward * 0.55, position.y + 1.34, position.z + forwardZ * 0.55);
@@ -425,7 +427,11 @@ export class Ally {
     playerPos: THREE.Vector3,
     playerYaw: number,
     enemies: EnemyManager,
+    damageScale = 1,
   ): void {
-    for (const bot of this.bots) bot.update(dt, playerPos, playerYaw, enemies);
+    for (const bot of this.bots) {
+      bot.damageScale = damageScale;
+      bot.update(dt, playerPos, playerYaw, enemies);
+    }
   }
 }

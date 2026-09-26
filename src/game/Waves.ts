@@ -68,9 +68,13 @@ export class WaveManager {
   /** Endless modes ramp enemy HP; the player's damage ramps to match so a
    *  fixed ammo pool cannot become a hard wall. Returns 1 for finite modes. */
   public get damageScale(): number {
-    return MODES[this.mode].endless
-      ? Math.min(40, Math.pow(1.12, Math.max(0, this.wave - 1)))
-      : 1;
+    return MODES[this.mode].endless ? WaveManager.hpMul(this.wave) : 1;
+  }
+
+  /** Single source of truth for the endless HP curve — enemy health and the
+   *  player's damage multiplier MUST stay in lockstep or the mode walls out. */
+  public static hpMul(wave: number): number {
+    return Math.min(40, Math.pow(1.12, Math.max(0, wave - 1)));
   }
 
   private config(): ModeConfig {
@@ -108,7 +112,7 @@ export class WaveManager {
             // 1.32x), attack cadence -1.5%/wave (floor 0.72x). Endless ramps:
             // HP 1.12^(wave-1) capped 40x, speed capped 1.30x (flat fire rate).
             const hpMul = config.endless
-              ? Math.min(40, Math.pow(1.12, this.wave - 1))
+              ? WaveManager.hpMul(this.wave)
               : Math.min(2.2, 1 + 0.06 * (this.wave - 1));
             const spdMul = config.endless
               ? Math.min(1.3, 1 + 0.02 * Math.min(this.wave, 15))

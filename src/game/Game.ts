@@ -152,6 +152,11 @@ export class Game {
     this.weapons = new WeaponController(
       this.player, this.enemies, this.world, this.effects, this.audio,
       (kind) => {
+        if (kind === 'blocked') {
+          this.hud.hitmarkerFlash('blocked');
+          this.audio.blocked();
+          return;
+        }
         this.hud.hitmarkerFlash(kind === 'headshot' ? 'headshot' : 'hit');
         this.audio.hitmarker(kind === 'headshot');
       },
@@ -458,7 +463,7 @@ export class Game {
       this.weapons.lastShot,
     );
     this.weapons.lastShot = null;
-    this.ally.update(dt, this.player.position, this.player.yawAngle, this.enemies);
+    this.ally.update(dt, this.player.position, this.player.yawAngle, this.enemies, this.waves.damageScale);
 
     // Footsteps: stride-linked distance cadence while grounded
     const speed = this.player.horizontalSpeed;
@@ -517,6 +522,7 @@ export class Game {
       this.hud.popScore(base);
       return;
     }
+    const firstTier = this.combo < 2;
     this.combo += 1;
     this.comboTimer = COMBO_WINDOW;
     const mult = Math.min(1 + Math.floor(this.combo / 2), 8);
@@ -524,6 +530,8 @@ export class Game {
     this.score += pts;
     this.hud.hitmarkerFlash('kill');
     this.hud.popScore(pts);
+    // Teach the mechanic the first time it actually matters (×2 unlocks here).
+    if (firstTier && mult > 1) this.hud.showBanner(`COMBO ×${mult}`, 'CHAIN KILLS TO RAISE IT');
     if (this.waves.isRotator) this.weapons.rotate();
   };
 

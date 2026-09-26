@@ -132,6 +132,10 @@ body {
 .hud__hitmarker.flash--kill::before,
 .hud__hitmarker.flash--kill::after { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
 .hud__hitmarker.flash--kill { animation: hitkill 0.3s ease-out; }
+/* Armour plate: teal, so a blocked shot never reads as a normal hit. */
+.hud__hitmarker.flash--blocked::before,
+.hud__hitmarker.flash--blocked::after { background: #35f0c8; box-shadow: 0 0 9px #35f0c8; }
+.hud__hitmarker.flash--blocked { animation: hit 0.22s ease-out; }
 @keyframes hit {
   0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.25); }
   100% { opacity: 0; transform: translate(-50%, -50%) rotate(45deg) scale(0.85); }
@@ -767,6 +771,7 @@ kbd {
   .hud__hint--danger .ic { animation: none; }
   .hud__pop.show { animation: popfade 0.8s linear forwards; }
   @keyframes popfade { to { opacity: 0; } }
+  .hud__vignette.hit { animation: none; box-shadow: inset 0 0 90px 18px rgba(255, 40, 60, 0.4); }
   .hud__btn:hover { transform: none; }
   .hud__banner { transition: none; }
   @keyframes hit {

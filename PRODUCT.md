@@ -18,7 +18,7 @@ A single-arena wave-survival FPS that runs instantly in the browser with zero ex
 - **BLITZ** — shorter breaks, denser spawns, ×1.35 score.
 - **ONSLAUGHT** — heavy waves from wave 2, ×1.75 score.
 - **ROTATION** — weapon swaps on every kill, ×1.5 score.
-- **OVERRUN** — the endless mode: 24 alive at once, HP ×1.12^wave (capped ×40), speed capped ×1.30, spawn cadence ×0.94^wave (floor 0.25 s), ×1.5 score. No "cleared" plate; it keeps its own `bestWaveOverrun` record.
+- **OVERRUN** — the endless mode: 24 alive at once, HP ×1.12^(wave−1) (capped ×40), speed capped ×1.30, spawn cadence ×0.94^(wave−1) (floor 0.25 s), ×1.5 score. No "cleared" plate; it keeps its own `bestWaveOverrun` record. Player and escort damage scale on the same HP curve, so a fixed ammo pool never walls the run out.
 
 ## Enemies
 
