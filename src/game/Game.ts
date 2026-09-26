@@ -18,6 +18,10 @@ import { clamp } from '../core/math';
 
 type GamePhase = 'menu' | 'playing' | 'paused' | 'dead';
 
+/** Kill-combo: refresh window per kill, tier decay after it lapses (research: ×8 cap). */
+const COMBO_WINDOW = 3;
+const COMBO_DECAY = 0.5;
+
 export class Game {
   private renderer!: THREE.WebGPURenderer;
   private readonly scene = new THREE.Scene();
@@ -43,6 +47,8 @@ export class Game {
   private isNewRecord = false;
   private stepAcc = 0;
   private lastCountdown = -1;
+  private combo = 0;
+  private comboTimer = 0;
   private readonly pLast = new THREE.Vector3(Number.NaN, 0, 0);
   private readonly pVel = new THREE.Vector3();
   private readonly radarBlips: RadarBlip[] = Array.from({ length: 24 }, () => ({
@@ -68,6 +74,7 @@ export class Game {
     phaseTimer: 0,
     score: 0,
     kills: 0,
+    comboMult: 1,
     spread: 0,
     inGame: false,
     allyActive: false,
@@ -88,7 +95,8 @@ export class Game {
     this.attachLifecycle();
     this.hud.syncSettings(this.save.sensitivity, this.save.volume);
     this.hud.syncMode(this.save.mode);
-    this.hud.setMenuBest(this.save.bestScore, this.save.bestWave);
+    this.hud.setMenuBest(this.save.bestScore, this.recordWave);
+    this.hud.setMenuRecords(this.save);
     (window as unknown as { __game?: Game }).__game = this;
     this.resetPlayer();
     this.hud.showMenu(true);
@@ -170,6 +178,8 @@ export class Game {
     this.enemies.onPlayerHit = this.handlePlayerHit;
     this.player.onDamaged = (from) => {
       this.hud.damageFlash();
+      this.combo = 0;
+      this.comboTimer = 0;
       if (!from) {
         this.audio.hurt();
         return;
@@ -178,7 +188,13 @@ export class Game {
       this.hud.damageFrom(angle);
       this.audio.hurt(Math.sin(angle));
     };
-    this.player.onLanded = () => this.audio.land();
+    this.player.onLanded = (fallSpeed) => {
+      this.audio.land();
+      if (fallSpeed > 6) {
+        this.effects.ring(this.player.position, 0xffffff, 1.5, 0.25);
+        this.effects.smoke(this.player.position);
+      }
+    };
     this.waves.onWaveStart = (wave) => {
       this.hud.showBanner(`WAVE ${wave}`, '');
       this.audio.waveStart();
@@ -199,6 +215,7 @@ export class Game {
       this.save.mode = mode;
       this.waves.setMode(mode);
       this.hud.syncMode(mode);
+      this.hud.setMenuBest(this.save.bestScore, this.recordWave);
       persistSave(this.save);
     };
     this.input.onPauseKey = () => {
@@ -219,8 +236,17 @@ export class Game {
     this.input.attach(this.renderer.domElement);
     this.renderer.domElement.addEventListener('click', this.onCanvasClick);
     window.addEventListener('resize', this.onResize);
+    // Closing the tab mid-run must still bank the lifetime counters —
+    // recordRun() is otherwise only reached on death or quit-to-menu.
+    window.addEventListener('pagehide', this.onPageHide);
     this.onResize();
   }
+
+  private onPageHide = (): void => {
+    if (this.phase === 'playing' || this.phase === 'paused' || this.phase === 'dead') {
+      this.recordRun();
+    }
+  };
 
   private onCanvasClick = (): void => {
     this.audio.unlock();
@@ -239,6 +265,8 @@ export class Game {
     this.isNewRecord = false;
     this.stepAcc = 0;
     this.lastCountdown = -1;
+    this.combo = 0;
+    this.comboTimer = 0;
     this.weapons.reset();
     this.enemies.clear();
     this.pickups.clear();
@@ -297,12 +325,14 @@ export class Game {
     this.effects.reset();
     this.viewmodel.reset();
     this.resetPlayer();
+    this.combo = 0;
+    this.comboTimer = 0;
     this.hud.showPause(false);
     this.hud.showDeath(false);
     this.hud.showMenu(true);
-    this.hud.setMenuBest(this.save.bestScore, this.save.bestWave);
+    this.hud.setMenuBest(this.save.bestScore, this.recordWave);
+    this.hud.setMenuRecords(this.save);
   }
-
   private onDeath(): void {
     this.phase = 'dead';
     this.input.resetTransient();
@@ -312,7 +342,7 @@ export class Game {
     this.isNewRecord = this.recordRun();
     if (this.isNewRecord) this.audio.record();
     this.hud.showDeath(true, {
-      wave: this.waves.cleared,
+      wave: this.waves.wave,
       kills: this.kills,
       score: this.score,
       bestScore: this.save.bestScore,
@@ -322,11 +352,23 @@ export class Game {
   }
 
   private recordRun(): boolean {
-    if (this.runRecorded || this.score <= 0) return false;
+    if (this.runRecorded) return false;
     this.runRecorded = true;
-    const isRecord = this.score > this.save.bestScore;
+    // Lifetime counters record every run — even a scoreless one.
+    this.save.totalRuns += 1;
+    this.save.totalKills += this.kills;
+    this.save.totalWavesCleared += this.waves.cleared;
+    this.save.killsPerMode[this.save.mode] =
+      (this.save.killsPerMode[this.save.mode] ?? 0) + this.kills;
+    const isRecord = this.score > 0 && this.score > this.save.bestScore;
     if (isRecord) this.save.bestScore = this.score;
-    if (this.waves.wave > this.save.bestWave) this.save.bestWave = this.waves.wave;
+    if (this.save.mode === 'overrun') {
+      if (this.waves.wave > this.save.bestWaveOverrun) {
+        this.save.bestWaveOverrun = Math.min(9999, this.waves.wave);
+      }
+    } else if (this.waves.wave > this.save.bestWave) {
+      this.save.bestWave = Math.min(9999, this.waves.wave);
+    }
     persistSave(this.save);
     return isRecord;
   }
@@ -342,6 +384,11 @@ export class Game {
     }
     persistSave(this.save);
     this.hud.syncSettings(this.save.sensitivity, this.save.volume);
+  }
+
+  /** Menu shows the record belonging to the currently selected mode. */
+  private get recordWave(): number {
+    return this.save.mode === 'overrun' ? this.save.bestWaveOverrun : this.save.bestWave;
   }
 
   private resetPlayer(): void {
@@ -382,6 +429,13 @@ export class Game {
       this.pVel.clampLength(0, 14);
       this.pLast.copy(this.player.position);
     }
+    this.comboTimer -= dt;
+    if (this.comboTimer <= 0 && this.combo > 0) {
+      this.combo = Math.max(0, this.combo - 2); // one tier per lapse
+      this.comboTimer = this.combo > 0 ? COMBO_DECAY : 0;
+    }
+    if (this.comboTimer < 0) this.comboTimer = 0;
+    this.weapons.damageScale = this.waves.damageScale;
     this.weapons.update(frame, dt);
     this.viewmodel.setWeapon(this.weapons.current.def.id);
     const wv = this.weapons.view();
@@ -454,9 +508,19 @@ export class Game {
     }
   }
 
-  private handleKill = (enemy: Enemy): void => {
+  private handleKill = (enemy: Enemy, byPlayer: boolean): void => {
     this.kills += 1;
-    const pts = Math.round(enemy.def.score * this.waves.scoreMult);
+    // Escort kills bank the base score but never extend the player's combo.
+    if (!byPlayer) {
+      const base = Math.round(enemy.def.score * this.waves.scoreMult);
+      this.score += base;
+      this.hud.popScore(base);
+      return;
+    }
+    this.combo += 1;
+    this.comboTimer = COMBO_WINDOW;
+    const mult = Math.min(1 + Math.floor(this.combo / 2), 8);
+    const pts = Math.round(enemy.def.score * this.waves.scoreMult * mult);
     this.score += pts;
     this.hud.hitmarkerFlash('kill');
     this.hud.popScore(pts);
@@ -494,6 +558,7 @@ export class Game {
     state.phaseTimer = this.waves.timer;
     state.score = this.score;
     state.kills = this.kills;
+    state.comboMult = Math.min(1 + Math.floor(this.combo / 2), 8);
     state.spread = this.crosshairSpread();
     state.inGame = this.phase === 'playing';
     state.allyActive = this.ally.active;

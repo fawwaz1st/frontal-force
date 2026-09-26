@@ -7,7 +7,7 @@ export type IconName =
   | 'score' | 'skull' | 'flag' | 'trophy' | 'shield' | 'bullet'
   | 'reload' | 'clock' | 'check' | 'play' | 'exit' | 'grid'
   | 'target' | 'speaker' | 'mouse' | 'move' | 'jump' | 'sprint'
-  | 'crouch' | 'swap' | 'pause' | 'crate' | 'crosshair' | 'bot'
+  | 'crouch' | 'swap' | 'pause' | 'crate' | 'crosshair' | 'infinity' | 'bot'
   | 'rifle' | 'smg' | 'shotgun' | 'railgun';
 
 const ICON_PATHS: Record<IconName, string> = {
@@ -51,6 +51,8 @@ const ICON_PATHS: Record<IconName, string> = {
     '<rect x="3.5" y="6.5" width="17" height="13" rx="1"/><path d="M3.5 11h17M3.5 15h17M12 6.5v13"/><path d="M3.5 6.5 6 3.5h12l2.5 3"/>',
   crosshair:
     '<circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/>',
+  // Endless mode: joined loops
+  infinity: '<circle cx="8.6" cy="12" r="3.4"/><circle cx="15.4" cy="12" r="3.4"/>',
   // Humanoid escort bot
   bot:
     '<rect x="9" y="3" width="6" height="5" rx="1.5"/><path d="M10.6 5.5h.01M13.4 5.5h.01"/><rect x="7" y="9.5" width="10" height="7" rx="2"/><path d="M12 16.5v2.5M9.5 21.5l2.5-2.5 2.5 2.5M4.5 11.5v3M19.5 11.5v3"/>',

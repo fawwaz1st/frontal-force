@@ -1,5 +1,5 @@
 import { icon, type IconName } from './icons';
-import type { GameMode } from '../core/storage';
+import { GAME_MODES, type GameMode, type SaveData } from '../core/storage';
 import type { WavePhase } from '../game/Waves';
 
 const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
@@ -7,6 +7,7 @@ const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
   blitz: { icon: 'sprint', label: 'BLITZ' },
   onslaught: { icon: 'skull', label: 'ONSLAUGHT' },
   rotator: { icon: 'swap', label: 'ROTATION' },
+  overrun: { icon: 'infinity', label: 'OVERRUN' },
 };
 
 export interface RadarBlip {
@@ -33,6 +34,8 @@ export interface HudState {
   phaseTimer: number;
   score: number;
   kills: number;
+  /** 1..8 — current kill-combo score multiplier */
+  comboMult: number;
   /** 0..1 — drives dynamic crosshair gap */
   spread: number;
   /** False on menu/pause/death screens: suppresses gameplay hints */
@@ -86,6 +89,7 @@ export class Hud {
   private readonly bannerSub: HTMLElement;
   private readonly waveText: HTMLElement;
   private readonly scoreText: HTMLElement;
+  private readonly comboEl: HTMLElement;
   private readonly killsText: HTMLElement;
   private readonly enHostiles: HTMLElement;
   private readonly enTimer: HTMLElement;
@@ -102,6 +106,7 @@ export class Hud {
   private readonly death: HTMLElement;
   private readonly deathStats: HTMLElement;
   private readonly menuBest: HTMLElement;
+  private readonly menuRecords: HTMLElement;
   private readonly recordEl: HTMLElement;
   private readonly damageDirs: HTMLElement[] = [];
   private readonly sensInputs: HTMLInputElement[] = [];
@@ -154,6 +159,7 @@ export class Hud {
       </div>
       <div class="hud__top">
         <div class="hud__chip" data-score>${icon('score')}<b data-score-n>0</b></div>
+        <div class="hud__chip hud__chip--combo" data-combo hidden>×1</div>
         <div class="hud__chip hud__chip--wave" data-wave>${icon('flag')}<b data-wave-n>1</b></div>
         <div class="hud__chip" data-kills>${icon('skull')}<b data-kills-n>0</b></div>
       </div>
@@ -188,12 +194,14 @@ export class Hud {
         <div class="hud__menu-card">
           <div class="hud__menu-title">FRONTAL FORCE</div>
           <div class="hud__menu-best" data-menu-best></div>
+          <div class="hud__menu-records" data-menu-records hidden></div>
           <div class="hud__touch-note">Requires mouse &amp; keyboard — desktop only</div>
           <div class="hud__modes" role="group" aria-label="Game mode">
             <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves">${icon('flag')}<span>STANDARD</span></button>
             <button type="button" class="hud__mode-chip" data-mode="blitz" title="Shorter breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
             <button type="button" class="hud__mode-chip" data-mode="onslaught" title="Heavy waves from wave 2, ×1.75 score">${icon('skull')}<span>ONSLAUGHT</span></button>
             <button type="button" class="hud__mode-chip" data-mode="rotator" title="Weapon swaps every kill, ×1.5 score">${icon('swap')}<span>ROTATION</span></button>
+            <button type="button" class="hud__mode-chip" data-mode="overrun" title="Endless horde, escalating HP, ×1.5 score">${icon('infinity')}<span>OVERRUN</span></button>
           </div>
           <div class="hud__keys" data-keys></div>
           <div class="hud__settings">
@@ -250,6 +258,7 @@ export class Hud {
     this.bannerSub = q('[data-banner-sub]');
     this.waveText = q('[data-wave-n]');
     this.scoreText = q('[data-score-n]');
+    this.comboEl = q('[data-combo]');
     this.killsText = q('[data-kills-n]');
     this.crosshair = q('[data-crosshair]');
     this.hitmarker = q('[data-hitmarker]');
@@ -260,6 +269,7 @@ export class Hud {
     this.death = q('[data-death]');
     this.deathStats = q('[data-death-stats]');
     this.menuBest = q('[data-menu-best]');
+    this.menuRecords = q('[data-menu-records]');
     this.recordEl = q('[data-record]');
     this.pauseModeEl = q('[data-pause-mode]');
     this.allyEl = q('[data-ally]');
@@ -353,7 +363,8 @@ export class Hud {
     this.setText('wave', this.waveText, String(s.wave));
     this.setText('score', this.scoreText, String(s.score));
     this.setText('kills', this.killsText, String(s.kills));
-
+    this.comboEl.hidden = s.comboMult <= 1;
+    if (!this.comboEl.hidden) this.setText('combo', this.comboEl, `×${s.comboMult}`);
     this.allyEl.hidden = !s.allyActive;
     if (s.allyActive) {
       const pct = Math.max(0, Math.min(100, (s.allyHp / Math.max(1, s.allyMax)) * 100));
@@ -565,7 +576,7 @@ export class Hud {
       const meta = MODE_META[stats.mode];
       this.deathStats.innerHTML =
         (meta ? row(meta.icon, 'Mode', meta.label) : '') +
-        row('flag', 'Waves survived', stats.wave) +
+        row('flag', 'Wave reached', stats.wave) +
         row('skull', 'Kills', stats.kills) +
         row('score', 'Score', stats.score) +
         row('trophy', 'Best', stats.bestScore);
@@ -589,8 +600,29 @@ export class Hud {
   public setMenuBest(score: number, wave: number): void {
     this.menuBest.innerHTML =
       score > 0
-        ? `${icon('trophy')}<span>${score} · WAVE ${wave}</span>`
+        ? `${icon('trophy')}<span>${score} · WAVE ${Math.max(1, wave)}</span>`
         : `${icon('trophy')}<span>NO RECORD</span>`;
+  }
+
+  /** Lifetime records under the menu best line — stencil rows, no cards. */
+  public setMenuRecords(save: SaveData): void {
+    if (save.totalRuns <= 0) {
+      this.menuRecords.hidden = true;
+      return;
+    }
+    const row = (label: string, value: number): string =>
+      `<div class="hud__menu-stat"><span>${label}</span><i></i><b>${value}</b></div>`;
+    const rows = [
+      row('KILLS', save.totalKills),
+      row('RUNS', save.totalRuns),
+      row('WAVES CLEARED', save.totalWavesCleared),
+    ];
+    for (const mode of GAME_MODES) {
+      const n = save.killsPerMode[mode];
+      if (n) rows.push(row(MODE_META[mode].label, n));
+    }
+    this.menuRecords.innerHTML = rows.join('');
+    this.menuRecords.hidden = false;
   }
 
   /** Reflect the selected mode on menu chips + the pause-card readout. */

@@ -93,7 +93,7 @@ This system explicitly rejects the AI-template look listed in PRODUCT.md (defaul
 - Chamfered corners (`clip-path`) everywhere instead of border-radius; flat panels, zero blur
 - Hazard hatch stripes mark the primary/commit action and the active mode
 - Signal color rationing: accent, danger, success, gold each own one meaning
-- Motion as feedback only (hit, damage direction, reload, low health, screen shake) with reduced-motion parity
+- Motion as feedback only (hit, damage direction, reload, low health, screen shake, landing impact) with reduced-motion parity
 
 ## 2. Colors
 
@@ -117,6 +117,10 @@ A warm signal palette on an olive-black field: amber for interaction, crimson fo
 - **Khaki Hairline** (#ded2aa47): every 1px border — chips, bars, cards, slots.
 - **Bone** (#ece7d8): primary text and data numerals.
 - **Khaki Dim** (#ded2aa99): labels, secondary text, inactive slots.
+
+### Enemy Kind Hues (scene)
+
+The four enemy kinds own one hue each, shared by the model and its radar blip so the threat reads at a glance: grunt `#d95cff`, rusher `#ff5c5c`, gunner `#ffb03a`, warden `#35f0c8` (teal). These are scene/radar hues — not part of the HUD signal vocabulary.
 
 ### Named Rules
 **The Signal-Only Rule.** A hue may only appear when it carries gameplay or interaction meaning: amber = interactive/current, crimson = harm, lime = recovery, gold = achievement. If a new element doesn't have a meaning, it stays khaki/bone.
@@ -168,7 +172,7 @@ Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on comm
 
 ### Chips
 - **Style:** crate-panel background, khaki hairline, radius 0, chamfered 9px corners, label type 15px/600, padding 6px 14px. **No blur.**
-- **State:** the WAVE chip is the accent variant (amber text, amber border, `rgba(255,159,28,0.1)` fill); score/kills stay neutral.
+- **State:** the WAVE chip is the accent variant (amber text, amber border, `rgba(255,159,28,0.1)` fill); score/kills stay neutral. The **kill-combo chip** reuses that amber variant for the `×N` multiplier in the HUD top row — hidden at ×1, so it only shows once a streak is worth reading.
 
 ### Cards / Containers
 - **Corner Style:** radius 0, chamfered 18px (`clip-path`).
@@ -176,6 +180,10 @@ Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on comm
 - **Frame:** 1px `{colors.line}` border + offset double outline (5px) for the menu card.
 - **Shadow Strategy:** panel lift (see Elevation) for the menu card only.
 - **Internal Padding:** 42px 56px.
+
+### Records Ledger (menu)
+- **Rows:** lifetime stat rows under the menu best line — dim uppercase label, 1px dotted khaki leader, bone tabular-nums value; 13px/600, +0.14em tracking, 6px row gap.
+- **Behavior:** the ledger stays hidden until the first recorded run; per-mode kill rows appear only for modes with kills.
 
 ### Inputs / Fields
 - **Style:** native range inputs, `accent-color: #ff9f1c`, width 200px, no custom chrome; icon-led labels (crosshair/speaker).

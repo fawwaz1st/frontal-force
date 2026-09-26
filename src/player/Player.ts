@@ -43,8 +43,9 @@ export class Player {
   public onDamaged: ((from: THREE.Vector3 | null) => void) | null = null;
   /** First-person body (Game adds it to the scene) — visible when you look down. */
   public readonly body = new THREE.Group();
-  /** Fires once per touchdown after an airborne stretch (land sfx + viewmodel dip). */
-  public onLanded: (() => void) | null = null;
+  /** Fires once per touchdown after an airborne stretch (land sfx + viewmodel dip).
+   *  `fallSpeed` is the vertical impact speed in m/s at contact. */
+  public onLanded: ((fallSpeed: number) => void) | null = null;
 
   private shake = 0;
 
@@ -327,6 +328,8 @@ export class Player {
     }
     this.velocity.y = Math.max(this.velocity.y - GRAVITY * dt, -32);
 
+    // Capture impact speed before the solver zeroes vertical velocity on contact.
+    const fallSpeed = Math.max(0, -this.velocity.y);
     const stepDt = dt / SUBSTEPS;
     let groundedNow = false;
     for (let i = 0; i < SUBSTEPS; i++) {
@@ -345,7 +348,7 @@ export class Player {
     if (!groundedNow) this.wasAirborne = true;
     else if (this.wasAirborne) {
       this.wasAirborne = false;
-      this.onLanded?.();
+      this.onLanded?.(fallSpeed);
     }
 
     this.updateCrouch(wantsCrouch);

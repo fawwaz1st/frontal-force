@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type TacticalKind = 'grunt' | 'rusher' | 'gunner';
+export type TacticalKind = 'grunt' | 'rusher' | 'gunner' | 'warden';
 
 export interface CoverSpotData {
   center: THREE.Vector3;
@@ -63,7 +63,9 @@ export class TacticalDirector {
       if (travel > 34) continue;
       const roleFit = kind === 'gunner'
         ? Math.abs(playerDistance - 19) * 0.45
-        : Math.abs(playerDistance - 12) * 0.25;
+        : kind === 'warden'
+          ? Math.abs(playerDistance - 14) * 0.45
+          : Math.abs(playerDistance - 12) * 0.25;
       const score = travel * 0.72 + roleFit + (leftVisible && rightVisible ? 0 : 1.2);
       if (score >= bestScore) continue;
       bestScore = score;

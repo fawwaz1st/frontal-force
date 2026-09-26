@@ -41,6 +41,9 @@ export class WeaponController {
 
   public onFired: ((weapon: WeaponState) => void) | null = null;
   public onSwitched: (() => void) | null = null;
+  /** Damage multiplier for endless modes — mirrors the enemy HP ramp so a
+   *  fixed ammo pool never becomes a hard wall. 1 in every finite mode. */
+  public damageScale = 1;
   /** Latest player muzzle in world space; consumed once by enemy hearing. */
   public lastShot: THREE.Vector3 | null = null;
   /** Supplies the current weapon muzzle in WORLD space (eye + viewmodel offset). */
@@ -226,9 +229,10 @@ export class WeaponController {
       const point = this.tmpPoint.copy(origin).addScaledVector(dir, enemyHit.distance);
       const killed = this.enemies.damageEnemy(
         enemyHit.enemy,
-        enemyHit.headshot ? weapon.def.damage * 2 : weapon.def.damage,
+        (enemyHit.headshot ? weapon.def.damage * 2 : weapon.def.damage) * this.damageScale,
         point,
         dir, // knockback impulse along the shot line
+        true, // player-owned kill: feeds the combo meter
       );
       this.effects.ring(point, 0xffffff, 1.2, 0.18);
       if (showTracer) this.effects.tracer(origin, point, weapon.def.tracerColor);

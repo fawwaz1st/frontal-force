@@ -499,7 +499,12 @@ kbd {
   inset: 0;
   z-index: 20;
   display: grid;
-  place-items: center;
+  /* `safe` keeps the card's top reachable once it outgrows the viewport
+     (records block + 5 mode chips on a short/zoomed screen). */
+  align-content: safe center;
+  justify-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(8, 9, 6, 0.78);
   pointer-events: auto;
   transition: opacity 0.25;
@@ -565,6 +570,44 @@ kbd {
 }
 .hud__fatal { color: var(--text-dim); max-width: 42ch; margin: 20px auto 0; }
 .hud__menu-best .ic { color: var(--gold, #ffd76b); }
+
+/* Kill-combo chip — top row, accent state. Hidden keeps its slot so the
+   score/wave/kills chips never shift when a combo starts or lapses. */
+.hud__chip--combo {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: rgba(255, 159, 28, 0.1);
+}
+.hud__chip--combo[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+/* Lifetime records under the menu best line */
+.hud__menu-records {
+  margin-top: 14px;
+  display: grid;
+  gap: 6px;
+}
+.hud__menu-records[hidden] { display: none; }
+.hud__menu-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+.hud__menu-stat i {
+  flex: 1;
+  border-bottom: 1px dotted var(--line);
+  transform: translateY(-3px);
+}
+.hud__menu-stat b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- Keycap control diagram (icon + keys, zero prose) ---------- */
 .hud__keys {

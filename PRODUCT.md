@@ -10,7 +10,22 @@ Desktop players running a fast browser FPS in short, intense sessions (5–20 mi
 
 ## Product Purpose
 
-A single-arena wave-survival FPS that runs instantly in the browser with zero external assets — every visual is procedural geometry/textures, every sound is synthesized via WebAudio. Success looks like: tight game feel, an HUD that stays readable at speed, and a codebase small enough to reason about in one sitting.
+A single-arena wave-survival FPS that runs instantly in the browser with zero external assets — every visual is procedural geometry/textures, every sound is synthesized via WebAudio. Success looks like: tight game feel, an HUD that stays readable at speed, and a codebase small enough to reason about in one sitting. Five modes re-tune pacing and scoring, a kill-combo multiplier rewards momentum, and a lifetime record ledger gives short sessions a long arc.
+
+## Game Modes
+
+- **STANDARD** — classic wave pacing.
+- **BLITZ** — shorter breaks, denser spawns, ×1.35 score.
+- **ONSLAUGHT** — heavy waves from wave 2, ×1.75 score.
+- **ROTATION** — weapon swaps on every kill, ×1.5 score.
+- **OVERRUN** — the endless mode: 24 alive at once, HP ×1.12^wave (capped ×40), speed capped ×1.30, spawn cadence ×0.94^wave (floor 0.25 s), ×1.5 score. No "cleared" plate; it keeps its own `bestWaveOverrun` record.
+
+## Enemies
+
+- **Grunt** — baseline rifleman.
+- **Rusher** — fast melee flanker.
+- **Gunner** — slow long-range cannon.
+- **Warden** — teal (0x35f0c8) 180 HP mid-range shooter at 22 m, riot shield on the left arm. Frontal shots inside a ±60° cone land at 50 % and charge a 6-block guard meter that breaks for 1.2 s; shots outside the cone deal ×1.5. The shield drops during its 0.45 s attack wind-up — trading the telegraph is the intended counter-play.
 
 ## Brand Personality
 

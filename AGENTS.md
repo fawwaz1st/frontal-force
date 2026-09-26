@@ -17,7 +17,13 @@
 - Enemy kills leave fading corpses (~3.5 s, scale-y collapse) before disposal — `aliveCount` only counts non-dead; radar uses `forEachLive`.
 - Radar/damage-arc rotation: player-local forward = `-(dx·sin yaw + dz·cos yaw)`, right = `dx·cos yaw − dz·sin yaw`. Damage-arc angle = `atan2(dx, −dz) + yaw` (arc wedge points screen-up at angle 0). Verify sign conventions with the yaw=0 basis vectors before "fixing" mirrored blips.
 - Enemy hits carry the attacker position through `EnemyManager.onPlayerHit(damage, from)` so the HUD can show directional damage arcs; `player.onDamaged(from)` forwards it.
+- Escort bots live in `allies/Ally.ts` (own targeting/LOS, bolt interception, 18 s redeploy); cover claims are allocated by `game/Tactics.ts` — a deterministic spot scorer (travel, engagement range, verified LOS) that releases a claim on death.
 
 ## Game tuning / behavior
 - Fixed-timestep loop (60 Hz) has a catch-up guard: max 5 sim steps per frame, backlog dropped beyond that — long stalls degrade to slow motion instead of freeze-spiral.
-- Headshots (hit point in top ~22% of enemy capsule) deal 2× damage; wave-clear bonus is wave×250; best score/wave persist in `localStorage` key `frontal-force.v1`.
+- Headshots (hit point in top ~22% of enemy capsule) deal 2× damage; wave-clear bonus is wave×250.
+- Five modes in the `Waves.ts` MODES table (standard/blitz/onslaught/rotator/overrun); only OVERRUN is `endless: true` — 24-alive cap, HP ×1.12^(wave−1) capped ×40, speed capped ×1.30, spawn cadence ×0.94^(wave−1) floor 0.25 s, ×1.5 score, no cleared plate.
+- Warden armour: ±60° frontal cone halves damage and charges a 6-block guard meter (break = 1.2 s stagger, meter reset); flank shots ×1.5; shield down during the 0.45 s wind-up.
+- Kill combo: 3 s window per kill, `min(1 + floor(streak/2), 8)`, one tier lost per 0.5 s after the window lapses, hard reset on player damage.
+- Landing above 6 m/s vertical impact fires a white shock ring + smoke puff (`Game` `player.onLanded`).
+- Saves use schema `version: 1` with additive hydration — legacy payloads keep working, unknown keys dropped, every number `finite()` + clamped. `totalKills`/`totalRuns`/`totalWavesCleared`/`killsPerMode` are lifetime counters; OVERRUN keeps its own `bestWaveOverrun` (localStorage key `frontal-force.v1`).

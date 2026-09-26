@@ -10,7 +10,7 @@ import {
   type TacticalClaim,
 } from '../game/Tactics';
 
-export type EnemyKind = 'grunt' | 'rusher' | 'gunner';
+export type EnemyKind = 'grunt' | 'rusher' | 'gunner' | 'warden';
 
 interface EnemyDef {
   health: number;
@@ -28,6 +28,7 @@ const DEFS: Record<EnemyKind, EnemyDef> = {
   grunt: { health: 60, speed: 3.4, radius: 0.42, height: 1.7, color: 0xd95cff, attackRange: 26, attackCooldown: 1.6, damage: 8, score: 100 },
   rusher: { health: 40, speed: 6.2, radius: 0.38, height: 1.4, color: 0xff5c5c, attackRange: 1.7, attackCooldown: 0.9, damage: 14, score: 150 },
   gunner: { health: 110, speed: 2.2, radius: 0.5, height: 1.9, color: 0xffb03a, attackRange: 30, attackCooldown: 2.4, damage: 12, score: 250 },
+  warden: { health: 180, speed: 2.6, radius: 0.55, height: 2.0, color: 0x35f0c8, attackRange: 22, attackCooldown: 2.4, damage: 16, score: 400 },
 };
 
 export interface Enemy {
@@ -54,6 +55,13 @@ export interface Enemy {
   strafeSeed: number;
   /** Cooldown for the blind-search objective refresh. */
   searchSyncT: number;
+  /** Warden guard: consecutive frontal blocks absorbed before the guard breaks. */
+  shieldBlocks: number;
+  /** simTime of the last counted frontal block — dedupes multi-pellet volleys
+   *  so one shotgun trigger pull is one block, not eight. -1 = never. */
+  shieldHitT: number;
+  /** Seconds of guard-break left — shield lowered, full damage taken. */
+  staggerT: number;
   tacticalId: number;
   state: 'advance' | 'cover' | 'peek' | 'search' | 'flank' | 'suppress';
   lastKnown: THREE.Vector3;
@@ -88,6 +96,12 @@ const CORPSE_LIFE = 6;
 const FLOOR_Y = 0;
 const BODY_EMISSIVE = 0.26;
 const ATTACK_WINDUP = 0.35;
+/** Wardens telegraph longer — the shield swings open during this window. */
+const WARDEN_WINDUP = 0.45;
+/** Consecutive frontal blocks that break a warden's guard. */
+const WARDEN_SHIELD_BREAK = 6;
+/** Guard-break duration in seconds (shield down, full damage, no block). */
+const WARDEN_STAGGER = 1.2;
 /** Blind agents re-orient lastKnown toward the objective at this cadence. */
 const SEARCH_SYNC_INTERVAL = 3;
 const PERCEPTION_INTERVAL = 0.125;
@@ -97,7 +111,7 @@ const BURST_MAX = 3;
 
 export class EnemyManager {
   private readonly group = new THREE.Group();
-  public onEnemyKilled: ((enemy: Enemy) => void) | null = null;
+  public onEnemyKilled: ((enemy: Enemy, byPlayer: boolean) => void) | null = null;
   public onPlayerHit: ((damage: number, from: THREE.Vector3) => void) | null = null;
   /** Player yaw for the current frame — lets enemy sfx pan to their screen side. */
   public playerYaw = 0;
@@ -141,6 +155,7 @@ export class EnemyManager {
     antenna: new THREE.CylinderGeometry(0.012, 0.012, 0.22, 5),
     strip: new THREE.BoxGeometry(0.28, 0.05, 0.02),
     pack: new THREE.BoxGeometry(0.36, 0.34, 0.16),
+    shield: new THREE.BoxGeometry(0.55, 0.75, 0.06),
   } as const;
   private readonly projMat = new THREE.MeshBasicMaterial({ color: 0xff6bd7 });
   private readonly projMats = new Map<EnemyKind, THREE.MeshBasicMaterial>();
@@ -154,6 +169,12 @@ export class EnemyManager {
   private readonly tmp4 = new THREE.Vector3();
   private readonly tmp5 = new THREE.Vector3();
   private readonly tmpRay = new THREE.Ray();
+  /** Per-step readiness snapshot — hoisted out of the per-enemy attack scan
+   *  so `updateAttack` never walks the roster again (was O(n²) per step). */
+  private readyShooters = 0;
+  private readyRushers = 0;
+  /** Reused return slot for `resolveWardenHit` (no per-hit object churn). */
+  private readonly wardenHit = { damage: 0, blocked: false };
 
   public constructor(
     scene: THREE.Scene,
@@ -245,7 +266,7 @@ export class EnemyManager {
       strafeSeed: Math.random() * Math.PI * 2,
       searchSyncT: randRange(0.4, SEARCH_SYNC_INTERVAL),
       tacticalId: this.nextTacticalId++,
-      state: kind === 'rusher' ? 'flank' : 'advance',
+      state: kind === 'rusher' ? 'flank' : kind === 'warden' ? 'suppress' : 'advance',
       claim: null,
       perceptionTimer: Math.random() * PERCEPTION_INTERVAL,
       visible: false,
@@ -256,6 +277,9 @@ export class EnemyManager {
       telegraphed: false,
       animAim: 0,
       flashT: 0,
+      shieldBlocks: 0,
+      shieldHitT: -1,
+      staggerT: 0,
       dead: false,
       deadT: 0,
     });
@@ -277,15 +301,27 @@ export class EnemyManager {
     return best;
   }
 
-  public damageEnemy(enemy: Enemy, amount: number, point: THREE.Vector3, force?: THREE.Vector3): boolean {
+  /** `byPlayer` marks damage that came from the player's own weapon — escort
+   *  bot kills must not feed the kill-combo meter. */
+  public damageEnemy(enemy: Enemy, amount: number, point: THREE.Vector3, force?: THREE.Vector3, byPlayer = false): boolean {
     if (enemy.dead) return false;
-    enemy.health -= amount;
+    // Wardens gate damage through their shield: frontal shots are absorbed
+    // (or halved) until the guard breaks; flank shots punish for 1.5×.
+    let damage = amount;
+    let blocked = false;
+    if (enemy.kind === 'warden') {
+      const resolved = this.resolveWardenHit(enemy, amount, point, force);
+      damage = resolved.damage;
+      blocked = resolved.blocked;
+    }
+    enemy.health -= damage;
     enemy.flashT = 0.14;
     this.effects.impact(point, this.tmp.copy(point).sub(enemy.group.position).normalize());
     // Physics kickback: heavier hits shove the body along the shot line
     // (resolved against walls by the normal octree pass next frame).
-    if (force) {
-      const push = Math.min(0.22, 0.05 + amount * 0.0035);
+    // A blocked shot transfers no momentum — the shield eats it.
+    if (force && !blocked) {
+      const push = Math.min(0.22, 0.05 + damage * 0.0035);
       enemy.collider.translate(this.tmp2.copy(force).setY(0).normalize().multiplyScalar(push));
     }
     if (enemy.health <= 0) {
@@ -296,10 +332,67 @@ export class EnemyManager {
       this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1), enemy.def.color, 5, 0.45);
       this.effects.burst(enemy.group.position.clone().setY(enemy.group.position.y + 1), enemy.def.color, 10, 1.6);
       this.audio.kill();
-      this.onEnemyKilled?.(enemy);
+      this.onEnemyKilled?.(enemy, byPlayer);
       return true;
     }
     return false;
+  }
+
+  /**
+   * Warden armour model: a riot shield covers the front arc. Frontal hits land
+   * at 50 % and charge a 6-block guard meter; the guard breaks for 1.2 s (and
+   * every attack wind-up counts as open — trade the telegraph, not the plate).
+   * Shots from behind ignore the shield entirely and deal 1.5× damage.
+   * Returns the damage to apply plus whether the shot was absorbed.
+   */
+  private resolveWardenHit(
+    enemy: Enemy,
+    amount: number,
+    point: THREE.Vector3,
+    force?: THREE.Vector3,
+  ): { damage: number; blocked: boolean } {
+    const out = this.wardenHit;
+    out.damage = amount;
+    out.blocked = false;
+    if (enemy.staggerT > 0 || (enemy.telegraphed && enemy.attackTimer <= WARDEN_WINDUP)) {
+      enemy.shieldBlocks = 0;
+      return out;
+    }
+    if (!force) {
+      // No shot vector (ally fire, splash): unshielded, but the guard meter
+      // must survive — an escort bot must not erase the player's progress.
+      return out;
+    }
+    const forward = this.tmp4.set(-Math.sin(enemy.group.rotation.y), 0, -Math.cos(enemy.group.rotation.y));
+    const shot = this.tmp5.copy(force).setY(0);
+    if (shot.lengthSq() < 1e-6) return out;
+    const fromFront = forward.dot(shot.normalize()) < -0.5;
+    if (!fromFront) {
+      enemy.shieldBlocks = 0;
+      out.damage = amount * 1.5;
+      return out;
+    }
+    if (Math.random() >= 0.8) {
+      // Lucky gap: the plate is not perfectly flush, this shot slips through.
+      return out;
+    }
+    // One trigger pull = one block: pellets of the same volley share a step.
+    if (enemy.shieldHitT !== this.simTime) {
+      enemy.shieldHitT = this.simTime;
+      enemy.shieldBlocks += 1;
+    }
+    if (enemy.shieldBlocks >= WARDEN_SHIELD_BREAK) {
+      enemy.shieldBlocks = 0;
+      enemy.staggerT = WARDEN_STAGGER;
+      this.effects.ring(point, enemy.def.color, 3.2, 0.3);
+      // The breaking shot shatters the plate: full damage, no absorption.
+      out.damage = amount;
+      return out;
+    }
+    this.effects.burst(point, enemy.def.color, 4, 1.2);
+    out.damage = amount * 0.5;
+    out.blocked = true;
+    return out;
   }
 
   public update(
@@ -331,6 +424,7 @@ export class EnemyManager {
     }
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
+      if (enemy.staggerT > 0) enemy.staggerT = Math.max(0, enemy.staggerT - dt);
       if (lastShot) {
         const heardDistance = enemy.group.position.distanceTo(lastShot);
         const hearingRange = enemy.kind === 'rusher' ? 25 : 30;
@@ -340,6 +434,20 @@ export class EnemyManager {
           if (!enemy.visible) enemy.state = 'search';
         }
       }
+    }
+    // One readiness pass per step feeds every updateAttack() call below.
+    let readyShooters = 0;
+    let readyRushers = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.dead || !enemy.visible) continue;
+      if (enemy.attackTimer > EnemyManager.windupOf(enemy.kind)) continue;
+      if (enemy.kind === 'rusher') readyRushers += 1;
+      else readyShooters += 1;
+    }
+    this.readyShooters = readyShooters;
+    this.readyRushers = readyRushers;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
       this.updateEnemy(enemy, dt, playerPos, playerDead, playerVel);
     }
     this.updateProjectiles(dt, playerPos, playerDead);
@@ -452,14 +560,14 @@ private updatePerception(
       const peekDistance = enemy.group.position.distanceTo(target);
       if (peekDistance < 0.65) {
         enemy.state = 'peek';
-        enemy.attackTimer = Math.min(enemy.attackTimer, ATTACK_WINDUP + 0.2);
+        enemy.attackTimer = Math.min(enemy.attackTimer, EnemyManager.windupOf(enemy.kind) + 0.2);
       } else if (enemy.group.position.distanceTo(enemy.claim.point.center) < 0.75) {
         enemy.state = 'peek';
       }
     }
     if (enemy.state === 'peek' && enemy.visible && enemy.seenFor > 1.5) {
       enemy.state = 'suppress';
-      enemy.attackTimer = Math.min(enemy.attackTimer, ATTACK_WINDUP + 0.2);
+      enemy.attackTimer = Math.min(enemy.attackTimer, EnemyManager.windupOf(enemy.kind) + 0.2);
     }
   }
 
@@ -497,6 +605,13 @@ private updatePerception(
       }
     } else if (enemy.kind === 'rusher') {
       move.copy(this.tmp4);
+    } else if (enemy.kind === 'warden') {
+      // Warden holds a mid-range firing lane: closes to ~72 % of its reach,
+      // backs off when crowded, strafes while shooting. Never flanks.
+      if (distance > enemy.def.attackRange * 0.72) move.copy(this.tmp4);
+      else if (distance < 8) move.addScaledVector(this.tmp4, -0.5);
+      const side = this.tmp5.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() > 0.001) move.addScaledVector(side.normalize(), Math.sin(this.simTime + enemy.strafeSeed) * 0.15);
     } else if (enemy.kind === 'gunner') {
       if (distance > enemy.def.attackRange * 0.78) move.copy(this.tmp4);
       else if (distance < 11) move.addScaledVector(this.tmp4, -0.8);
@@ -543,8 +658,8 @@ private updatePerception(
         if (claim) {
           enemy.claim = claim;
           enemy.state = 'cover';
-        } else if (enemy.kind === 'gunner' || enemy.strafeSeed > Math.PI) {
-          enemy.state = enemy.kind === 'gunner' ? 'suppress' : 'flank';
+        } else if (enemy.kind === 'gunner' || enemy.kind === 'warden' || enemy.strafeSeed > Math.PI) {
+          enemy.state = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 'suppress' : 'flank';
         }
       }
     }
@@ -564,6 +679,10 @@ private updatePerception(
     }
   }
 
+  private static windupOf(kind: EnemyKind): number {
+    return kind === 'warden' ? WARDEN_WINDUP : ATTACK_WINDUP;
+  }
+
   private updateAttack(
     enemy: Enemy,
     dt: number,
@@ -574,27 +693,33 @@ private updatePerception(
     enemy.attackTimer -= dt;
     const distance = enemy.group.position.distanceTo(playerPos);
     const inRange = distance <= def.attackRange;
-    const shootersReady = this.enemies.reduce((count, other) => {
-      if (other === enemy || other.dead || !other.visible || other.attackTimer > ATTACK_WINDUP) return count;
-      return count + (other.kind === 'rusher' ? 0 : 1);
-    }, 0);
-    const rushersReady = this.enemies.reduce((count, other) => {
-      if (other === enemy || other.dead || !other.visible || other.kind !== 'rusher') return count;
-      return count + (other.attackTimer <= ATTACK_WINDUP ? 1 : 0);
-    }, 0);
+    const windup = EnemyManager.windupOf(enemy.kind);
+    // Snapshot from update(): subtract self when this agent is already ready.
+    const selfReady =
+      enemy.visible && !enemy.dead && enemy.attackTimer <= windup;
+    const shootersReady = this.readyShooters - (selfReady && enemy.kind !== 'rusher' ? 1 : 0);
+    const rushersReady = this.readyRushers - (selfReady && enemy.kind === 'rusher' ? 1 : 0);
     const roleCap = enemy.kind === 'rusher'
       ? rushersReady < 2
       : shootersReady < MAX_ACTIVE_SHOOTERS;
     const canEngage = enemy.visible && enemy.state !== 'search' && inRange && roleCap;
     if (!canEngage) {
-      if (enemy.attackTimer <= 0) enemy.attackTimer = ATTACK_WINDUP + 0.05;
+      if (enemy.attackTimer <= 0) enemy.attackTimer = windup + 0.05;
       if (enemy.telegraphed) enemy.telegraphed = false;
+      return;
+    }
+    // Guard-broken wardens cannot act — no wind-up, no shot. It still turns
+    // to face you, so the plate side matters on the next engagement.
+    if (enemy.kind === 'warden' && enemy.staggerT > 0) {
+      enemy.telegraphed = false;
+      // Hold the timer at a full telegraph so recovery is never a free hit.
+      if (enemy.attackTimer < windup) enemy.attackTimer = windup;
       return;
     }
 
     if (
       !enemy.telegraphed &&
-      enemy.attackTimer <= ATTACK_WINDUP &&
+      enemy.attackTimer <= windup &&
       enemy.attackTimer > 0
     ) {
       enemy.telegraphed = true;
@@ -604,6 +729,14 @@ private updatePerception(
 
     enemy.telegraphed = false;
     enemy.attackTimer = def.attackCooldown * randRange(0.85, 1.2);
+    // Consume this agent's slot from the per-step readiness snapshot: without
+    // this, N ready agents all read the same pre-step count and either all
+    // hold fire (cap deadlock) or all volley at once.
+    if (enemy.kind === 'rusher') {
+      if (this.readyRushers > 0) this.readyRushers -= 1;
+    } else if (this.readyShooters > 0) {
+      this.readyShooters -= 1;
+    }
     if (enemy.kind === 'rusher') {
       if (!this.hasLineOfSight(enemy.group.position, playerPos)) return;
       this.onPlayerHit?.(def.damage, enemy.group.position);
@@ -622,7 +755,7 @@ private updatePerception(
   private animateEnemy(enemy: Enemy, dt: number, distance: number, playerDead: boolean): void {
     const pulse = 2.2 + Math.sin(this.simTime * 6 + enemy.strafeSeed) * 1.2;
     const windup = enemy.telegraphed
-      ? clamp(1 - enemy.attackTimer / ATTACK_WINDUP, 0, 1) * 7
+      ? clamp(1 - enemy.attackTimer / EnemyManager.windupOf(enemy.kind), 0, 1) * 7
       : 0;
     (enemy.eye.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse + windup;
     if (enemy.flashT > 0) {
@@ -641,8 +774,10 @@ private updatePerception(
 
     enemy.animAim = damp(enemy.animAim, enemy.telegraphed ? 1 : 0, 10, dt);
     const aim = enemy.animAim;
-    enemy.armL.rotation.x = -swing * 0.75 * (1 - aim) + 1.25 * aim;
-    enemy.armR.rotation.x = enemy.kind === 'gunner'
+    enemy.armL.rotation.x = enemy.kind === 'warden'
+      ? -swing * 0.3 + (0.6 + 0.6 * aim)
+      : -swing * 0.75 * (1 - aim) + 1.25 * aim;
+    enemy.armR.rotation.x = enemy.kind === 'gunner' || enemy.kind === 'warden'
       ? 1.35
       : swing * 0.75 * (1 - aim) + 1.4 * aim;
 
@@ -681,6 +816,7 @@ private updatePerception(
     s(torso, 0, torsoY);
     if (kind === 'gunner') torso.scale.set(1.18, 1.05, 1.15);
     if (kind === 'rusher') torso.scale.set(0.9, 0.95, 0.9);
+    if (kind === 'warden') torso.scale.set(1.1, 1.06, 1.06);
     // Pelvis + shoulder pads ride on the torso
     s(new THREE.Mesh(g.pelvis, dark), 0, -0.36 * scaleK, 0, torso);
     const padL = new THREE.Mesh(g.shoulder, dark);
@@ -729,12 +865,18 @@ private updatePerception(
       const elbow = new THREE.Mesh(g.joint, dark);
       elbow.position.y = -0.3 * scaleK;
       pivot.add(elbow);
-      if (kind === 'rusher' && side === 1) {
+      if (kind === 'warden' && side === -1) {
+        // Riot plate carried on the left forearm — the model's front arc.
+        const plate = new THREE.Mesh(g.shield, bodyMat);
+        plate.position.set(0, -0.34 * scaleK, -0.12 * scaleK);
+        plate.castShadow = true;
+        pivot.add(plate);
+      } else if (kind === 'rusher' && side === 1) {
         const blade = new THREE.Mesh(g.blade, bodyMat);
         blade.position.y = -0.5 * scaleK;
         blade.castShadow = true;
         pivot.add(blade);
-      } else if (kind === 'gunner' && side === 1) {
+      } else if ((kind === 'gunner' || kind === 'warden') && side === 1) {
         const cannon = new THREE.Mesh(g.cannon, dark);
         cannon.rotation.x = Math.PI / 2;
         cannon.position.set(0, -0.3 * scaleK, -0.25 * scaleK);
@@ -795,13 +937,13 @@ private updatePerception(
       enemy.group.position.y + enemy.def.height * 0.75,
       enemy.group.position.z,
     );
-    const speed = enemy.kind === 'gunner' ? 17 : 13;
+    const speed = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 17 : 13;
     const horizontal = Math.hypot(playerPos.x - from.x, playerPos.z - from.z);
     const flight = Math.max(0.2, horizontal / speed);
     const aim = this.tmp2.set(playerPos.x, playerPos.y + 1.4, playerPos.z);
     if (playerVel) aim.addScaledVector(playerVel, flight);
 
-    const baseErr = enemy.kind === 'gunner' ? 0.015 : 0.05;
+    const baseErr = enemy.kind === 'gunner' ? 0.015 : enemy.kind === 'warden' ? 0.02 : 0.05;
     const speedErr = playerVel ? Math.min(0.035, Math.hypot(playerVel.x, playerVel.z) * 0.007) : 0;
     const err = (baseErr + speedErr) * flight;
     aim.x += randRange(-err, err);
