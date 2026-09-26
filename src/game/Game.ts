@@ -117,7 +117,6 @@ export class Game {
   private combo = 0;
   private comboTimer = 0;
   private readonly pLast = new THREE.Vector3(Number.NaN, 0, 0);
-  private readonly pVel = new THREE.Vector3();
   private readonly radarBlips: RadarBlip[] = Array.from({ length: 24 }, () => ({
     x: 0,
     z: 0,
@@ -389,7 +388,6 @@ export class Game {
     }
     this.resetPlayer();
     this.pLast.copy(this.player.position);
-    this.pVel.set(0, 0, 0);
     this.waves.reset();
     this.ally.deploy(this.player.position);
     this.hud.showMenu(false);
@@ -571,14 +569,9 @@ export class Game {
 
   private updatePlayingStep(dt: number, frame: InputFrame): void {
     this.player.update(dt, frame);
-    // Player velocity for enemy ballistic lead prediction
-    if (Number.isNaN(this.pLast.x)) {
-      this.pLast.copy(this.player.position);
-    } else {
-      this.pVel.subVectors(this.player.position, this.pLast).divideScalar(Math.max(dt, 1e-4));
-      this.pVel.clampLength(0, 14);
-      this.pLast.copy(this.player.position);
-    }
+    // Player velocity is read straight off PlayerTarget.velocity (the player
+    // integrates it), so no separate sampling pass is needed here.
+    this.pLast.copy(this.player.position);
     this.comboTimer -= dt;
     if (this.comboTimer <= 0 && this.combo > 0) {
       this.combo = Math.max(0, this.combo - 2); // one tier per lapse
@@ -604,7 +597,6 @@ export class Game {
       dt,
       this.player.position,
       this.player.dead,
-      this.pVel,
       this.weapons.lastShot,
     );
     this.weapons.lastShot = null;

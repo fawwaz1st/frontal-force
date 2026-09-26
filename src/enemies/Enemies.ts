@@ -569,7 +569,6 @@ export class EnemyManager {
     dt: number,
     playerPos: THREE.Vector3,
     playerDead: boolean,
-    playerVel?: THREE.Vector3,
     lastShot?: THREE.Vector3 | null,
   ): void {
     this.simTime += dt;
@@ -624,7 +623,7 @@ export class EnemyManager {
     this.readyRushers = readyRushers;
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
-      this.updateEnemy(enemy, dt, playerPos, playerDead, playerVel);
+      this.updateEnemy(enemy, dt, playerDead);
     }
     this.updateProjectiles(dt);
   }
@@ -652,9 +651,7 @@ export class EnemyManager {
   private updateEnemy(
     enemy: Enemy,
     dt: number,
-    playerPos: THREE.Vector3,
     playerDead: boolean,
-    playerVel?: THREE.Vector3,
   ): void {
     this.updatePerception(enemy, dt, playerDead);
     // Blind sweep: while searching with no contact memory, re-orient the
@@ -671,7 +668,7 @@ export class EnemyManager {
     // The aim objective is the chosen victim when in sight, otherwise the last
     // place that victim was seen. With no victim at all, fall back to the
     // player's position so a fresh spawn still advances into the fight.
-    const fallback = this.hasPlayerPos ? this.lastPlayerPos : playerPos;
+    const fallback = this.hasPlayerPos ? this.lastPlayerPos : this.tmp5.set(0, 0, 0);
     const objective = enemy.target
       ? (enemy.targetVisible ? enemy.target.position : enemy.lastKnown)
       : fallback;
@@ -693,7 +690,9 @@ export class EnemyManager {
     const anyVictim = this.targets.some((t) => t.targetable);
     if (anyVictim) {
       this.moveEnemy(enemy, dt, toTarget, targetDistance, objective);
-      this.updateAttack(enemy, dt, playerDead ? undefined : playerVel);
+      // Ballistic lead must use the VICTIM's velocity, not the player's —
+      // leading with the wrong vector makes bolts aimed at an escort miss.
+      this.updateAttack(enemy, dt, enemy.target?.velocity);
     }
     this.animateEnemy(enemy, dt, targetDistance, !anyVictim);
   }
@@ -885,7 +884,7 @@ export class EnemyManager {
   private updateAttack(
     enemy: Enemy,
     dt: number,
-    playerVel: THREE.Vector3 | undefined,
+    victimVel: THREE.Vector3 | undefined,
   ): void {
     const def = enemy.def;
     enemy.attackTimer -= dt;
@@ -946,7 +945,7 @@ export class EnemyManager {
       victim.receiveDamage(def.damage, enemy.group.position);
       this.audio.melee(this.panToward(enemy.group.position, victimPos));
     } else {
-      this.fireProjectile(enemy, victim, playerVel);
+      this.fireProjectile(enemy, victim, victimVel);
       this.audio.enemyShot(this.panToward(enemy.group.position, victimPos));
       enemy.burst -= 1;
       if (enemy.burst <= 0) {

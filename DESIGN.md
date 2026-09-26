@@ -94,6 +94,7 @@ This system explicitly rejects the AI-template look listed in PRODUCT.md (defaul
 - Hazard hatch stripes mark the primary/commit action and the active mode
 - Signal color rationing: accent, danger, success, gold each own one meaning
 - Motion as feedback only (hit, damage direction, reload, low health, screen shake, landing impact) with reduced-motion parity
+- One HUD for both input schemes: the same panels reposition under `--safe-*` insets and `100dvh`, and the touch overlay borrows the accent signal rather than inventing a second palette
 
 ## 2. Colors
 
@@ -127,7 +128,7 @@ The four enemy kinds own one hue each, shared by the model and its radar blip so
 
 **The Hairline Rule.** Every container edge is a 1px `{colors.line}` border — never a thick colored stripe, never `border-left` used as an accent.
 
-**The Chamfer Rule.** Plates never round: corners are cut with `clip-path` (8–18px). Border-radius above 0 is reserved for genuinely round things (blips, dots).
+**The Chamfer Rule.** Plates never round: corners are cut with `clip-path` (8–18px). Border-radius above 0 is reserved for genuinely round things (blips, dots, the touch stick and its thumb buttons).
 
 ## 3. Typography
 
@@ -160,6 +161,8 @@ This system is flat-not-float: surfaces are opaque plates over a darkened scene.
 ### Named Rules
 **The Flat-Not-Float Rule.** No `backdrop-filter`, no panel glow bloom, no drop shadows on HUD chips. Interactive states change border/background color (amber fill or amber outline); they may nudge ≤1px but never bounce.
 
+**The Safe-Area Rule.** The HUD is laid out inside `env(safe-area-inset-*)`, exposed as `--safe-t/r/b/l` custom properties — one source of truth shared by CSS and `TouchControls.layout()`. The stage is `100dvh` (`vh` as the fallback), and `touch-action: none` sits on every element that receives pointer events, because the browser otherwise steals pan/pinch mid-drag.
+
 ## 5. Components
 
 Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on commit actions, oversized numerals.
@@ -188,11 +191,20 @@ Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on comm
 ### Inputs / Fields
 - **Style:** native range inputs, `accent-color: #ff9f1c`, width 200px, no custom chrome; icon-led labels (crosshair/speaker).
 - **Focus:** `:focus-visible` outline 2px accent, offset 3 (shared with buttons).
+- **Fields:** sensitivity, touch look, volume, and a graphics-quality select (AUTO / LOW / MEDIUM / HIGH) — the quality field is the only native `<select>`, kept unstyled for reliable mobile pickers. Touch look and quality are separate settings because a phone's feel and a phone's frame budget are different problems.
+
+### Touch Overlay
+- **Stick:** floating-origin movement stick drawn at the touch point — 2px `{colors.accent-soft}` ring, `rgba(255,159,28,0.06)` fill, round (a stick is a round thing; the Chamfer Rule allows it), 62px radius, 0.18 radial dead zone.
+- **Buttons:** seven round hit-rects (FIRE / AIM / JUMP / SPRINT / CROUCH / RELOAD / CYCLE) — 2px khaki hairline, `rgba(16,17,12,0.42)` fill, dim icon; held state flips to accent border + accent icon + `rgba(255,159,28,0.18)` fill, the same "this is live" signal as the rest of the HUD.
+- **Placement:** `Hud.layoutTouch()` writes each element's position from the input layer's own hit-rects, so what is drawn is exactly what is tappable; the cluster is inset by `--safe-*` so FIRE never sits under the home indicator.
+- **Touch mode also gives the thumbs their corners:** the bottom bar lifts by 22px and the radar moves in, while the slot chips and index hide (the CYCLE button replaces them).
+- **Rationale:** buttons are circles because a thumb has no corners; everything else in the system stays a chamfered plate.
 
 ### HUD Readouts (in-game)
 - **Integrity bar:** 10px track (olive-black + khaki hairline), fill gradient lime `#7fb238 → #b6e04a`, crimson below 30% (`#ff5040 → #ff8a5e`), width transition 0.15s ease-out; numeral 28px/700; shield icon tints with state.
 - **Ally bar:** drone icon + 120×5 amber micro-bar under the health bar; hidden when the drone is down.
 - **Ammo block:** right-aligned 34px/700 numeral; reserve after in dim 17px; empty mag = crimson + blink; reloading swaps digits for a spinning amber reload glyph (no layout shift, no innerHTML).
+- **Weapon selector:** ten weapons will not fit as an icon wall, so the block names the equipped weapon (12px/600, +0.16em, bone) beside an `n/10` index (dim, tabular-nums) and shows a three-slot window — previous / current / next. The current slot is the accent variant (amber border, amber icon, `rgba(255,159,28,0.1)` fill); the prev/next slots sit back at 0.55 opacity with a smaller icon so the active one reads first. Same 34×26 chamfered plate, 1px khaki hairline, no blur.
 
 ### Signature: Crosshair
 - Four bone-white 2px ticks + 3px **amber center dot**, `0 0 4px` amber micro-glow, gap driven by `--ch-gap` (4px idle → 18px moving/firing), transition 0.08s ease-out; dims to 25% opacity when pointer lock is lost. Damage arcs are radial-gradient wedges that rotate to the attacker and fade over 0.8s.
@@ -208,6 +220,7 @@ Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on comm
 - **Do** keep `:focus-visible` outlines (`2px solid #ff9f1c`, offset 3) on every interactive element — clip-path elements must not rely on clipped outlines.
 - **Do** honor `prefers-reduced-motion: reduce`: feedback keyframes collapse to opacity-only, screen shake is silenced in code, infinite pulses become static.
 - **Do** hide gameplay HUD (chips, radar, bars) under full-screen overlays via `hud--overlay`.
+- **Do** inset every anchored HUD cluster by `--safe-*`, and keep touch targets ≥30px radius-scaled circles.
 
 ### Don't:
 - **Don't** ship AI-template UI per PRODUCT.md: default palettes, hero-metric cards, section eyebrows, numbered `01/02` scaffolding.

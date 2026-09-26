@@ -109,10 +109,6 @@ export class FrameTimeGovernor {
     return FrameTimeGovernor.SCALE_STEPS[this.stepIndex] ?? 1;
   }
 
-  public get currentAvgMs(): number {
-    return this.avg;
-  }
-
   public reset(): void {
     this.avg = FrameTimeGovernor.RESET_MS;
     this.stepIndex = 0;

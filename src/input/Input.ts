@@ -187,7 +187,11 @@ export class Input {
       slotPressed: touchFrame ? touchFrame.slotPressed : this.slotPressed,
       wheelSteps: touchFrame ? touchFrame.cycleSteps : this.wheelSteps,
       // Touch needs no lock: report engaged so the weapon/reload paths run.
-      locked: this.locked || this.touchMode,
+      // Gate on `lockedNow`, not `touchMode`: a desktop user whose pointer-lock
+      // request silently failed still has working mouse look (`lockedNow` is
+      // true via `touchLook`) but would be unable to fire if this read
+      // `touchMode`.
+      locked: this.lockedNow,
       touch: this.touchMode,
     };
     this.prevTouchFire = touchFrame ? touchFrame.fireHeld : false;

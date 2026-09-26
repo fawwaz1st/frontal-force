@@ -74,8 +74,6 @@ interface TouchButton {
 }
 
 export class TouchControls {
-  /** Called with the accumulated frame; the owner merges it into InputFrame. */
-  public onFrame: ((frame: TouchFrame) => void) | null = null;
   /** Fired on the first touch so the game can unlock audio inside the gesture. */
   public onFirstTouch: (() => void) | null = null;
 
@@ -93,18 +91,12 @@ export class TouchControls {
   private slotLatch = 0;
   private hadTouch = false;
   private viewportW = 0;
-  private viewportH = 0;
   /** Player-tuned look multiplier (separate from the mouse sensitivity). */
   private sensitivity = 1;
 
   /** Set the touch look multiplier from the settings menu. */
   public setSensitivity(mult: number): void {
     this.sensitivity = Math.max(0.2, Math.min(3, mult));
-  }
-
-  /** True once a real touch has been seen — used to pick the control scheme. */
-  public get isTouchDevice(): boolean {
-    return this.hadTouch;
   }
 
   public attach(target: HTMLElement): void {
@@ -166,7 +158,6 @@ export class TouchControls {
     const w = Math.round(vv?.width ?? window.innerWidth);
     const h = Math.round(vv?.height ?? window.innerHeight);
     this.viewportW = w;
-    this.viewportH = h;
     // Notch / home-indicator insets, read from the CSS custom properties so
     // there is exactly one source of truth for the safe area.
     const cs = getComputedStyle(document.documentElement);
@@ -363,9 +354,5 @@ export class TouchControls {
   /** Request a weapon slot from a HUD tap (the slot chips are DOM buttons). */
   public requestSlot(slot: number): void {
     this.slotLatch = slot;
-  }
-
-  public get viewport(): { w: number; h: number } {
-    return { w: this.viewportW, h: this.viewportH };
   }
 }
