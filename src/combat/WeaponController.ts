@@ -17,6 +17,19 @@ const BURST_ROUND_INTERVAL = 1 / 4.8;
  *  ramp (×40 by wave 34) turns a point-blank rocket into instant suicide. */
 const MAX_SELF_BLAST = 35;
 
+/**
+ * Float slack on the "can this gun fire yet" clock, in seconds.
+ *
+ * A weapon whose interval is an exact multiple of the 60 Hz step should fire on
+ * that exact tick, but the subtraction leaves a positive residue around 1e-18 s
+ * and a bare `<= 0` test reads that as "not ready". The beam is the clear case:
+ * 20 rounds/s is a 0.05 s interval — precisely three ticks — yet the residue
+ * pushed every shot to the fourth, delivering 15 rounds/s against a stated 20.
+ * The slack is 1e-6 s: far below anything a player can feel, and far above the
+ * accumulation of double-precision error over a long magazine.
+ */
+const COOLDOWN_EPS = 1e-6;
+
 /** CombatTarget id of the human player — shared with the enemy threat table. */
 export const PLAYER_TARGET_ID = 1;
 
@@ -33,7 +46,7 @@ export interface WeaponView {
 /** Owns all weapon state: inventory, ammo, reload, switching, and firing. */
 export class WeaponController {
   /**
-   * The equipped loadout. Four slots, chosen in the menu. The ten-weapon pool
+   * The equipped loadout. Three slots, chosen in the menu. The ten-weapon pool
    * still exists, but it lives in the loadout screen rather than in the middle
    * of a firefight: cycling ten guns with the mouse wheel is not a decision,
    * it is a chore.
@@ -362,7 +375,11 @@ export class WeaponController {
     }
 
     const weapon = this.current;
-    weapon.cooldown = Math.max(0, weapon.cooldown - dt);
+    // Let the clock run a hair past zero rather than clamping it, so the
+    // fraction of a step that had already elapsed survives to be carried into
+    // the next shot (see fire()). The bound is one step: a gun that sat idle
+    // must not bank a burst of catch-up shots.
+    weapon.cooldown = Math.max(-dt, weapon.cooldown - dt);
 
     if (weapon.reloading) {
       weapon.reloadT += dt * this.mods.reloadMul;
@@ -371,26 +388,46 @@ export class WeaponController {
       this.beginReload(weapon);
     }
 
-    const wantsFire = weapon.def.auto ? frame.fireHeld : frame.firePressed;
+    // A burst weapon is neither a semi-auto nor a full-auto: holding the
+    // trigger keeps sending groups, but each group is only `burstCount` rounds.
+    // Treating it as a semi-auto meant one group per click, which contradicts
+    // both the weapon's role text and what a burst rifle does in every other
+    // shooter.
+    const burstWeapon = (weapon.def.burstCount ?? 0) > 1;
+    const wantsFire = burstWeapon
+      ? (frame.fireHeld || frame.firePressed)
+      : weapon.def.auto ? frame.fireHeld : frame.firePressed;
     // Charge-up weapons hold the shot until the capacitor is full. The
     // telegraph is the point: the biggest hits in the game must be visible
     // before they land, or they are just damage the player cannot answer.
+    //
+    // The capacitor and the cooldown run CONCURRENTLY: a shot needs a full
+    // charge AND an elapsed cooldown. Running them back to back — charge, then
+    // wait out the cooldown, then charge again — made the cycle the SUM of the
+    // two, so the rail took 1.7 s per shot against a stated 1.111 s and the
+    // stat block understated the real rate by 35%. Running them together makes
+    // the cycle `max(chargeTime, 1/fireRate)`, so the cooldown is what paces
+    // the weapon exactly as its stat block claims. Both charge times are
+    // shorter than their cooldowns, so the telegraph survives intact: the very
+    // first shot still takes a full 0.6 s / 0.4 s to leave the barrel.
     const chargeTime = weapon.def.chargeTime ?? 0;
     if (chargeTime > 0) {
       if (frame.fireHeld && frame.locked && !weapon.reloading && weapon.mag > 0) {
         this.chargeT = Math.min(chargeTime, this.chargeT + dt);
-        if (this.chargeT >= chargeTime && !this.chargeReady) {
-          this.chargeReady = true;
+        if (this.chargeT >= chargeTime && weapon.cooldown <= COOLDOWN_EPS) {
           this.fire(weapon, this.player.isAiming, (weapon.def.chargeDamageMul ?? 1));
+          this.chargeT = 0;
+          this.chargeReady = true;
         }
       } else {
         // Released early: the charge is lost, not banked. Banking it would let
-        // the player pre-charge behind cover and delete the trade-off.
+        // the player pre-charge behind cover and delete the trade-off. A
+        // release right after a shot is not a wasted charge, so it stays quiet.
         if (this.chargeT > 0 && !this.chargeReady) this.audio.empty();
         this.chargeT = 0;
         this.chargeReady = false;
       }
-    } else if (wantsFire && frame.locked && !weapon.reloading && weapon.cooldown <= 0) {
+    } else if (wantsFire && frame.locked && !weapon.reloading && weapon.cooldown <= COOLDOWN_EPS) {
       if (weapon.mag <= 0) {
         this.audio.empty();
         weapon.cooldown = 0.25;
@@ -400,13 +437,14 @@ export class WeaponController {
       }
     }
     // Burst weapons keep cycling their group while the trigger is held down:
-    // the first round is fired by the branch above, the rest here.
+    // the first round is fired by the branch above, the rest here. The rounds
+    // owed are `continuing`, so this loop cannot re-arm itself.
     this.burstT -= dt;
     if (this.burstLeft > 0 && this.burstT <= 0) {
       if (weapon.mag <= 0 || weapon.reloading || !frame.locked) {
         this.burstLeft = 0;
       } else {
-        this.fire(weapon, this.player.isAiming);
+        this.fire(weapon, this.player.isAiming, 1, true);
         this.burstLeft -= 1;
         this.burstT = BURST_ROUND_INTERVAL;
       }
@@ -454,19 +492,39 @@ export class WeaponController {
     weapon.reloading = false;
   }
 
-  private fire(weapon: WeaponState, aiming: boolean, chargeMul = 1): void {
+  private fire(weapon: WeaponState, aiming: boolean, chargeMul = 1, continuing = false): void {
     weapon.mag -= 1;
     // Fire rate is a run modifier: every card that speeds the gun up must
     // change the cooldown here, or the card would only affect the animation.
-    weapon.cooldown = 1 / (weapon.def.fireRate * this.mods.fireRateMul);
-    // A burst weapon arms its follow-up rounds here, INCLUDING the first
-    // inter-round delay — arming only `burstLeft` would fire round two on the
-    // very same frame (burstT was never set) and the group would read as a
-    // 2+1 rather than three evenly spaced rounds.
-    const burstCount = weapon.def.burstCount ?? 0;
-    if (burstCount > 1) {
-      this.burstLeft = burstCount - 1;
-      this.burstT = BURST_ROUND_INTERVAL;
+    //
+    // For a burst weapon the cooldown is the GROUP cadence, not the round
+    // cadence, so it is set once on the first round of the group and left alone
+    // for the rest. Resetting it per round made the real group rate depend on
+    // how long the group itself took (measured: 1.15 groups/s against a stated
+    // 2.2), which made the weapon's own stat block a lie.
+    if (!continuing) {
+      // ACCUMULATE the interval; do not overwrite the clock with it.
+      //
+      // Assigning the interval threw away whatever fraction of a step had
+      // already elapsed past zero, so a weapon whose interval is not a whole
+      // number of ticks always rounded up to the next one and could never reach
+      // its stated rate: the AR's 8 rounds/s is a 7.5-tick interval, and it
+      // delivered 7.5 rounds/s. Adding the interval to the leftover instead lets
+      // a 7-tick shot and an 8-tick shot alternate, so the AVERAGE lands on the
+      // stat block. The `-dt` floor from update() keeps the carry bounded, so an
+      // idle gun cannot bank a burst of catch-up shots.
+      const burstCount = weapon.def.burstCount ?? 0;
+      if (burstCount > 1) {
+        // The group cannot cycle faster than it can physically be sent, so the
+        // floor is the group's own duration.
+        const groupDuration = (burstCount - 1) * BURST_ROUND_INTERVAL;
+        const cadence = 1 / (weapon.def.fireRate * this.mods.fireRateMul);
+        weapon.cooldown += Math.max(cadence, groupDuration);
+        this.burstLeft = burstCount - 1;
+        this.burstT = BURST_ROUND_INTERVAL;
+      } else {
+        weapon.cooldown += 1 / (weapon.def.fireRate * this.mods.fireRateMul);
+      }
     }
     // Cone is sampled BEFORE addRecoil so the shot uses the state the player
     // was aiming with, and the crosshair can predict it exactly.

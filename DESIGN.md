@@ -213,7 +213,7 @@ Crate plate with a cut top-right corner, a 2px left rail and a 1px hairline bord
 ### Readouts (footer rail)
 - **Integrity:** 12px track with quarter ticks, lime gradient fill, crimson under 30%. The shield rides on the bar as a second cyan segment so health and plating read as one pool.
 - **Abilities:** two compact plates with a 3px recharge bar. A banked charge makes the bar cyan; a depleted chip dims; a cooking grenade turns the plate gold and the bar tracks the cook.
-- **Weapon:** name plus `n/4` index and ALL FOUR equipped slots (the current slot is the cyan variant). A three-slot window was a workaround for ten weapons; with a four-slot loadout the whole kit fits, so nothing is one scroll away. A charge ring sits on the plate's top-right corner for the weapons that charge, and turns gold at full.
+- **Weapon:** name plus `n/3` index and all three equipped slots (the current slot is the cyan variant). Ten weapons exist, but a run only ever holds three, so the whole kit fits and nothing is one scroll away. A charge ring sits on the plate's top-right corner for the weapons that charge, and turns gold at full.
 
 ### Draft cards
 Grid rows: rarity / name / description / owned. The rarity is a 3px top edge in the tier hue (steel, cyan, gold) plus a monospace rarity label. Legendary trades the solid edge for hazard hatch. Hover lifts the card 2px and tints the border with its tier hue.
@@ -338,16 +338,33 @@ Three mechanisms, all cheap, all properties of the roster rather than per-agent 
 
 Melee and support archetypes never hold: a rusher that stops to cover is just a slow rusher.
 
-## 10. Performance Rules
+## 10. Drops and stations
+
+Two ways the arena gives something back, and they must never be confused:
+
+- **A station is a place.** Fixed, permanent, and it respawns 14 s after being taken. It is a destination the player decides to walk to, and its position is part of what the arena layout teaches.
+- **A drop is an event.** It appears where a body fell, scatters slightly, blinks out over its last three seconds, and is gone after 22 s. It is a reward that pulls the player forward through the fight.
+
+Three rules keep drops from becoming either noise or a chore:
+
+- **Independent rolls, not a schedule.** A guaranteed drop turns every kill into a walk-over; a countable schedule makes the arena feel like a spreadsheet. Low odds make a drop a small event, which is what it should be.
+- **The boss always pays.** A fight that long ending dry reads as a bug, not as bad luck. Elites get a large bonus because killing one already cost the player something.
+- **Health is the rarest drop.** A common heal would erase the value of the stations, and stations are the thing that makes the arena's geometry matter.
+
+Loot is rolled from the **run seed**, never `Math.random`. A seed code promises the same arena and the same spawn order, so a replay that dropped different loot would break that promise for no benefit. Cosmetic randomness stays on `Math.random` so effects never consume the run stream.
+
+A collected drop is **removed**, not parked invisible: the drop list stays a live count of what is actually on the ground. Shared geometry and materials are never disposed per pickup, because the other pickups are using them.
+
+## 11. Performance Rules
 
 - **Compositor-only animation.** Damage flash, low-health pulse, hitmarkers, pops and toasts animate opacity or transform.
 - **Cached DOM writes.** `setText`, `setStyle` and `setClass` compare against a cache and skip the write when nothing changed.
-- **Cached markup.** The three-slot weapon window rebuilds its `innerHTML` only when the window index changes, not 60 times a second.
+- **Cached markup.** The loadout slot ring rebuilds its `innerHTML` only when the equipped kit changes, not 60 times a second.
 - **Throttled canvas.** The radar redraws at 20 Hz; the sweep and blips read as continuous motion at that rate and the rasterisation cost drops to a third.
 - **No filters on the canvas.** The radar's ring is CSS, because a filtered canvas is re-rasterised every frame it changes.
 - **Named-area grids with `contain`.** Panel layout and paint work stay local to the panel.
 
-## 11. Do's and Don'ts
+## 12. Do's and Don'ts
 
 ### Do:
 - **Do** keep cyan as the only interactive/current hue.

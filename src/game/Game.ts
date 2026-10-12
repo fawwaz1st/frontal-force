@@ -53,6 +53,25 @@ const SALVAGE_PER_KILL = 4;
 const SALVAGE_PER_WAVE = 30;
 const SALVAGE_ELITE_BONUS = 25;
 const SALVAGE_BOSS_BONUS = 200;
+/** What a pickup restores. Health is a real heal, salvage is real currency. */
+const HEALTH_PICKUP = 35;
+const SALVAGE_PICKUP = 12;
+/**
+ * Drop chances per kill, as independent rolls.
+ *
+ * Deliberately low and independent rather than a guaranteed schedule: a
+ * guaranteed drop turns every kill into a chore (walk over and collect it), and
+ * a schedule the player can count makes the arena feel like a spreadsheet. Low
+ * odds mean a drop is a small event, which is exactly what it should be.
+ *
+ * Elites and the boss get much better odds because killing one already cost the
+ * player something, and the drop is how the game says so.
+ */
+const DROP_CHANCE_AMMO = 0.14;
+const DROP_CHANCE_HEALTH = 0.09;
+const DROP_CHANCE_SALVAGE = 0.22;
+/** Bonus roll odds for an elite, and the boss. */
+const ELITE_DROP_BONUS = 0.35;
 /** Ability timings. */
 const DASH_CHARGES = 2;
 const DASH_COOLDOWN = 3;
@@ -1424,8 +1443,12 @@ export class Game {
     }
 
     const collected = this.pickups.tryCollect(this.player.position);
-    if (collected === 'health') this.player.heal(35);
+    if (collected === 'health') this.player.heal(HEALTH_PICKUP);
     if (collected === 'ammo') this.weapons.refillReserve();
+    if (collected === 'salvage') {
+      this.run.earnSalvage(SALVAGE_PICKUP);
+      this.hud.popScore(SALVAGE_PICKUP);
+    }
 
     this.audio.heartbeat(this.player.health / this.player.maxHealth, dt);
 
@@ -1603,6 +1626,33 @@ export class Game {
     }
   }
 
+  /**
+   * Roll a dead enemy's drops and place whatever it leaves behind.
+   *
+   * Uses the RUN's seeded RNG, not Math.random: a seed code promises the same
+   * arena and the same spawn order, and a replay that drops different loot
+   * would break that promise for no benefit.
+   */
+  private rollDrop(enemy: Enemy): void {
+    const at = enemy.group.position.clone().setY(0);
+    const rng = this.run.rng;
+    const elite = enemy.elite ? ELITE_DROP_BONUS : 0;
+    const boss = enemy.kind === 'wardenPrime';
+    // A boss always pays out: the fight is long enough that a dry drop would
+    // read as a bug rather than as bad luck.
+    if (boss || rng.next() < DROP_CHANCE_SALVAGE + elite) {
+      this.pickups.dropAt('salvage', at, () => rng.next());
+    }
+    if (rng.next() < DROP_CHANCE_AMMO + elite) {
+      this.pickups.dropAt('ammo', at, () => rng.next());
+    }
+    // Health is the rarest drop, and an elite is the most likely source. A
+    // common heal would erase the value of the arena's health stations.
+    if (boss || rng.next() < DROP_CHANCE_HEALTH + elite * 0.5) {
+      this.pickups.dropAt('health', at, () => rng.next());
+    }
+  }
+
   private handleKill = (enemy: Enemy, byPlayer: boolean): void => {
     this.kills += 1;
     // A kill freezes the sim for a beat. Elites and the boss freeze longer,
@@ -1611,6 +1661,12 @@ export class Game {
       this.hitstopT = Math.max(this.hitstopT, enemy.kind === 'wardenPrime' ? 0.16
         : enemy.elite ? 0.1 : 0.06);
     }
+    // Drops. A kill has to leave something behind or the fight has no
+    // aftertaste: the arena stations are destinations, but a drop is a reward
+    // that pulls the player forward. Only player kills drop, so an escort
+    // cannot farm the arena on the player's behalf, and the rolls use the
+    // run's seeded RNG so a replayed seed drops identically.
+    if (byPlayer) this.rollDrop(enemy);
     const mods = this.run.mods;
     // Attribute the kill to whichever ability produced it, then clear the
     // flags: attribution is one-shot by design, or a single grenade would

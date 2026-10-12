@@ -527,10 +527,17 @@ export class GameAudio {
     this.noise({ dur: 0.05, freq: 2600, type: 'bandpass', q: 1.5, gain: 0.14, pan, attack: 0.001 });
   }
 
-  public pickup(kind: 'health' | 'ammo'): void {
+  public pickup(kind: 'health' | 'ammo' | 'salvage'): void {
     if (kind === 'ammo') {
       this.tone({ freq: 440, dur: 0.06, type: 'square', gain: 0.16, attack: 0.003 });
       this.tone({ freq: 587, dur: 0.12, type: 'square', gain: 0.14, delay: 0.06, attack: 0.003 });
+    } else if (kind === 'salvage') {
+      // Currency: a bright metallic ping, deliberately unlike the supply
+      // sounds so the player hears the difference between "restocked" and
+      // "paid".
+      this.tone({ freq: 1320, dur: 0.05, type: 'triangle', gain: 0.13, attack: 0.002 });
+      this.tone({ freq: 1760, dur: 0.14, type: 'triangle', gain: 0.15, delay: 0.045, attack: 0.003, room: 0.35 });
+      this.noise({ dur: 0.04, freq: 6400, type: 'highpass', gain: 0.07, attack: 0.001 });
     } else {
       this.tone({ freq: 660, dur: 0.07, type: 'sine', gain: 0.2, attack: 0.004, room: 0.3 });
       this.tone({ freq: 990, dur: 0.14, type: 'sine', gain: 0.2, delay: 0.07, attack: 0.004, room: 0.3 });

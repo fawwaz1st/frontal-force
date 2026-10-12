@@ -229,7 +229,9 @@
 }
 .hud__loadout-slots {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* auto-fit rather than a hardcoded column count: the grid follows
+     LOADOUT_SLOTS, so changing the loadout size never needs a CSS edit. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 .hud__lo-slot {
@@ -336,7 +338,7 @@
 /* Narrow screens: the slot row stacks to two columns so the names stay legible
    instead of shrinking to unreadable stubs. */
 @media (max-width: 640px) {
-  .hud__loadout-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hud__loadout-slots { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
   .hud__loadout-pool { grid-template-columns: minmax(0, 1fr); max-height: 34vh; }
   .hud__panel { max-height: min(52vh, 420px); }
 }

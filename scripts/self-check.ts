@@ -637,13 +637,18 @@ check('weapons: scoped weapons zoom harder than the rest', () => {
   );
   assert.ok(minScoped <= 30, `a scoped weapon should reach <= 30° FOV, got ${minScoped}`);
 });
-check('loadout: four slots, and the default kit is four distinct weapons', () => {
-  assert.equal(literal(weaponsSrc, 'LOADOUT_SLOTS'), 4);
+check('loadout: three slots, and the default kit is three distinct weapons', () => {
+  assert.equal(literal(weaponsSrc, 'LOADOUT_SLOTS'), 3);
   const m = /export const DEFAULT_LOADOUT: readonly WeaponId\[\] = \[([^\]]*)\]/.exec(weaponsSrc);
   assert.ok(m, 'DEFAULT_LOADOUT not found');
   const ids = [...m[1].matchAll(/'(\w+)'/g)].map((x) => x[1]);
-  assert.equal(ids.length, 4);
-  assert.equal(new Set(ids).size, 4);
+  assert.equal(ids.length, 3);
+  assert.equal(new Set(ids).size, 3);
+  // The default kit must cover a close, a mid and a long role, or the starting
+  // loadout has a hole the player has to fix before they can play.
+  assert.ok(ids.includes('shotgun'), 'default kit needs a close-range weapon');
+  assert.ok(ids.includes('ar'), 'default kit needs a mid-range weapon');
+  assert.ok(ids.includes('dmr'), 'default kit needs a long-range weapon');
 });
 check('loadout: sanitize pads, dedupes, and drops unknown ids', () => {
   const ids = [...weaponsSrc.matchAll(/^\s{2}(\w+): \{\n\s+id:/gm)].map((m) => m[1]);
@@ -655,23 +660,23 @@ check('loadout: sanitize pads, dedupes, and drops unknown ids', () => {
     for (const id of input) {
       if (!ids.includes(id) || out.includes(id)) continue;
       out.push(id);
-      if (out.length >= 4) break;
+      if (out.length >= 3) break;
     }
-    for (const id of ['ar', 'shotgun', 'dmr', 'rail']) {
-      if (out.length >= 4) break;
+    for (const id of ['ar', 'shotgun', 'dmr']) {
+      if (out.length >= 3) break;
       if (!out.includes(id)) out.push(id);
     }
     for (const id of ids) {
-      if (out.length >= 4) break;
+      if (out.length >= 3) break;
       if (!out.includes(id)) out.push(id);
     }
     return out;
   };
-  assert.deepEqual(sanitize([]), ['ar', 'shotgun', 'dmr', 'rail']);
-  assert.deepEqual(sanitize(['rail', 'rail', 'nope']), ['rail', 'ar', 'shotgun', 'dmr']);
-  assert.deepEqual(sanitize(['pistol', 'pistol', 'pistol', 'pistol']), ['pistol', 'ar', 'shotgun', 'dmr']);
+  assert.deepEqual(sanitize([]), ['ar', 'shotgun', 'dmr']);
+  assert.deepEqual(sanitize(['rail', 'rail', 'nope']), ['rail', 'ar', 'shotgun']);
+  assert.deepEqual(sanitize(['pistol', 'pistol', 'pistol', 'pistol']), ['pistol', 'ar', 'shotgun']);
   for (const input of [[], ['x'], ['ar', 'ar'], ['launcher', 'beam', 'burst', 'lmg', 'smg']]) {
-    assert.equal(sanitize(input).length, 4);
+    assert.equal(sanitize(input).length, 3);
   }
 });
 check('weapons: the rail ricochets and the heavy guns have a charge', () => {
@@ -689,10 +694,24 @@ check('weapons: every definition carries a role line for the loadout screen', ()
 });
 
 // ---------- weapon controller: charge + ricochet (src/combat/WeaponController.ts) ----------
-check('charge: the shot releases only at full charge, once per hold', () => {
+check('charge: the shot releases only at full charge, once per discharge', () => {
   assert.match(weaponSrc, /this\.chargeT = Math\.min\(chargeTime, this\.chargeT \+ dt\);/);
-  assert.match(weaponSrc, /if \(this\.chargeT >= chargeTime && !this\.chargeReady\) \{/);
+  // A shot needs a full charge AND an elapsed cooldown, then the capacitor is
+  // spent. Testing the two together is what keeps the cycle honest.
+  assert.match(weaponSrc, /if \(this\.chargeT >= chargeTime && weapon\.cooldown <= COOLDOWN_EPS\) \{/);
   assert.match(weaponSrc, /this\.chargeReady = true;/);
+});
+check('charge: the capacitor runs concurrently with the cooldown, not after it', () => {
+  // The bug: charging and cooling down ran back to back, so the cycle was the
+  // SUM of the two and the rail took 1.7 s per shot against a stated 1.111 s —
+  // the stat block understated the real rate by 35%. Running them together
+  // makes the cycle max(chargeTime, 1/fireRate), which is what the stat block
+  // claims. Both charge times are shorter than their cooldowns, so the
+  // telegraph survives: the first shot still takes a full 0.6 s / 0.4 s.
+  assert.match(weaponSrc, /if \(this\.chargeT >= chargeTime && weapon\.cooldown <= COOLDOWN_EPS\) \{/);
+  // Charging must NOT be gated behind a separate `chargeReady` branch.
+  assert.doesNotMatch(weaponSrc, /if \(this\.chargeReady\) \{\n\s+\/\/ Already discharged/);
+  assert.match(weaponSrc, /this\.chargeT = Math\.min\(chargeTime, this\.chargeT \+ dt\);\n\s+if \(this\.chargeT >= chargeTime && weapon\.cooldown <= COOLDOWN_EPS\)/);
 });
 check('charge: releasing early loses the charge instead of banking it', () => {
   assert.match(weaponSrc, /if \(this\.chargeT > 0 && !this\.chargeReady\) this\.audio\.empty\(\);/);
@@ -701,6 +720,50 @@ check('charge: releasing early loses the charge instead of banking it', () => {
 });
 check('charge: the damage multiplier reaches the damage formula', () => {
   assert.match(weaponSrc, /const damage = weapon\.def\.damage \* chargeMul \* this\.damageScale/);
+});
+check('burst: a follow-up round cannot re-arm the group', () => {
+  // The bug that made the burst weapon empty its magazine from one trigger
+  // pull: `fire()` re-armed `burstLeft` on every round it fired, so the counter
+  // was reset to 2 before it could reach 0 and the group never ended.
+  assert.match(weaponSrc, /private fire\(weapon: WeaponState, aiming: boolean, chargeMul = 1, continuing = false\): void \{/);
+  assert.match(weaponSrc, /if \(!continuing\) \{[\s\S]{0,1200}?const burstCount = weapon\.def\.burstCount \?\? 0;/);
+  // The burst loop must pass `continuing: true`.
+  assert.match(weaponSrc, /this\.fire\(weapon, this\.player\.isAiming, 1, true\);/);
+});
+check('burst: holding the trigger keeps sending groups', () => {
+  // A burst rifle is neither semi nor full auto: held fire cycles groups.
+  // Treating it as semi-auto meant one group per click, which contradicts the
+  // weapon's own role text.
+  assert.match(weaponSrc, /const burstWeapon = \(weapon\.def\.burstCount \?\? 0\) > 1;/);
+  assert.match(weaponSrc, /const wantsFire = burstWeapon\n\s+\? \(frame\.fireHeld \|\| frame\.firePressed\)/);
+});
+check('burst: the group cadence cannot exceed the stated fire rate', () => {
+  // Resetting the cooldown per round made the real group rate depend on how
+  // long the group took (measured 1.15 groups/s against a stated 2.2), which
+  // made the weapon's stat block a lie.
+  assert.match(weaponSrc, /const groupDuration = \(burstCount - 1\) \* BURST_ROUND_INTERVAL;/);
+  assert.match(weaponSrc, /weapon\.cooldown \+= Math\.max\(cadence, groupDuration\);/);
+});
+check('fire rate: the clock accumulates the interval instead of being overwritten', () => {
+  // The bug: assigning the interval discarded the fraction of a step that had
+  // already elapsed, so a weapon whose interval is not a whole number of 60 Hz
+  // ticks always rounded up to the next one. The AR's 8 rounds/s is a 7.5-tick
+  // interval and delivered 7.5 rounds/s; the beam's 20 rounds/s is exactly three
+  // ticks but a ~1e-18 s float residue still pushed every shot to four, delivering
+  // 15 rounds/s against a stated 20 — a 25% shortfall. Accumulating lets a short
+  // and a long tick alternate, so the average lands on the stat block.
+  assert.match(weaponSrc, /weapon\.cooldown \+= 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul\);/);
+  assert.doesNotMatch(weaponSrc, /weapon\.cooldown = 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul\);/);
+  // The carry must stay bounded: an idle gun may not bank catch-up shots.
+  assert.match(weaponSrc, /weapon\.cooldown = Math\.max\(-dt, weapon\.cooldown - dt\);/);
+});
+check('fire rate: a gun reads ready on the tick its interval actually elapses', () => {
+  // A bare `<= 0` test reads the ~1e-18 s residue as "not ready" and costs a
+  // whole tick. The slack is tiny enough to be unfelt and large enough to beat
+  // double-precision drift over a full magazine.
+  assert.match(weaponSrc, /const COOLDOWN_EPS = 1e-6;/);
+  assert.match(weaponSrc, /weapon\.cooldown <= COOLDOWN_EPS\) \{/);
+  assert.match(weaponSrc, /!weapon\.reloading && weapon\.cooldown <= COOLDOWN_EPS\) \{/);
 });
 check('ricochet: the bounce loop is bounded by the weapon field', () => {
   assert.match(weaponSrc, /const maxBounces = Math\.max\(0, Math\.floor\(weapon\.def\.ricochet \?\? 0\)\);/);
@@ -1003,6 +1066,71 @@ check('juice: death has impact, topple and settle as separate beats', () => {
 check('juice: squash is applied to the body, not the group', () => {
   // Scaling the group would also scale the topple rotation and the position.
   assert.match(enemiesSrc, /enemy\.body\.scale\.set\(1 \+ \(1 - squash\) \* 0\.35, squash, 1 \+ \(1 - squash\) \* 0\.35\);/);
+});
+
+// ---------- drops (src/world/Pickups.ts, src/game/Game.ts) ----------
+const pickupsSrc = readSrc('world/Pickups.ts');
+
+check('drops: a station and a drop are different things', () => {
+  // A station respawns and is part of the map; a drop expires and never comes
+  // back. The two have opposite jobs, so they must not share one code path.
+  assert.match(pickupsSrc, /export type PickupKind = 'health' \| 'ammo' \| 'salvage';/);
+  assert.match(pickupsSrc, /public spawnAt\(kind: PickupKind, position: THREE\.Vector3\): void \{/);
+  assert.match(pickupsSrc, /public dropAt\(kind: PickupKind, position: THREE\.Vector3, rnd: \(\) => number\): void \{/);
+  assert.match(pickupsSrc, /station: boolean;/);
+  assert.match(pickupsSrc, /lifeT: station \? Number\.POSITIVE_INFINITY : DROP_LIFE,/);
+});
+check('drops: a collected drop is removed, not parked invisible', () => {
+  // A collected station goes invisible and waits to respawn. A drop must be
+  // removed, or a long run accumulates dead entries forever.
+  assert.match(pickupsSrc, /if \(!pickup\.station\) \{\n\s+this\.removeAt\(i\);\n\s+continue;\n\s+\}/);
+});
+check('drops: a drop expires, and announces it before it goes', () => {
+  assert.match(pickupsSrc, /if \(pickup\.lifeT < 3\) \{/);
+  assert.match(pickupsSrc, /pickup\.mesh\.visible = Math\.floor\(pickup\.lifeT \* 6\) % 2 === 0;/);
+});
+check('drops: shared geometry is never disposed per pickup', () => {
+  // Every pickup mesh shares the module's geometries and materials. Disposing
+  // them on removal would blank every other pickup on the field.
+  const m = /private removeAt\(index: number\): void \{([\s\S]*?)\n  \}/.exec(pickupsSrc);
+  assert.ok(m, 'removeAt not found');
+  assert.ok(!/\.dispose\(\)/.test(m[1]), 'removeAt must not dispose shared resources');
+});
+check('drops: the roll uses the run seed, not Math.random', () => {
+  // A seed code promises the same arena AND the same spawn order. A replay that
+  // dropped different loot would break that promise for no benefit.
+  const m = /private rollDrop\(enemy: Enemy\): void \{([\s\S]*?)\n  \}/.exec(gameSrc);
+  assert.ok(m, 'rollDrop not found');
+  assert.match(m[1], /const rng = this\.run\.rng;/);
+  assert.ok(!/Math\.random/.test(m[1]), 'rollDrop must use the seeded rng');
+  assert.match(m[1], /this\.pickups\.dropAt\('salvage', at, \(\) => rng\.next\(\)\);/);
+});
+check('drops: only player kills drop', () => {
+  // Otherwise an escort farms the arena on the player's behalf.
+  assert.match(gameSrc, /if \(byPlayer\) this\.rollDrop\(enemy\);/);
+});
+check('drops: a boss always pays out', () => {
+  // A boss fight is long enough that a dry drop reads as a bug, not bad luck.
+  const m = /private rollDrop\(enemy: Enemy\): void \{([\s\S]*?)\n  \}/.exec(gameSrc);
+  assert.ok(m, 'rollDrop not found');
+  assert.match(m[1], /if \(boss \|\| rng\.next\(\) < DROP_CHANCE_SALVAGE \+ elite\) \{/);
+  assert.match(m[1], /if \(boss \|\| rng\.next\(\) < DROP_CHANCE_HEALTH \+ elite \* 0\.5\) \{/);
+});
+check('drops: health is the rarest drop', () => {
+  // A common heal erases the value of the arena's health stations.
+  const ammo = literal(gameSrc, 'DROP_CHANCE_AMMO');
+  const health = literal(gameSrc, 'DROP_CHANCE_HEALTH');
+  assert.ok(health < ammo, `health ${health} must be rarer than ammo ${ammo}`);
+});
+check('drops: every kind is actually handled on pickup', () => {
+  assert.match(gameSrc, /if \(collected === 'health'\) this\.player\.heal\(HEALTH_PICKUP\);/);
+  assert.match(gameSrc, /if \(collected === 'ammo'\) this\.weapons\.refillReserve\(\);/);
+  assert.match(gameSrc, /if \(collected === 'salvage'\) \{\n\s+this\.run\.earnSalvage\(SALVAGE_PICKUP\);/);
+});
+check('drops: salvage has its own sound, distinct from supply', () => {
+  // "Restocked" and "paid" are different pieces of news.
+  assert.match(audioSrc, /public pickup\(kind: 'health' \| 'ammo' \| 'salvage'\): void \{/);
+  assert.match(audioSrc, /Currency: a bright metallic ping, deliberately unlike the supply/);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

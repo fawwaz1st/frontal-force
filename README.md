@@ -25,11 +25,25 @@ Every weapon has a real aimed FOV, and two carry a magnified optic with a scope 
 
 ![Scoped on the Lance Rail](docs/screenshots/scope.png)
 
-## A four-slot loadout, chosen once
+## A three-slot loadout, chosen once
 
-Ten weapons exist; you carry four. The loadout screen is where the arsenal lives, so mid-fight you are deciding when to swap, not scrolling a list.
+Ten weapons exist; you carry three. The loadout screen is where the arsenal lives, so mid-fight you are deciding when to swap, not scrolling a list. Three is the largest number that stays a decision: you can cover a close, a mid and a long role and still remember which key holds which, and every pick costs you something.
 
 ![The loadout screen](docs/screenshots/loadout.png)
+
+## Drops
+
+Every enemy the player kills rolls for loot, and what it leaves behind is worth walking over to:
+
+| Drop | Effect | Odds per kill |
+| --- | --- | --- |
+| **Salvage** | +12 currency toward the kiosk | 22% |
+| **Ammo** | Refills the reserve of every equipped weapon | 14% |
+| **Health** | +35 HP | 9% |
+
+Elites add 35 percentage points to the salvage and ammo rolls and half that to health, and the boss always drops salvage and health — a fight that long must never end dry. The rolls are **independent**, not a schedule, and they use the run's seeded RNG, so a seed replays its loot exactly. Only player kills drop: an ally cannot farm the arena on your behalf.
+
+A drop scatters where the body fell, blinks out over its last three seconds, and expires after 22 s. That is what separates it from the arena's fixed **stations**, which are destinations that never expire and respawn 14 s after being taken. A drop is a reward that pulls you forward; a station is a place you decide to go.
 
 ## The arena
 
@@ -62,7 +76,7 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 141 logic regression tests, no browser needed
+npm run check:self  # 157 logic regression tests, no browser needed
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -91,7 +105,7 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | Shift | Sprint |
 | C / Ctrl | Crouch. Press while sprinting to **slide** |
 | R | Reload |
-| 1-4 / wheel | Switch weapon (your four slots) |
+| 1-3 / wheel | Switch weapon (your three slots) |
 | Shift+W / double-tap W | Dash (2 charges, 0.12 s invulnerability) |
 | G (hold to cook, release to throw) | Grenade: frag, smoke, or EMP |
 | F | Cycle grenade kind |
@@ -209,7 +223,7 @@ Enemies also carry affix riders that fire when they hit you: Blazing sets you bu
 
 ## Arsenal
 
-Ten weapons (`src/combat/weapons.ts`), four equipped at a time. Each one has a full stat block plus an aimed FOV, a scope flag, a movement weight, and a role line that the loadout screen shows.
+Ten weapons (`src/combat/weapons.ts`), three equipped at a time. Each one has a full stat block plus an aimed FOV, a scope flag, a movement weight, and a role line that the loadout screen shows.
 
 | Weapon | Role |
 | --- | --- |
@@ -224,11 +238,11 @@ Ten weapons (`src/combat/weapons.ts`), four equipped at a time. Each one has a f
 | Helios Beam | 0.012 moving spread: the only weapon that does not degrade while strafing. |
 | Trident Burst | Three sequential rounds (~288 rpm); ten trigger pulls per 1.8 s reload. |
 
-The HUD shows all four equipped slots at once, plus the `n/4` index, and a charge ring for the weapons that charge.
+The HUD shows all three equipped slots at once, plus the `n/3` index, and a charge ring for the weapons that charge.
 
 ### Loadout rules
 
-- Four slots (`LOADOUT_SLOTS`), persisted in the save.
+- Three slots (`LOADOUT_SLOTS`), persisted in the save.
 - Choosing a weapon already in another slot **swaps** the two positions rather than duplicating it.
 - `sanitizeLoadout` drops unknown and duplicate ids and pads from the default kit, so a save from an older build can never leave you unarmed.
 - Movement weight applies to every ground speed including the slide, so the loadout has a real cost and the choice cannot collapse to "most damage".
@@ -259,7 +273,7 @@ src/
   core/     loop.ts (fixed timestep + spiral guard) · math.ts · storage.ts (save schema v1) · quality.ts (tier detect + frame governor) · rng.ts (seeded, deterministic)
   input/    Input.ts (keyboard/mouse/pointer-lock + touch fallback) · TouchControls.ts (pointerId map, stick, buttons)
   player/   Player.ts (capsule movement, look, recoil, crouch/slide, dash, shield)
-  combat/   weapons.ts (10 defs + 4-slot loadout rules) · WeaponController.ts (fire/reload/switch/charge/ricochet/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
+  combat/   weapons.ts (10 defs + 3-slot loadout rules) · WeaponController.ts (fire/reload/switch/charge/ricochet/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
   ai/       Enemies.ts (AI, fire teams, agility, affix hooks, projectiles, boss phases, radar feed) · Affixes.ts (14 elite modifiers) · Ally.ts (independent escorts) · Tactics.ts (cover claims)
   game/     Game.ts (orchestrator) · Run.ts (seeded run state + stats) · Waves.ts (modes, mutations, boss cadence) · Challenges.ts (6 difficulty wagers) · Upgrades.ts (40 cards) · Achievements.ts · AchievementCounters.ts
   ui/       Hud.ts (HUD, menu, death card, ledger) · Draft.ts (card picker) · Kiosk.ts (salvage shop) · icons.ts (inline SVG set)
@@ -273,14 +287,14 @@ Data flows one way: `Input -> Game -> simulation modules -> HudState -> Hud (DOM
 ### Design rules the code follows
 
 - **Fixed timestep simulation, interpolated rendering.** The sim runs at a fixed rate with a spiral guard; the camera interpolates between ticks, so aim stays smooth on high-refresh displays and shots resolve against the tick that fired them.
-- **Everything random is seeded.** The arena layout, the arena THEME, spawn order, card offers, and affix rolls all come from the run seed, which is why a seed code reproduces a run.
+- **Everything random is seeded.** The arena layout, the arena THEME, spawn order, card offers, affix rolls, and **loot drops** all come from the run seed, which is why a seed code reproduces a run.
 - **A theme may change looks, never the rules.** `applyTheme` only writes material and light properties. Geometry, the collision octree, and cover claims are identical across themes, so a new map can never invalidate what a player learned about cover.
 - **A theme must be legible.** Two tests bracket every theme: a luminance floor, because a night that hides the enemies is a bug wearing atmosphere as a disguise, and an energy ceiling, because a near-white floor under a bright key light washes the frame out and a silhouette stops reading against it.
 - **If a thing cannot be used, it is not built.** Every fixed structure registers cover the AI can claim. A structure the AI cannot use is scenery, and scenery is what "less is more" deletes.
 - **An independent agent never reads the player.** The escort's `update` accepts the player position and discards it, so independence is enforced by the signature rather than by a comment.
 - **Every health point is attributable.** Anything that can damage the player passes a source label, and the HUD prints it. "I lost health and I do not know why" is a bug, not a difficulty.
 - **Zero external assets.** Geometry, materials, icons, and audio are generated in code.
-- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, slide gating, stand-up probe ordering, theme index range, theme luminance floor and ceiling, loadout sanitising, charge gating, ricochet bounds, audio ADSR stages, audio layering, listener-frame panning, squad focus fire, bounding holds, ally independence, hitstop scale) and runs in CI before every deploy.
+- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, **delivered fire rate and charge cycle against the stat block**, slide gating, stand-up probe ordering, theme index range, theme luminance floor and ceiling, loadout sanitising, charge gating, ricochet bounds, drop rolls and expiry, audio ADSR stages, audio layering, listener-frame panning, squad focus fire, bounding holds, ally independence, hitstop scale) and runs in CI before every deploy.
 
 ## Performance
 

@@ -172,12 +172,16 @@ export const WEAPON_ORDER = [
 ] as const satisfies readonly WeaponId[];
 
 /**
- * Loadout rules. Four slots is the whole point: ten weapons cycled in battle is
- * a menu you have to operate mid-fight, and four is a decision you make once.
- * The pool stays ten, so the loadout screen is where the arsenal lives.
+ * Loadout rules. Three slots, and three is the point.
+ *
+ * The pool stays ten so the loadout screen is where the arsenal lives, but a
+ * run only ever holds three. Three is the largest number that stays a decision
+ * rather than a menu: with three you can cover a close, a mid and a long range
+ * role and still remember which key holds which, and every pick costs you
+ * something. Four invited a "good at everything" kit with no trade.
  */
-export const LOADOUT_SLOTS = 4;
-export const DEFAULT_LOADOUT: readonly WeaponId[] = ['ar', 'shotgun', 'dmr', 'rail'];
+export const LOADOUT_SLOTS = 3;
+export const DEFAULT_LOADOUT: readonly WeaponId[] = ['ar', 'shotgun', 'dmr'];
 
 /** True when `id` is a valid weapon id (used to sanitize a saved loadout). */
 export function isWeaponId(id: string): id is WeaponId {
