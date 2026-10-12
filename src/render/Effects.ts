@@ -251,6 +251,38 @@ export class Effects {
     r.grow = grow;
   }
 
+  /**
+   * A large, slow smoke screen for the smoke grenade. Distinct from the small
+   * muzzle `smoke()` puffs: this one is a ring of billboards that expand to
+   * roughly the cloud radius and fade over its whole lifetime, so the visual
+   * footprint matches the gameplay footprint the AI respects.
+   */
+  public smokeBurst(center: THREE.Vector3, radius: number): void {
+    const count = 14;
+    for (let i = 0; i < count; i++) {
+      const s = this.smokes[this.smokeCursor];
+      this.smokeCursor = (this.smokeCursor + 1) % SMOKE_POOL;
+      if (!s) continue;
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = radius * (0.25 + Math.random() * 0.55);
+      s.mesh.position.set(
+        center.x + Math.cos(angle) * dist,
+        center.y + 0.3 + Math.random() * 1.5,
+        center.z + Math.sin(angle) * dist,
+      );
+      s.mesh.visible = true;
+      s.mesh.scale.setScalar(1.6 + Math.random() * 1.2);
+      s.vel.set(
+        (Math.random() - 0.5) * 0.25,
+        0.18 + Math.random() * 0.22,
+        (Math.random() - 0.5) * 0.25,
+      );
+      // Long life so the cloud persists; the field timer owns the real window.
+      s.life = 2.4 + Math.random() * 0.8;
+    }
+  }
+
+  /** Damage-number style floating pip at a world point (pooled). */
   public update(dt: number, camera: THREE.Camera): void {
     for (const t of this.tracers) {
       if (t.life <= 0) continue;

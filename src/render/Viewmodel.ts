@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
-import type { WeaponId } from './weapons';
+import type { WeaponId } from '../combat/weapons';
 
 export interface ViewmodelFrame {
   /** Player horizontal speed (m/s) — drives weapon bob */

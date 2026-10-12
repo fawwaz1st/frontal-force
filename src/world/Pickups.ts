@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameAudio } from '../audio/Audio';
-import type { Effects } from '../combat/Effects';
+import type { Effects } from '../render/Effects';
 
 export type PickupKind = 'health' | 'ammo';
 

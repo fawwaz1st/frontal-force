@@ -28,6 +28,14 @@ export interface TouchFrame {
   sprintHeld: boolean;
   crouchHeld: boolean;
   reloadPressed: boolean;
+  /** Dash / air-dash. */
+  dashPressed: boolean;
+  /** Hold to cook a grenade, release to throw. */
+  grenadeHeld: boolean;
+  /** Cycle frag / smoke / EMP. */
+  grenadeCyclePressed: boolean;
+  /** Quick melee / execution. */
+  meleePressed: boolean;
   /** 1-based slot request, 0 = none. */
   slotPressed: number;
   /** −1/0/+1 wheel-equivalent from the weapon-cycle button. */
@@ -61,7 +69,8 @@ interface LookDrag {
 }
 
 type ButtonId =
-  | 'fire' | 'aim' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'cycle';
+  | 'fire' | 'aim' | 'jump' | 'sprint' | 'crouch' | 'reload' | 'cycle'
+  | 'dash' | 'grenade' | 'melee';
 
 interface TouchButton {
   id: ButtonId;
@@ -87,6 +96,9 @@ export class TouchControls {
   private lookDY = 0;
   private jumpLatch = false;
   private reloadLatch = false;
+  private dashLatch = false;
+  private grenadeCycleLatch = false;
+  private meleeLatch = false;
   private cycleLatch = 0;
   private slotLatch = 0;
   private hadTouch = false;
@@ -144,6 +156,9 @@ export class TouchControls {
     this.lookDY = 0;
     this.jumpLatch = false;
     this.reloadLatch = false;
+    this.dashLatch = false;
+    this.grenadeCycleLatch = false;
+    this.meleeLatch = false;
     this.cycleLatch = 0;
     this.slotLatch = 0;
   }
@@ -175,6 +190,12 @@ export class TouchControls {
     add('fire', w - pad - safeR, h - pad - safeB, r * 1.22);
     add('aim', w - pad - safeR - r * 2.5, h - pad * 1.25 - safeB);
     add('jump', w - pad - safeR - r * 2.2, h - pad * 2.9 - safeB);
+    // Ability cluster: dash and melee flank the fire button, grenade sits
+    // between them, so all three are reachable without moving the thumb off
+    // the fire pad. Tap-and-hold on the grenade cooks it.
+    add('dash', w - pad - safeR - r * 2.6, h - pad * 4.5 - safeB, r * 0.82);
+    add('grenade', w - pad - safeR - r * 1.1, h - pad * 4.9 - safeB, r * 0.82);
+    add('melee', w - pad - safeR + r * 0.9, h - pad * 4.4 - safeB, r * 0.82);
     // Left cluster: utility, above the stick zone.
     add('sprint', pad + safeL, h - pad * 3.6 - safeB, r * 0.86);
     add('crouch', pad + safeL + r * 2.2, h - pad * 3.6 - safeB, r * 0.86);
@@ -241,6 +262,9 @@ export class TouchControls {
       this.held.set(e.pointerId, button.id);
       if (button.id === 'jump') this.jumpLatch = true;
       if (button.id === 'reload') this.reloadLatch = true;
+      if (button.id === 'dash') this.dashLatch = true;
+      if (button.id === 'grenade') this.grenadeCycleLatch = true;
+      if (button.id === 'melee') this.meleeLatch = true;
       if (button.id === 'cycle') this.cycleLatch = 1;
       e.preventDefault();
       return;
@@ -303,10 +327,10 @@ export class TouchControls {
   };
 
   /**
-   * Produce and consume this frame's touch state. `adsScale` shrinks look
-   * sensitivity while aiming, matching the mouse path.
+   * Produce and consume this frame's touch state. Look is excluded — it is
+   * consumed at render rate by `consumeLook()`.
    */
-  public read(adsScale = 1): TouchFrame {
+  public read(): TouchFrame {
     const dx = this.stick.x - this.stick.originX;
     const dy = this.stick.y - this.stick.originY;
     const magnitude = Math.hypot(dx, dy);
@@ -325,19 +349,26 @@ export class TouchControls {
       }
     }
 
-    const scale = LOOK_DEG_PER_PX * this.sensitivity * (1 - (1 - LOOK_ADS_SCALE) * adsScale);
     const frame: TouchFrame = {
       moveX,
       moveZ,
-      // Player applies its own radians-per-pixel constant, so hand it pixels.
-      lookX: this.lookDX * scale,
-      lookY: this.lookDY * scale,
+      // Look is consumed separately by `consumeLook()` once per rendered frame,
+      // so it is not part of the fixed-step frame.
+      lookX: 0,
+      lookY: 0,
       fireHeld: this.isHeld('fire'),
       aimHeld: this.isHeld('aim'),
       jumpPressed: this.jumpLatch,
       sprintHeld: this.isHeld('sprint'),
       crouchHeld: this.isHeld('crouch'),
       reloadPressed: this.reloadLatch,
+      dashPressed: this.dashLatch,
+      // The grenade button doubles as the type cycler: a short tap changes
+      // type, a hold cooks and throws. Read the held state here and let the
+      // orchestrator decide which one it was on release.
+      grenadeHeld: this.isHeld('grenade'),
+      grenadeCyclePressed: this.grenadeCycleLatch,
+      meleePressed: this.meleeLatch,
       slotPressed: this.slotLatch,
       cycleSteps: this.cycleLatch,
       active: this.stick.pointerId !== -1 || this.look.pointerId !== -1 || this.held.size > 0,
@@ -346,9 +377,25 @@ export class TouchControls {
     this.lookDY = 0;
     this.jumpLatch = false;
     this.reloadLatch = false;
+    this.dashLatch = false;
+    this.grenadeCycleLatch = false;
+    this.meleeLatch = false;
     this.slotLatch = 0;
     this.cycleLatch = 0;
     return frame;
+  }
+
+  /**
+   * Consume this render frame's drag delta in CSS pixels. Called once per
+   * rendered frame by the input layer — see `Input.consumeLook()`.
+   */
+  public consumeLook(adsScale = 1): { dx: number; dy: number } {
+    const scale = LOOK_DEG_PER_PX * this.sensitivity * (1 - (1 - LOOK_ADS_SCALE) * adsScale);
+    const dx = this.lookDX * scale;
+    const dy = this.lookDY * scale;
+    this.lookDX = 0;
+    this.lookDY = 0;
+    return { dx, dy };
   }
 
   /** Request a weapon slot from a HUD tap (the slot chips are DOM buttons). */

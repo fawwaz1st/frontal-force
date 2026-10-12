@@ -25,7 +25,24 @@ const STAMINA_REGEN = 24;
 const STAMINA_RESUME = 30; // sprint re-arms above this
 const ADS_FOV = 64; // ~15% zoom under iron sights
 const SUBSTEPS = 4;
+/** Radians of yaw/pitch per mouse count at sensitivity 1.0 (CS-like). */
 const LOOK_SENS = 0.0021;
+/**
+ * Aim recoil recovery rate. Research (CS2 / Apex): releasing the trigger must
+ * let the view settle back onto the pre-fire aim point within roughly 0.4-0.5 s,
+ * which is what makes a spray pattern learnable rather than random.
+ */
+const RECOIL_RECOVERY = 9;
+/**
+ * Deterministic recoil pattern. Vertical climb dominates; the horizontal drift
+ * alternates and grows, so a long spray walks up and then side to side. These
+ * are fractions of the weapon's authored `recoil` value, indexed by shot number
+ * within the current trigger group (clamped at the table end).
+ */
+const RECOIL_PATTERN_Y = [1, 1.25, 1.15, 1.3, 1.4, 1.2, 1.35, 1.45, 1.25, 1.4];
+const RECOIL_PATTERN_X = [0, 0.12, -0.16, 0.26, -0.32, 0.42, -0.5, 0.58, -0.66, 0.74];
+/** Shots after which the pattern resets (≈0.5 s at the AR's 8/s cadence). */
+const RECOIL_RESET_TIME = 0.45;
 const REDUCE_SHAKE =
   typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -40,7 +57,18 @@ export class Player {
   public health = 100;
   public maxHealth = 100;
   public dead = false;
+  /** Absorbing shield bought at the kiosk: soaks damage before health. */
+  public shield = 0;
+  /** External slow (Glacial affix), 0..1 — multiplies the movement target. */
+  private slowFraction = 0;
+  /** Active dash: direction and remaining time. Null when not dashing. */
+  private dashRemaining = 0;
+  private dashSpeed = 0;
+  private dashVec = new THREE.Vector3();
   public onDamaged: ((from: THREE.Vector3 | null) => void) | null = null;
+  /** Actual health lost by the last hit, for honest damage-taken statistics.
+   *  A shield-absorbed hit reports 0 because the health bar did not move. */
+  public lastDamageTaken = 0;
   /** First-person body (Game adds it to the scene) — visible when you look down. */
   public readonly body = new THREE.Group();
   /** Fires once per touchdown after an airborne stretch (land sfx + viewmodel dip).
@@ -48,6 +76,9 @@ export class Player {
   public onLanded: ((fallSpeed: number) => void) | null = null;
 
   private shake = 0;
+  /** Render-interpolation snapshots of the camera position (tick N-1 / N). */
+  private readonly camPrev = new THREE.Vector3();
+  private readonly camPos = new THREE.Vector3();
 
   // Body-rig groups (pose driven from updateCamera's bob state)
   private readonly bTorso = new THREE.Group();
@@ -76,7 +107,14 @@ export class Player {
   private crouched = false;
   private yaw = 0;
   private pitch = 0;
+  /** Camera-only kick — never moves the point of aim. */
   private recoil = 0;
+  /** Aim-affecting recoil, in radians. Deterministic and recoverable. */
+  private recoilPitch = 0;
+  private recoilYaw = 0;
+  /** Shot index within the current trigger group — drives the pattern. */
+  private recoilIndex = 0;
+  private recoilResetT = 0;
   private bobPhase = 0;
   private bobAmp = 0;
   /** Current eye height above the capsule end — crouch lowers it. */
@@ -181,7 +219,27 @@ export class Player {
   }
 
   public get yawAngle(): number {
+    return this.yaw + this.recoilYaw;
+  }
+
+  /** Raw mouse yaw without recoil — for HUD elements that must not shake. */
+  public get inputYaw(): number {
     return this.yaw;
+  }
+
+  /**
+   * Aim accuracy input: 0 = perfectly still, 1 = full sprint speed.
+   * Spread must be driven by ACTUAL velocity, not by "is a key held" — the
+   * whole point of counter-strafing is that releasing the key is not enough;
+   * the player must wait for the velocity to bleed off.
+   */
+  public get moveFraction(): number {
+    return clamp(this.horizontalSpeed / (WALK_SPEED * SPRINT_MULT), 0, 1);
+  }
+
+  /** True while airborne — spread takes a large penalty. */
+  public get airborne(): boolean {
+    return !this.grounded;
   }
 
   public get horizontalSpeed(): number {
@@ -200,6 +258,11 @@ export class Player {
     return this.adsT > 0.5;
   }
 
+  /**
+   * Ray origin for hitscan. Returns the SIMULATION eye (not the interpolated
+   * render camera): a shot is resolved against the tick that fired it, so it
+   * must use that tick's pose, never a render-time approximation.
+   */
   public eyePosition(out: THREE.Vector3): THREE.Vector3 {
     return out.set(
       this.collider.start.x,
@@ -209,8 +272,22 @@ export class Player {
   }
 
   public forward(out: THREE.Vector3): THREE.Vector3 {
-    this.lookEuler.set(this.pitch, this.yaw, 0);
+    this.lookEuler.set(this.pitch + this.recoilPitch, this.yaw + this.recoilYaw, 0);
     return out.set(0, 0, -1).applyEuler(this.lookEuler);
+  }
+
+  /**
+   * Apply mouse/touch look. Called ONCE PER RENDERED FRAME, outside the fixed
+   * step: mouse deltas are a displacement in counts, not a rate, so there is
+   * deliberately no `dt` here. Applying them per tick instead would quantise
+   * the view to 60 Hz and re-introduce a 16.7 ms staircase on high-refresh
+   * displays.
+   */
+  public look(dx: number, dy: number): void {
+    if (this.dead) return;
+    const sens = LOOK_SENS * this.sensitivity * (1 - 0.45 * this.adsT);
+    this.yaw -= dx * sens;
+    this.pitch = clamp(this.pitch - dy * sens, -1.35, 1.35);
   }
 
   public reset(spawn: THREE.Vector3, yaw: number): void {
@@ -221,6 +298,10 @@ export class Player {
     this.yaw = yaw;
     this.pitch = 0;
     this.recoil = 0;
+    this.recoilPitch = 0;
+    this.recoilYaw = 0;
+    this.recoilIndex = 0;
+    this.recoilResetT = 0;
     this.shake = 0;
     this.health = this.maxHealth;
     this.dead = false;
@@ -235,6 +316,9 @@ export class Player {
     this.sprinting = false;
     this.adsT = 0;
     this.wasAirborne = false;
+    this.shield = 0;
+    this.slowFraction = 0;
+    this.dashRemaining = 0;
     this.grounded = true;
     this.coyoteTimer = COYOTE_TIME;
     this.jumpBuffer = 0;
@@ -247,6 +331,10 @@ export class Player {
     this.bArmR.rotation.x = 0;
     this.body.position.set(spawn.x, spawn.y, spawn.z);
     this.body.rotation.set(0, yaw, 0);
+    this.camPrev.set(spawn.x, spawn.y + STAND_RADIUS + STAND_SEGMENT + EYE_STAND, spawn.z);
+    this.camPos.copy(this.camPrev);
+    this.camera.position.copy(this.camPos);
+    this.camera.rotation.set(0, yaw, 0, 'YXZ');
     this.camera.fov = 75;
     this.camera.updateProjectionMatrix();
   }
@@ -256,31 +344,109 @@ export class Player {
   }
 
   public addRecoil(amount: number): void {
+    // Camera-only kick (the gun punches back, the aim does not move).
     this.recoil = Math.min(this.recoil + amount, 0.35);
+    // Aim-affecting recoil: deterministic pattern, indexed by shot number.
+    if (this.recoilResetT <= 0) this.recoilIndex = 0;
+    const i = Math.min(this.recoilIndex, RECOIL_PATTERN_Y.length - 1);
+    this.recoilPitch += amount * (RECOIL_PATTERN_Y[i] ?? 1);
+    this.recoilYaw += amount * (RECOIL_PATTERN_X[i] ?? 0);
+    this.recoilIndex += 1;
+    this.recoilResetT = RECOIL_RESET_TIME;
+  }
+
+  /** Shot number within the current trigger group — the spread model needs it
+   *  to guarantee a perfectly accurate first shot. */
+  public get shotIndex(): number {
+    return this.recoilIndex;
+  }
+
+  /** Force the next shot to count as the first of a group (reload / swap). */
+  public resetRecoilGroup(): void {
+    this.recoilIndex = 0;
+    this.recoilResetT = 0;
   }
 
   public damage(amount: number, from: THREE.Vector3 | null = null): void {
     if (this.dead) return;
-    this.health = Math.max(0, this.health - amount);
-    this.addShake(Math.min(0.5, amount * 0.03));
+    // Challenge wager first: the multiplier is part of the contract the player
+    // signed up for, so it applies before armor and the shield.
+    const incoming = amount * this.incomingDamageMul;
+    // Shield soaks first, then health. The split is applied before the shake
+    // and the HUD flash so an absorbed hit still reads as a hit.
+    let remaining = incoming;
+    if (this.shield > 0) {
+      const absorbed = Math.min(this.shield, remaining);
+      this.shield -= absorbed;
+      remaining -= absorbed;
+    }
+    const healthLost = Math.min(this.health, Math.max(0, remaining));
+    this.lastDamageTaken = healthLost;
+    if (remaining > 0) this.health = Math.max(0, this.health - remaining);
+    this.addShake(Math.min(0.5, incoming * 0.03));
     this.onDamaged?.(from);
     if (this.health <= 0) this.dead = true;
   }
 
   public heal(amount: number): void {
+    if (this.dead) return;
     this.health = Math.min(this.maxHealth, this.health + amount);
   }
 
-  public update(dt: number, input: InputFrame): void {
+  /** Grant an absorbing shield (kiosk purchase). */
+  public addShield(amount: number): void {
+    this.shield = Math.min(200, this.shield + amount);
+  }
+
+  /**
+   * Apply the run's max-health multiplier. Called whenever the card pool
+   * changes; the current health is scaled with it so a +20% max health card
+   * is an immediate, felt benefit rather than a number on a panel.
+   */
+  public applyMods(maxHealthMul: number): void {
+    const next = Math.round(100 * maxHealthMul);
+    if (next === this.maxHealth) return;
+    const fraction = this.maxHealth > 0 ? this.health / this.maxHealth : 1;
+    this.maxHealth = next;
+    this.health = Math.min(next, Math.round(next * fraction));
+  }
+
+  /**
+   * Multiplier on every hit the player takes, owned by the run's challenges
+   * (Glass Cannon doubles it). Applied in `damage()` so every source — bolts,
+   * blasts, burn ticks, hazards — goes through exactly one place.
+   */
+  public incomingDamageMul = 1;
+
+  /** External slow applied by the Glacial affix (0 = none, 1 = fully slowed). */
+  public setSlow(fraction: number): void {
+    this.slowFraction = clamp(fraction, 0, 0.9);
+  }
+
+  /** Begin a dash: the player is driven along `dir` for `time` seconds. */
+  public startDash(dir: THREE.Vector3, speed: number, time: number): void {
+    this.dashVec.copy(dir).setY(0);
+    if (this.dashVec.lengthSq() < 1e-6) this.dashVec.set(0, 0, -1);
+    this.dashVec.normalize();
+    this.dashSpeed = speed;
+    this.dashRemaining = time;
+  }
+
+  public clearDash(): void {
+    this.dashRemaining = 0;
+  }
+
+  public get isDashing(): boolean {
+    return this.dashRemaining > 0;
+  }
+
+  public update(dt: number, input: InputFrame, dashDir: THREE.Vector3 | null = null): void {
     if (this.dead) {
       this.updateCamera(dt, 0, false);
       return;
     }
 
-    const sens = LOOK_SENS * this.sensitivity * (1 - 0.45 * this.adsT);
-    this.yaw -= input.lookX * sens;
-    this.pitch = clamp(this.pitch - input.lookY * sens, -1.35, 1.35);
-
+    // Look is applied per rendered frame (see `look()`), not here.
     this.tmpDir.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this.tmpRight.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     this.tmpMove.set(0, 0, 0)
@@ -317,8 +483,21 @@ export class Player {
     this.adsT = damp(this.adsT, input.aimHeld && !canSprint ? 1 : 0, 10, dt);
 
     const accel = this.grounded ? (this.slideTimer > 0 ? 2.2 : 14) : 5.5;
-    this.velocity.x = damp(this.velocity.x, this.tmpMove.x * speed, accel, dt);
-    this.velocity.z = damp(this.velocity.z, this.tmpMove.z * speed, accel, dt);
+    // The Glacial affix scales the TARGET speed, not the acceleration: a slowed
+    // player still reaches a stable speed rather than sliding into a wall.
+    const slowK = 1 - this.slowFraction;
+    this.velocity.x = damp(this.velocity.x, this.tmpMove.x * speed * slowK, accel, dt);
+    this.velocity.z = damp(this.velocity.z, this.tmpMove.z * speed * slowK, accel, dt);
+    // A dash overrides the movement target entirely: it is a committed move
+    // with its own duration, which is what makes it a positioning tool rather
+    // than a speed boost.
+    if (dashDir && this.dashRemaining > 0) {
+      this.dashRemaining = Math.max(0, this.dashRemaining - dt);
+      this.velocity.x = dashDir.x * this.dashSpeed;
+      this.velocity.z = dashDir.z * this.dashSpeed;
+      // Dashing also cancels the crouch-slide, so the two cannot stack.
+      this.slideTimer = 0;
+    }
 
     this.coyoteTimer = this.grounded ? COYOTE_TIME : Math.max(0, this.coyoteTimer - dt);
     this.jumpBuffer = input.jumpPressed ? JUMP_BUFFER_TIME : Math.max(0, this.jumpBuffer - dt);
@@ -389,19 +568,32 @@ private updateCrouch(wantsCrouch: boolean): void {
     // Recoil decays and pushes pitch up
     this.recoil = damp(this.recoil, 0, 9, dt);
     this.shake = damp(this.shake, 0, 7, dt);
+    // Aim recoil recovers toward the pre-fire aim point. The player's own pull
+    // is subtracted implicitly: `pitch`/`yaw` hold the input aim, and the
+    // offset is added on top, so pulling down cancels the climb.
+    this.recoilPitch = damp(this.recoilPitch, 0, RECOIL_RECOVERY, dt);
+    this.recoilYaw = damp(this.recoilYaw, 0, RECOIL_RECOVERY, dt);
+    this.recoilResetT = Math.max(0, this.recoilResetT - dt);
 
     const jx = this.shake > 0.002 ? (Math.random() - 0.5) * this.shake * 0.07 : 0;
     const jy = this.shake > 0.002 ? (Math.random() - 0.5) * this.shake * 0.07 : 0;
     const jz = this.shake > 0.002 ? (Math.random() - 0.5) * this.shake * 0.05 : 0;
 
-    this.camera.position.set(
+    // Camera-only jitter (shake) is added here and NEVER reaches the aim ray,
+    // so getting shot cannot silently ruin a shot in flight.
+    this.camPrev.copy(this.camPos);
+    this.camPos.set(
       this.collider.start.x + bobX * Math.cos(this.yaw),
       this.collider.end.y + this.eyeHeight + bobY,
       this.collider.start.z - bobX * Math.sin(this.yaw),
     );
-    this.camera.rotation.set(this.pitch + this.recoil + jx, this.yaw + jy, jz, 'YXZ');
-
-    // FOV: sprint kick out, ADS zoom in
+    this.camera.position.copy(this.camPos);
+    this.camera.rotation.set(
+      this.pitch + this.recoil + this.recoilPitch + jx,
+      this.yaw + this.recoilYaw + jy,
+      jz,
+      'YXZ',
+    );
     const targetFov = sprinting ? 82 : 75 + (ADS_FOV - 75) * this.adsT;
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov = damp(this.camera.fov, targetFov, 8, dt);
@@ -409,5 +601,18 @@ private updateCrouch(wantsCrouch: boolean): void {
     }
 
     this.updateBodyPose(moveAmount, sprinting);
+  }
+
+  /**
+   * Interpolate the RENDERED camera position between the last two simulation
+   * ticks. Rotation is deliberately left alone: the mouse already drives it at
+   * frame rate, so blending it would add a frame of aim latency.
+   */
+  public syncCamera(alpha: number): void {
+    this.camera.position.set(
+      this.camPrev.x + (this.camPos.x - this.camPrev.x) * alpha,
+      this.camPrev.y + (this.camPos.y - this.camPrev.y) * alpha,
+      this.camPrev.z + (this.camPos.z - this.camPrev.z) * alpha,
+    );
   }
 }

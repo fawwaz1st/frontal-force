@@ -1,5 +1,6 @@
 import { clamp } from './math';
 import type { QualityTier } from './quality';
+import { CHALLENGE_IDS, type ChallengeId } from '../game/Challenges';
 
 const KEY = 'frontal-force.v1';
 
@@ -26,6 +27,9 @@ export interface SaveData {
   quality: QualitySetting;
   volume: number;
   mode: GameMode;
+  /** Selected challenge wagers — persisted so a wager is not re-picked every
+   *  session. Validated against the allowlist on load. */
+  challenges: ChallengeId[];
 }
 
 export const DEFAULT_SAVE: SaveData = {
@@ -42,6 +46,7 @@ export const DEFAULT_SAVE: SaveData = {
   quality: 'auto',
   volume: 0.42,
   mode: 'standard',
+  challenges: [],
 };
 
 const finite = (v: unknown, def: number): number =>
@@ -49,6 +54,9 @@ const finite = (v: unknown, def: number): number =>
 
 const isGameMode = (v: unknown): v is GameMode =>
   typeof v === 'string' && GAME_MODES.some((mode) => mode === v);
+
+const isChallengeId = (v: unknown): v is ChallengeId =>
+  typeof v === 'string' && CHALLENGE_IDS.some((id) => id === v);
 
 const isQuality = (v: unknown): v is QualitySetting =>
   typeof v === 'string' && QUALITY_TIERS.some((tier) => tier === v);
@@ -77,6 +85,11 @@ export function loadSave(): SaveData {
     out.quality = isQuality(p.quality) ? p.quality : DEFAULT_SAVE.quality;
     out.volume = clamp(finite(p.volume, DEFAULT_SAVE.volume), 0, 1);
     out.mode = isGameMode(p.mode) ? p.mode : DEFAULT_SAVE.mode;
+    // Challenge wagers: keep only known ids, in allowlist order, deduplicated
+    // by construction (filtering a set of the allowlist can never duplicate).
+    const rawChallenges = Array.isArray(p.challenges) ? p.challenges : [];
+    const chosen = new Set(rawChallenges.filter(isChallengeId));
+    out.challenges = CHALLENGE_IDS.filter((id) => chosen.has(id));
     // Additive lifetime counters: hydrate with defaults so legacy saves (and
     // tampered payloads) can never inject NaN/unknown keys into the UI.
     out.version = 1;

@@ -15,6 +15,14 @@ export interface InputFrame {
   reloadPressed: boolean;
   slotPressed: number;
   wheelSteps: number;
+  /** Dash / air-dash. */
+  dashPressed: boolean;
+  /** Hold to cook a grenade, release to throw. */
+  grenadeHeld: boolean;
+  /** Cycle frag / smoke / EMP. */
+  grenadeCyclePressed: boolean;
+  /** Quick melee / execution. */
+  meleePressed: boolean;
   locked: boolean;
   /** True when the current input came from touch (drives HUD scheme). */
   touch: boolean;
@@ -40,6 +48,10 @@ export class Input {
   private reloadPressed = false;
   private slotPressed = 0;
   private wheelSteps = 0;
+  private dashPressed = false;
+  private grenadeHeld = false;
+  private grenadeCyclePressed = false;
+  private meleePressed = false;
   private locked = false;
   /**
    * Pointer lock is unavailable on iOS Safari (and pre-144 Android). When the
@@ -118,6 +130,10 @@ export class Input {
     this.reloadPressed = false;
     this.slotPressed = 0;
     this.wheelSteps = 0;
+    this.dashPressed = false;
+    this.grenadeHeld = false;
+    this.grenadeCyclePressed = false;
+    this.meleePressed = false;
     this.touch.reset();
   }
 
@@ -171,12 +187,13 @@ export class Input {
 
   /** Returns accumulated input and resets per-frame deltas. */
   public read(): InputFrame {
-    const touchFrame = this.touchMode ? this.touch.read(this.touch.isHeld('aim') ? 1 : 0) : null;
+    const touchFrame = this.touchMode ? this.touch.read() : null;
     const frame: InputFrame = {
       moveX: touchFrame ? touchFrame.moveX : (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0),
       moveZ: touchFrame ? touchFrame.moveZ : (this.keys.has('KeyS') ? 1 : 0) - (this.keys.has('KeyW') ? 1 : 0),
-      lookX: touchFrame ? touchFrame.lookX : this.lookX,
-      lookY: touchFrame ? touchFrame.lookY : this.lookY,
+      // Look is consumed by `consumeLook()` once per RENDERED frame — see there.
+      lookX: 0,
+      lookY: 0,
       fireHeld: touchFrame ? touchFrame.fireHeld : this.fireHeld,
       firePressed: touchFrame ? touchFrame.fireHeld && !this.prevTouchFire : this.firePressed,
       aimHeld: touchFrame ? touchFrame.aimHeld : this.aimHeld,
@@ -186,6 +203,10 @@ export class Input {
       reloadPressed: touchFrame ? touchFrame.reloadPressed : this.reloadPressed,
       slotPressed: touchFrame ? touchFrame.slotPressed : this.slotPressed,
       wheelSteps: touchFrame ? touchFrame.cycleSteps : this.wheelSteps,
+      dashPressed: touchFrame ? touchFrame.dashPressed : this.dashPressed,
+      grenadeHeld: touchFrame ? touchFrame.grenadeHeld : this.grenadeHeld,
+      grenadeCyclePressed: touchFrame ? touchFrame.grenadeCyclePressed : this.grenadeCyclePressed,
+      meleePressed: touchFrame ? touchFrame.meleePressed : this.meleePressed,
       // Touch needs no lock: report engaged so the weapon/reload paths run.
       // Gate on `lockedNow`, not `touchMode`: a desktop user whose pointer-lock
       // request silently failed still has working mouse look (`lockedNow` is
@@ -195,18 +216,46 @@ export class Input {
       touch: this.touchMode,
     };
     this.prevTouchFire = touchFrame ? touchFrame.fireHeld : false;
-    this.lookX = 0;
-    this.lookY = 0;
     this.firePressed = false;
     this.jumpPressed = false;
     this.reloadPressed = false;
     this.slotPressed = 0;
     this.wheelSteps = 0;
+    this.dashPressed = false;
+    this.grenadeCyclePressed = false;
+    this.meleePressed = false;
     return frame;
   }
 
   /** Previous frame's touch fire state — derives firePressed from a held edge. */
   private prevTouchFire = false;
+
+  /**
+   * Consume the accumulated look delta. Called EXACTLY ONCE PER RENDERED FRAME,
+   * before rendering and outside the fixed step.
+   *
+   * Mouse deltas are a displacement in counts, not a rate: there is no `dt`
+   * here, and the accumulator is zeroed on read, so a delta can never be
+   * applied twice (the classic "aim drifts at 2× speed" bug). On Chrome the
+   * events are already frame-aligned, so this is also the lowest-latency
+   * possible consume point.
+   */
+  public consumeLook(): { dx: number; dy: number } {
+    if (this.touchMode) {
+      const touch = this.touch.consumeLook(this.touch.isHeld('aim') ? 1 : 0);
+      // A hybrid device that also has a mouse: fold both into one delta.
+      const dx = touch.dx + this.lookX;
+      const dy = touch.dy + this.lookY;
+      this.lookX = 0;
+      this.lookY = 0;
+      return { dx, dy };
+    }
+    const dx = this.lookX;
+    const dy = this.lookY;
+    this.lookX = 0;
+    this.lookY = 0;
+    return { dx, dy };
+  }
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;
@@ -216,6 +265,11 @@ export class Input {
     this.keys.add(e.code);
     if (e.code === 'Space') this.jumpPressed = true;
     if (e.code === 'KeyR') this.reloadPressed = true;
+    // Shift is sprint; Shift-tap during a sprint is handled by the dash path.
+    if (e.code === 'KeyQ' || e.code === 'ShiftRight') this.dashPressed = true;
+    if (e.code === 'KeyG') this.grenadeCyclePressed = true;
+    if (e.code === 'KeyF') this.meleePressed = true;
+    if (e.code === 'KeyV') this.meleePressed = true;
     if (e.code === 'Escape' || e.code === 'KeyP') this.onPauseKey?.();
     if (e.code.startsWith('Digit')) {
       const digit = Number(e.code.slice(5));
@@ -237,7 +291,13 @@ export class Input {
   };
 
   private onMouseDown = (e: MouseEvent): void => {
-    if (!this.lockedNow || (e.button !== 0 && e.button !== 2)) return;
+    if (!this.lockedNow) return;
+    if (e.button === 1) {
+      // Middle mouse: melee. Standard FPS convention.
+      this.meleePressed = true;
+      return;
+    }
+    if (e.button !== 0 && e.button !== 2) return;
     if (e.button === 0) {
       this.fireHeld = true;
       this.firePressed = true;

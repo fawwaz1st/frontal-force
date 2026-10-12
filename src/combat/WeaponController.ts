@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import type { EnemyManager, Enemy } from '../enemies/Enemies';
+import type { EnemyManager, Enemy } from '../ai/Enemies';
 import type { Player } from '../player/Player';
 import type { InputFrame } from '../input/Input';
-import type { Effects } from './Effects';
+import type { Effects } from '../render/Effects';
 import type { GameAudio } from '../audio/Audio';
 import type { World } from '../world/World';
 import { WEAPON_ORDER, createWeaponState, type WeaponState } from './weapons';
@@ -26,6 +26,8 @@ export interface WeaponView {
   reserve: number;
   reloading: boolean;
   reloadProgress: number;
+  /** Effective magazine size after run modifiers. */
+  magSize: number;
 }
 
 /** Owns all weapon state: inventory, ammo, reload, switching, and firing. */
@@ -38,6 +40,7 @@ export class WeaponController {
     reserve: 0,
     reloading: false,
     reloadProgress: 0,
+    magSize: 0,
   };
 
   private readonly ray = new THREE.Ray();
@@ -55,9 +58,45 @@ export class WeaponController {
 
   public onFired: ((weapon: WeaponState) => void) | null = null;
   public onSwitched: (() => void) | null = null;
+  /**
+   * Damage actually dealt by a player shot, forwarded to the run statistics
+   * and the lifesteal path. Called once per pellet that connects, with the
+   * post-mitigation number, so the accuracy and DPS readouts are honest.
+   */
+  public onDamageDealt: ((amount: number, headshot: boolean) => void) | null = null;
+  /**
+   * Per-pellet outcome, for the accuracy and headshot statistics.
+   * 0 = miss, 1 = body hit, 2 = headshot, 3 = headshot kill, 4 = body kill,
+   * 5 = blocked by a shield (no kill). Kills carry their own codes so the
+   * hitmarker can show the headshot variant only when the shot really hit the
+   * head, and blocked shots are reported separately instead of being folded
+   * into the generic hit bucket.
+   */
+  public onShotStat: ((result: 0 | 1 | 2 | 3 | 4 | 5) => void) | null = null;
+  /** Run modifiers. Identity until the first card is taken. */
+  private mods = {
+    damageMul: 1,
+    fireRateMul: 1,
+    magMul: 1,
+    reloadMul: 1,
+    spreadMul: 1,
+    blastDamageMul: 1,
+    blastRadiusMul: 1,
+    headshotMul: 1,
+    critChance: 0,
+    critMul: 2,
+  };
   /** Damage multiplier for endless modes — mirrors the enemy HP ramp so a
    *  fixed ammo pool never becomes a hard wall. 1 in every finite mode. */
   public damageScale = 1;
+  /**
+   * Extra cone multiplier from the run's challenges (Scatter). Kept separate
+   * from `mods.spreadMul` because that one is a card the player opted into
+   * mid-run, while this is a menu wager fixed for the whole run.
+   */
+  public challengeSpreadMul = 1;
+  /** Multiplier on reserve ammo at run start (Famine). */
+  public challengeAmmoMul = 1;
   /** Latest player muzzle in world space; consumed once by enemy hearing. */
   public lastShot: THREE.Vector3 | null = null;
   /** Supplies the current weapon muzzle in WORLD space (eye + viewmodel offset). */
@@ -88,6 +127,7 @@ export class WeaponController {
     view.reloadProgress = weapon.reloading
       ? Math.min(weapon.reloadT / weapon.def.reloadTime, 1)
       : 0;
+    view.magSize = this.magSizeOf(weapon);
     return view;
   }
 
@@ -95,6 +135,17 @@ export class WeaponController {
     this.states = WEAPON_ORDER.map(createWeaponState);
     this.index = 0;
     this.lastShot = null;
+    // Famine: reserves only, never the magazine. The first magazine is what
+    // the opening fight is balanced around, so cutting it would make wave 1
+    // unwinnable rather than tense.
+    if (this.challengeAmmoMul !== 1) {
+      for (const state of this.states) {
+        state.reserve = Math.max(
+          0,
+          Math.floor(state.reserve * this.challengeAmmoMul),
+        );
+      }
+    }
   }
 
   /** Single source for bullet and crosshair spread. */
@@ -103,11 +154,102 @@ export class WeaponController {
     return moving ? this.current.def.spreadMoving : this.current.def.spread;
   }
 
+  /**
+   * The real cone half-angle, in radians, for the NEXT shot. Drives both the
+   * bullets and the crosshair gap, so the crosshair is always honest about
+   * where a round can actually land.
+   *
+   * Model (research: CS2 / Apex / Source):
+   *  1. The FIRST shot of a group from a stationary, grounded shooter is
+   *     perfectly accurate. This is the single highest-impact accuracy rule
+   *     in any shooter — if bullet 1 is RNG, nothing else matters.
+   *  2. Movement penalty scales with ACTUAL velocity, not with "is a key
+   *     held", so counter-strafing works the way players expect.
+   *  3. Sustained fire blooms the cone; the bloom resets with the group.
+   *  4. Airborne adds a large flat penalty — jumping is not a valid tactic.
+   */
+  public spreadForState(
+    moveFraction: number,
+    aiming: boolean,
+    airborne: boolean,
+    shotIndex: number,
+  ): number {
+    const def = this.current.def;
+    const still = moveFraction < 0.08 && !airborne;
+    // Perfect first shot: only when genuinely stationary and grounded.
+    if (shotIndex === 0 && still) return aiming ? def.spread * 0.35 : 0;
+    const move = Math.min(1, Math.max(0, moveFraction));
+    let cone = def.spread + (def.spreadMoving - def.spread) * move;
+    if (airborne) cone += def.spreadMoving * 2.4;
+    // Bloom: +12% of the moving cone per consecutive round, capped at 2.5x.
+    cone *= 1 + Math.min(1.5, shotIndex * 0.12);
+    if (aiming) cone *= 0.6;
+    return cone * this.mods.spreadMul * this.challengeSpreadMul;
+  }
+
+  /** Cone half-angle for the next shot using the live player state. */
+  public currentSpread(): number {
+    return this.spreadForState(
+      this.player.moveFraction,
+      this.player.isAiming,
+      this.player.airborne,
+      this.player.shotIndex,
+    );
+  }
+
+  /**
+   * Screen-space crosshair gap in CSS pixels for a cone half-angle. Derived
+   * from the perspective projection: a point at angle `theta` off-axis lands
+   * `(h/2) * tan(theta) / tan(fovY/2)` pixels from centre. Without this the
+   * crosshair lies about where shots go.
+   */
+  public crosshairGapPx(viewportHeightPx: number): number {
+    const cone = this.currentSpread();
+    if (cone <= 1e-5) return 3; // tight but visible
+    const fovY = (this.player.camera.fov * Math.PI) / 180;
+    const halfH = viewportHeightPx * 0.5;
+    return Math.max(2, halfH * Math.tan(cone) / Math.tan(fovY * 0.5));
+  }
+
   /** Full ammo top-up from an ammo pickup. */
   public refillReserve(): void {
     for (const w of this.states) {
       w.reserve = Math.min(w.def.reserve, w.reserve + Math.ceil(w.def.magSize * 1.5));
     }
+  }
+
+  /** Every weapon state, for the kiosk's full-rearm purchase. */
+  public allStates(): readonly WeaponState[] {
+    return this.states;
+  }
+
+  /**
+   * Adopt the run's modifiers. Magazine size is applied by re-clamping the
+   * live mag so a mid-run +10% magazine card is felt immediately instead of
+   * only after the next reload.
+   */
+  public setMods(mods: {
+    damageMul: number;
+    fireRateMul: number;
+    magMul: number;
+    reloadMul: number;
+    spreadMul: number;
+    blastDamageMul: number;
+    blastRadiusMul: number;
+    headshotMul: number;
+    critChance: number;
+    critMul: number;
+  }): void {
+    this.mods = mods;
+    for (const state of this.states) {
+      const nextSize = Math.max(1, Math.round(state.def.magSize * mods.magMul));
+      if (state.mag > nextSize) state.mag = nextSize;
+    }
+  }
+
+  /** Effective magazine size for a weapon, after run modifiers. */
+  public magSizeOf(state: WeaponState): number {
+    return Math.max(1, Math.round(state.def.magSize * this.mods.magMul));
   }
 
   public update(frame: InputFrame, dt: number): void {
@@ -126,9 +268,9 @@ export class WeaponController {
     weapon.cooldown = Math.max(0, weapon.cooldown - dt);
 
     if (weapon.reloading) {
-      weapon.reloadT += dt;
+      weapon.reloadT += dt * this.mods.reloadMul;
       if (weapon.reloadT >= weapon.def.reloadTime) this.finishReload(weapon);
-    } else if (frame.reloadPressed && weapon.mag < weapon.def.magSize && weapon.reserve > 0) {
+    } else if (frame.reloadPressed && weapon.mag < this.magSizeOf(weapon) && weapon.reserve > 0) {
       this.beginReload(weapon);
     }
 
@@ -167,6 +309,7 @@ export class WeaponController {
     this.index = index;
     const next = this.states[index];
     if (next) next.cooldown = Math.max(next.cooldown, 0.18);
+    this.player.resetRecoilGroup();
     this.onSwitched?.();
   }
 
@@ -178,11 +321,15 @@ export class WeaponController {
   private beginReload(weapon: WeaponState): void {
     weapon.reloading = true;
     weapon.reloadT = 0;
+    // A reload restarts the recoil pattern: the first round after it is
+    // perfectly accurate again, which is what makes tap-firing viable.
+    this.player.resetRecoilGroup();
     this.audio.reload();
   }
 
   private finishReload(weapon: WeaponState): void {
-    const need = weapon.def.magSize - weapon.mag;
+    const size = this.magSizeOf(weapon);
+    const need = size - weapon.mag;
     const take = Math.min(need, weapon.reserve);
     weapon.mag += take;
     weapon.reserve -= take;
@@ -191,7 +338,9 @@ export class WeaponController {
 
   private fire(weapon: WeaponState, aiming: boolean): void {
     weapon.mag -= 1;
-    weapon.cooldown = 1 / weapon.def.fireRate;
+    // Fire rate is a run modifier: every card that speeds the gun up must
+    // change the cooldown here, or the card would only affect the animation.
+    weapon.cooldown = 1 / (weapon.def.fireRate * this.mods.fireRateMul);
     // A burst weapon arms its follow-up rounds here, INCLUDING the first
     // inter-round delay — arming only `burstLeft` would fire round two on the
     // very same frame (burstT was never set) and the group would read as a
@@ -201,50 +350,60 @@ export class WeaponController {
       this.burstLeft = burstCount - 1;
       this.burstT = BURST_ROUND_INTERVAL;
     }
+    // Cone is sampled BEFORE addRecoil so the shot uses the state the player
+    // was aiming with, and the crosshair can predict it exactly.
+    const shotIndex = this.player.shotIndex;
+    const spread = this.spreadForState(
+      this.player.moveFraction,
+      aiming,
+      this.player.airborne,
+      shotIndex,
+    );
+    // The ray leaves the EYE and runs along the aim direction — the crosshair
+    // is the aim point, always. Firing from the muzzle instead would make the
+    // crosshair lie about close-range shots (the gun is ~30 cm off-axis).
+    //
+    // CRITICAL ORDER: the aim is sampled BEFORE this shot's recoil is applied.
+    // addRecoil() rotates the very pitch/yaw that forward() reads, so applying
+    // it first deflected every first round of a burst off the crosshair by the
+    // kick it had not been fired with yet.
+    this.player.eyePosition(this.tmpOrigin);
+    this.player.forward(this.tmpDir);
     this.player.addRecoil(weapon.def.recoil);
     this.audio.shot(weapon.def.sound);
     this.onFired?.(weapon);
 
-    this.player.eyePosition(this.tmpOrigin);
-    this.player.forward(this.tmpDir);
-
-    // Bullets leave the GUN, not the camera: muzzle in world space…
+    // The tracer/flash/ejection origin is the GUN, which is purely cosmetic.
     const muzzle = this.tmpMuzzle.copy(this.tmpOrigin);
     this.getMuzzle?.(this.tmpOrigin, muzzle);
     this.lastShot = muzzle;
-    // …but converge on whatever the crosshair points at (eye-cast aim point).
-    this.ray.set(this.tmpOrigin, this.tmpDir);
-    const aimWall = this.world.octree.rayIntersect(this.ray);
-    const aimMax = Math.min(aimWall ? aimWall.distance : weapon.def.range, weapon.def.range);
-    const aimEnemy = this.enemies.raycast(this.tmpOrigin, this.tmpDir, aimMax);
-    const aimDist = aimEnemy ? aimEnemy.distance : aimMax;
-    const aim = this.tmpPoint.copy(this.tmpOrigin).addScaledVector(this.tmpDir, aimDist);
-    const baseDir = aim.sub(muzzle);
-    if (baseDir.lengthSq() < 1e-6) baseDir.copy(this.tmpDir);
-    baseDir.normalize();
 
-    const spread = this.spreadFor(this.player.horizontalSpeed > 2, aiming);
+    const right = this.tmpRight.crossVectors(this.tmpDir, UP);
+    if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
+    right.normalize();
+    const up = this.tmpUp.crossVectors(right, this.tmpDir).normalize();
+
     let hitAny = false;
     let blockedAny = false;
     let headshotAny = false;
     let killedAny = false;
-    const right = this.tmpRight.crossVectors(baseDir, UP);
-    if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
-    right.normalize();
-    const up = this.tmpUp.crossVectors(right, baseDir).normalize();
-
     for (let pellet = 0; pellet < weapon.def.pellets; pellet++) {
+      // Uniform-in-disc sampling: sqrt() keeps the distribution flat instead of
+      // clustering at the centre (which would make the cone a lie).
       const angle = Math.tan(spread) * Math.sqrt(Math.random());
       const azimuth = Math.random() * Math.PI * 2;
-      const dir = this.tmpPellet.copy(baseDir)
+      const dir = this.tmpPellet.copy(this.tmpDir)
         .addScaledVector(right, Math.cos(azimuth) * angle)
         .addScaledVector(up, Math.sin(azimuth) * angle)
         .normalize();
-      const result = this.fireRay(muzzle, dir, weapon, pellet === 0);
+      const result = this.fireRay(this.tmpOrigin, muzzle, dir, weapon, pellet === 0);
       hitAny ||= result !== 0;
-      blockedAny ||= result === 4;
+      blockedAny ||= result === 5;
       headshotAny ||= result === 2 || result === 3;
-      killedAny ||= result === 3;
+      killedAny ||= result === 3 || result === 4;
+      // Shot statistics: counted per PELLET so a shotgun's accuracy reflects
+      // how many pellets connected, which is what the player actually sees.
+      this.onShotStat?.(result);
     }
     // One marker/audio per trigger pull, not per pellet. Kill feedback is owned
     // by EnemyManager.onEnemyKilled and must not be overwritten by hit feedback.
@@ -273,18 +432,20 @@ export class WeaponController {
     const radius = def.blastRadius ?? 0;
     if (radius <= 0) return;
     const floor = def.blastFloor ?? 0;
-    const center = def.damage * this.damageScale;
-    this.effects.ring(point, def.tracerColor, radius * 2.4, 0.4);
+    const center = def.damage * this.damageScale * this.mods.damageMul * this.mods.blastDamageMul;
+    const blastRadius = radius * this.mods.blastRadiusMul;
+    this.effects.ring(point, def.tracerColor, blastRadius * 2.4, 0.4);
     this.effects.burst(point, def.tracerColor, 16, 2.2);
     this.effects.smoke(point);
     this.audio.blast();
     this.enemies.forEachLive((enemy) => {
       if (enemy === direct) return;
       const distance = enemy.group.position.distanceTo(point);
-      if (distance > radius) return;
-      const falloff = Math.max(floor, 1 - distance / radius);
+      if (distance > blastRadius) return;
+      const falloff = Math.max(floor, 1 - distance / blastRadius);
       const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
-      this.enemies.damageEnemy(enemy, center * falloff, at, undefined, true, PLAYER_TARGET_ID);
+      const hit = this.enemies.damageEnemy(enemy, center * falloff, at, undefined, true, PLAYER_TARGET_ID);
+      this.onDamageDealt?.(hit.dealt, false);
     });
     // Self-damage: smaller radius, and the falloff is applied to the PLAYER's
     // own position so backing off is the counter-play.
@@ -300,8 +461,22 @@ export class WeaponController {
     }
   }
 
-  /** 0 miss, 1 hit, 2 headshot, 3 kill, 4 blocked by armour. */
-  private fireRay(origin: THREE.Vector3, dir: THREE.Vector3, weapon: WeaponState, showTracer: boolean): 0 | 1 | 2 | 3 | 4 {
+  /**
+   * Per-pellet result: 0 miss, 1 body hit, 2 headshot, 3 headshot kill,
+   * 4 body kill, 5 blocked by a shield.
+   *
+   * `origin` is the eye (authoritative ray), `muzzle` is where the tracer and
+   * impact effects are drawn FROM. Splitting them is the standard FPS model:
+   * the crosshair is honest, and the visuals still look like they come from
+   * the gun.
+   */
+  private fireRay(
+    origin: THREE.Vector3,
+    muzzle: THREE.Vector3,
+    dir: THREE.Vector3,
+    weapon: WeaponState,
+    showTracer: boolean,
+  ): 0 | 1 | 2 | 3 | 4 | 5 {
     this.ray.set(origin, dir);
     const wallHit = this.world.octree.rayIntersect(this.ray);
     const wallDist = wallHit ? wallHit.distance : weapon.def.range;
@@ -309,26 +484,40 @@ export class WeaponController {
 
     if (enemyHit) {
       const point = this.tmpPoint.copy(origin).addScaledVector(dir, enemyHit.distance);
+      // Damage model: base x headshot x crit x run modifiers. A crit is a
+      // separate roll from a headshot so the two stack, which is what makes a
+      // crit card meaningful on a precision weapon.
+      const headshotMul = enemyHit.headshot ? 2 * this.mods.headshotMul : 1;
+      const crit = this.mods.critChance > 0 && Math.random() < this.mods.critChance;
+      const damage = weapon.def.damage * this.damageScale * this.mods.damageMul *
+        headshotMul * (crit ? this.mods.critMul : 1);
       const hit = this.enemies.damageEnemy(
         enemyHit.enemy,
-        (enemyHit.headshot ? weapon.def.damage * 2 : weapon.def.damage) * this.damageScale,
+        damage,
         point,
         dir, // knockback impulse along the shot line
         true, // player-owned kill: feeds the combo meter
         PLAYER_TARGET_ID, // threat-table identity, so enemies can hold a grudge
+        enemyHit.headshot, // weak-point check for the boss rear core
       );
-      this.effects.ring(point, 0xffffff, 1.2, 0.18);
-      if (showTracer) this.effects.tracer(origin, point, weapon.def.tracerColor);
+      // Report the ACTUAL post-mitigation damage: a warden plate eats half the
+      // round, and the damage/lifesteal readouts must reflect that, not the
+      // number that was nominally fired.
+      this.onDamageDealt?.(hit.dealt, enemyHit.headshot);
+      this.effects.ring(point, crit ? 0xffd76b : 0xffffff, 1.2, 0.18);
+      if (showTracer) this.effects.tracer(muzzle, point, weapon.def.tracerColor);
       if (weapon.def.blastRadius) this.explode(point, weapon, enemyHit.enemy);
-      if (hit.killed) return 3;
-      if (hit.blocked) return 4;
+      // Result codes: kill first so the kill feedback always wins, then a
+      // blocked non-kill, then the plain head/body hit.
+      if (hit.killed) return enemyHit.headshot ? 3 : 4;
+      if (hit.blocked) return 5;
       return enemyHit.headshot ? 2 : 1;
     } else if (wallHit && wallDist <= weapon.def.range) {
       const normal = wallHit.triangle.getNormal(this.tmpNormal);
       if (normal.dot(dir) > 0) normal.negate();
       this.effects.impact(wallHit.position, normal);
       this.effects.decal(wallHit.position, normal);
-      if (showTracer) this.effects.tracer(origin, wallHit.position, weapon.def.tracerColor);
+      if (showTracer) this.effects.tracer(muzzle, wallHit.position, weapon.def.tracerColor);
       // A wall hit still detonates — that is the whole point of a launcher.
       if (weapon.def.blastRadius) {
         const point = this.tmpPoint.copy(wallHit.position);
@@ -336,7 +525,7 @@ export class WeaponController {
       }
     } else if (showTracer) {
       const end = this.tmpPoint.copy(origin).addScaledVector(dir, weapon.def.range);
-      this.effects.tracer(origin, end, weapon.def.tracerColor);
+      this.effects.tracer(muzzle, end, weapon.def.tracerColor);
       if (weapon.def.blastRadius) this.explode(end, weapon, null);
     }
     return 0;

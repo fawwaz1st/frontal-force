@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Octree } from 'three/addons/math/Octree.js';
-import type { EnemyManager, Enemy, Interceptor } from '../enemies/Enemies';
-import type { Effects } from '../combat/Effects';
+import type { EnemyManager, Enemy, Interceptor } from './Enemies';
+import type { Effects } from '../render/Effects';
 import type { GameAudio } from '../audio/Audio';
 import type { CombatTarget } from '../combat/Combatant';
 import { ARENA_LIMIT } from '../world/World';

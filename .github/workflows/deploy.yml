@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: read the repo, publish a Pages artifact, mint an OIDC token
+# for the deploy step.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deploy at a time; a newer push cancels an in-flight older one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # `npm run build` is tsc --noEmit && vite build, so a type error fails
+      # the deploy instead of shipping a broken bundle.
+      - run: npm run build
+      - run: node --experimental-strip-types scripts/self-check.ts
+      - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on for the repo if the owner never opened the settings
+          # page. Without this the first deploy fails with "Get Pages site
+          # failed" on a repository that has never had Pages enabled.
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

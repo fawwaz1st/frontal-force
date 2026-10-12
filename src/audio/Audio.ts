@@ -338,6 +338,87 @@ export class GameAudio {
     this.noise({ dur: 0.18, freq: 2600, type: 'highpass', gain: 0.06, delay: 0.05 });
   }
 
+  /** Grenade leaves the hand — a cloth-and-metal swish. */
+  public grenadeThrow(): void {
+    this.noise({ dur: 0.12, freq: 900, type: 'bandpass', q: 0.8, gain: 0.14 });
+    this.tone({ freq: 420, end: 260, dur: 0.09, type: 'triangle', gain: 0.08 });
+  }
+
+  /** Dash: a short filtered whoosh. Pitch rises with charge for readability. */
+  public dash(): void {
+    this.noise({ dur: 0.22, freq: 700, type: 'bandpass', q: 0.7, gain: 0.22 });
+    this.tone({ freq: 160, end: 520, dur: 0.18, type: 'sine', gain: 0.1 });
+  }
+
+  /** Quick melee swing — a whip of band-passed noise. */
+  public swing(): void {
+    this.noise({ dur: 0.14, freq: 1500, type: 'bandpass', q: 1.4, gain: 0.2 });
+  }
+
+  /** Blade connects: meaty thud plus a metal tick. */
+  public slashHit(): void {
+    this.tone({ freq: 180, end: 60, dur: 0.12, type: 'triangle', gain: 0.32 });
+    this.noise({ dur: 0.08, freq: 2600, type: 'highpass', gain: 0.14 });
+  }
+
+  /** Glory-kill window opened: a rising two-note sting. */
+  public stagger(): void {
+    this.tone({ freq: 880, dur: 0.06, type: 'square', gain: 0.14 });
+    this.tone({ freq: 1320, dur: 0.12, type: 'square', gain: 0.12, delay: 0.05 });
+  }
+
+  /** Card taken from the draft — a clean two-tone confirm. */
+  public upgrade(): void {
+    this.tone({ freq: 660, dur: 0.08, type: 'triangle', gain: 0.18 });
+    this.tone({ freq: 990, dur: 0.16, type: 'triangle', gain: 0.2, delay: 0.07 });
+  }
+
+  /** Reroll / kiosk purchase. */
+  public purchase(): void {
+    this.tone({ freq: 520, dur: 0.05, type: 'square', gain: 0.14 });
+    this.tone({ freq: 780, dur: 0.05, type: 'square', gain: 0.14, delay: 0.05 });
+    this.tone({ freq: 1040, dur: 0.1, type: 'square', gain: 0.14, delay: 0.1 });
+  }
+
+  /** Insufficient salvage / rejected action. */
+  public denied(): void {
+    this.tone({ freq: 220, dur: 0.09, type: 'sawtooth', gain: 0.12 });
+    this.tone({ freq: 165, dur: 0.14, type: 'sawtooth', gain: 0.12, delay: 0.08 });
+  }
+
+  /** Boss / elite arrival: a low horn stab. */
+  public bossSpawn(): void {
+    this.tone({ freq: 110, end: 82, dur: 0.7, type: 'sawtooth', gain: 0.3 });
+    this.tone({ freq: 55, end: 41, dur: 0.9, type: 'sine', gain: 0.34 });
+    this.noise({ dur: 0.6, freq: 400, type: 'lowpass', gain: 0.2 });
+  }
+
+  /** Elite kill: the record fanfare, but shorter and darker. */
+  public eliteKill(): void {
+    this.tone({ freq: 392, dur: 0.1, type: 'triangle', gain: 0.2 });
+    this.tone({ freq: 523, dur: 0.1, type: 'triangle', gain: 0.2, delay: 0.08 });
+    this.tone({ freq: 659, dur: 0.24, type: 'triangle', gain: 0.22, delay: 0.16 });
+  }
+
+  /** New achievement unlocked. */
+  public achievement(): void {
+    this.tone({ freq: 784, dur: 0.08, type: 'sine', gain: 0.18 });
+    this.tone({ freq: 1046, dur: 0.08, type: 'sine', gain: 0.18, delay: 0.08 });
+    this.tone({ freq: 1318, dur: 0.3, type: 'sine', gain: 0.2, delay: 0.16 });
+  }
+
+  /** Ambient hazard cue: tesla coil about to fire. */
+  public hazardCharge(): void {
+    this.tone({ freq: 300, end: 1200, dur: 0.45, type: 'sawtooth', gain: 0.1 });
+  }
+
+  /** Barrel detonation: a bigger, dirtier blast than a grenade. */
+  public barrelBlast(pan = 0): void {
+    this.tone({ freq: 70, end: 24, dur: 0.7, type: 'sine', gain: 0.75, pan });
+    this.noise({ dur: 0.7, freq: 500, type: 'lowpass', gain: 0.65 });
+    this.noise({ dur: 0.4, freq: 3000, type: 'highpass', gain: 0.2 });
+  }
+
   private tone(opts: ToneOpts): void {
     if (!this.ctx || !this.master) return;
     const t0 = this.ctx.currentTime + (opts.delay ?? 0);

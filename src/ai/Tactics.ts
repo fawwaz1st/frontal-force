@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 
-export type TacticalKind = 'grunt' | 'rusher' | 'gunner' | 'warden';
+export type TacticalKind =
+  | 'grunt' | 'rusher' | 'gunner' | 'warden'
+  | 'sniper' | 'flyer' | 'exploder' | 'healer' | 'summoner' | 'wardenPrime';
+
+/** Kinds that should never take a cover claim: they either close to melee,
+ *  ignore the player entirely, or float above the cover they would use. */
+const NON_COVER_KINDS: readonly TacticalKind[] = ['rusher', 'exploder', 'flyer', 'summoner'];
 
 export interface CoverSpotData {
   center: THREE.Vector3;
@@ -51,10 +57,11 @@ export class TacticalDirector {
   ): TacticalClaim | null {
     let best: TacticalClaim | null = null;
     let bestScore = Number.POSITIVE_INFINITY;
+    if (NON_COVER_KINDS.includes(kind)) return null;
     for (const point of this.points) {
       if (point.owner !== null) continue;
       const playerDistance = point.center.distanceTo(playerPos);
-      if (playerDistance < (kind === 'rusher' ? 3 : 6) || playerDistance > 30) continue;
+      if (playerDistance < 6 || playerDistance > 30) continue;
       const leftVisible = canSee(point.left, playerPos);
       const rightVisible = canSee(point.right, playerPos);
       if (!leftVisible && !rightVisible) continue;
@@ -63,9 +70,13 @@ export class TacticalDirector {
       if (travel > 34) continue;
       const roleFit = kind === 'gunner'
         ? Math.abs(playerDistance - 19) * 0.45
-        : kind === 'warden'
-          ? Math.abs(playerDistance - 14) * 0.45
-          : Math.abs(playerDistance - 12) * 0.25;
+        : kind === 'sniper'
+          ? Math.abs(playerDistance - 30) * 0.5
+          : kind === 'healer'
+            ? Math.abs(playerDistance - 18) * 0.4
+            : kind === 'warden' || kind === 'wardenPrime'
+              ? Math.abs(playerDistance - 14) * 0.45
+              : Math.abs(playerDistance - 12) * 0.25;
       const score = travel * 0.72 + roleFit + (leftVisible && rightVisible ? 0 : 1.2);
       if (score >= bestScore) continue;
       bestScore = score;

@@ -226,6 +226,14 @@ kbd {
   transform: translateX(-50%);
   display: flex;
   gap: 10px;
+  /* The row can carry eight chips, so it wraps instead of overflowing. It
+     needs an explicit width budget: `left: 50%` alone would cap the box at
+     half the viewport and wrap the row far too early. The reserve on the
+     right keeps the radar (144px + 20px inset) clear. */
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100vw - 380px);
 }
 .hud__chip {
   display: inline-flex;
@@ -374,6 +382,69 @@ kbd {
 .hud__mode-chip.active .ic { color: var(--accent); }
 .hud__mode-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
+/* ---------- Challenge wagers (menu) ---------- */
+.hud__challenges {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.hud__challenges-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+.hud__challenges-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+.hud__challenges-payout {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+/* An active wager is a committed decision, so the readout turns gold. */
+.hud__challenges-payout--on { color: var(--gold); }
+.hud__challenges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.hud__challenge {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(236, 231, 216, 0.03);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.hud__challenge .ic { width: 13px; height: 13px; }
+.hud__challenge:hover { color: var(--text); border-color: rgba(222, 210, 170, 0.5); }
+/* Wagers read as a risk: the active state is the danger color, not the
+   accent, so it never looks like the "recommended" mode chip beside it. */
+.hud__challenge.active {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(255, 90, 70, 0.1);
+}
+.hud__challenge.active .ic { color: var(--danger); }
+.hud__challenge:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 /* ---------- Pause mode readout ---------- */
 .hud__pause-mode {
   display: flex;
@@ -413,6 +484,9 @@ kbd {
   background: rgba(10, 10, 7, 0.8);
   border-radius: 0;
   overflow: hidden;
+  /* Positioning context for the shield segment, which is placed from the live
+     health fraction so it always begins where health ends. */
+  position: relative;
 }
 .hud__health-fill {
   height: 100%;
@@ -670,20 +744,25 @@ kbd {
 
 .hud__death-stats {
   margin: 24px 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 26px;
+  /* The card is a stack of blocks; each block owns its own column layout, so a
+     legacy six-field call and a full run summary both lay out from one rule. */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   font-size: 15px;
   color: var(--text-dim);
 }
-.hud__death-stats > div {
+/* Row styling is scoped to the row, not to every direct child: the card is
+   built from .hud__death-block wrappers, and a `> div` rule here would flatten
+   those wrappers into flex rows. */
+.hud__death-block > div {
   display: flex;
   align-items: center;
   gap: 9px;
   justify-content: center;
 }
-.hud__death-stats .ic { color: var(--text-dim); }
-.hud__death-stats span:not(.sr-only) {
+.hud__death-block .ic { color: var(--text-dim); }
+.hud__death-block span:not(.sr-only) {
   color: var(--text);
   font-weight: 700;
   font-size: 18px;
@@ -914,6 +993,9 @@ kbd {
 /* Narrow viewports (portrait phones): stack the bottom bar and shrink chips. */
 @media (max-width: 640px) {
   .hud__top { top: calc(8px + var(--safe-t)); gap: 6px; }
+  /* The radar drops to 96px and moves down out of the top row's way, so the
+     full width is available and the chips stay on one or two lines. */
+  .hud__top { max-width: calc(100vw - 24px); }
   .hud__chip { font-size: 13px; padding: 5px 8px; }
   .hud__radar { width: 96px; height: 96px; top: calc(52px + var(--safe-t)); right: calc(10px + var(--safe-r)); }
   .hud__bottom {
@@ -971,3 +1053,833 @@ kbd {
   .hud__mode-chip .ic { width: 12px; height: 12px; }
   .hud__btn { padding: 9px 20px; font-size: 14px; }
 }
+
+/* ==========================================================================
+   Draft (between-wave upgrade pick) and Supply Kiosk (intermission shop).
+   Both are sibling overlays of the Hud root: the Hud owns no knowledge of
+   them, they only borrow its class vocabulary and design tokens.
+   ========================================================================== */
+
+/* Rarity hues. Common reuses the khaki dim already in the palette, so only the
+   two special tiers introduce a hue, and both are used as borders only. */
+.hud__draft,
+.hud__kiosk {
+  --rarity: #ded2aa99;
+  --rarity-soft: rgba(222, 210, 170, 0.14);
+}
+
+.hud__draft {
+  position: absolute;
+  inset: 0;
+  /* Above the gameplay HUD (1) and the touch overlay (2), below the menus (20):
+     pause and death must be able to cover a live draft. */
+  z-index: 10;
+  display: grid;
+  align-content: safe center;
+  justify-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(8, 9, 6, 0.78);
+  pointer-events: auto;
+  transition: opacity 0.25s;
+}
+.hud__draft.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s, visibility 0s 0.25s;
+}
+
+.hud__draft-panel {
+  position: relative;
+  width: min(1080px, calc(100vw - 32px));
+  margin: 24px 0;
+  padding: 26px 30px 22px;
+  text-align: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+  outline: 1px solid rgba(222, 210, 170, 0.14);
+  outline-offset: 5px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  transition: border-color 0.15s;
+}
+/* Refused paid reroll: the panel frame goes red, nothing else moves. Both the
+   class and the data attribute are matched so a caller cannot desync them. */
+.hud__draft-panel.hud__draft-deny,
+.hud__draft-panel[data-deny] { border-color: var(--danger); }
+
+.hud__draft-title {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--text);
+}
+.hud__draft-title::after {
+  content: '';
+  display: block;
+  width: 72px;
+  height: 5px;
+  margin: 12px auto 0;
+  background: repeating-linear-gradient(-45deg, var(--accent) 0 7px, transparent 7px 14px);
+}
+.hud__draft-sub {
+  margin-top: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+}
+
+.hud__draft-cards {
+  margin: 22px 0 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.hud__draft-card {
+  --rarity: #ded2aa99;
+  --rarity-soft: rgba(222, 210, 170, 0.14);
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-height: 132px;
+  padding: 16px 16px 15px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(236, 231, 216, 0.04);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.hud__draft-card[data-rarity='rare'] {
+  --rarity: #7dd8ff;
+  --rarity-soft: rgba(125, 216, 255, 0.15);
+}
+.hud__draft-card[data-rarity='legendary'] {
+  --rarity: #ffd76b;
+  --rarity-soft: rgba(255, 215, 107, 0.16);
+}
+
+/* Structural rarity tell #1: a thin accent bar across the top edge, drawn
+   inside the border so the hairline stays 1px. */
+.hud__draft-card[data-rarity='rare']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--rarity);
+}
+/* Structural rarity tell #2: legendary gets the hazard hatch instead of a flat
+   bar, the same marking the design system reserves for commit actions. */
+.hud__draft-card[data-rarity='legendary']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 4px;
+  background: repeating-linear-gradient(-45deg, var(--rarity) 0 5px, transparent 5px 10px);
+}
+
+.hud__draft-card:hover,
+.hud__draft-card:focus-visible {
+  border-color: var(--rarity);
+  background: rgba(236, 231, 216, 0.07);
+  outline: 1px solid var(--rarity-soft);
+  outline-offset: 2px;
+}
+.hud__draft-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.hud__draft-rarity {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--rarity);
+}
+.hud__draft-name {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.hud__draft-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.hud__draft-owned {
+  margin-top: auto;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  background: rgba(16, 17, 12, 0.9);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+
+.hud__draft-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+/* The reroll button never disables: a refusal is the caller's answer, and the
+   red panel flash is its only feedback. Dim the label while unaffordable. */
+.hud__draft-actions .hud__btn[data-afford='0'] { color: rgba(255, 80, 64, 0.75); }
+
+/* ---------- Supply kiosk ---------- */
+.hud__kiosk {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  align-content: safe center;
+  justify-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(8, 9, 6, 0.78);
+  pointer-events: auto;
+  transition: opacity 0.25s;
+}
+.hud__kiosk.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s, visibility 0s 0.25s;
+}
+
+.hud__kiosk-panel {
+  width: min(760px, calc(100vw - 32px));
+  margin: 24px 0;
+  padding: 26px 30px 22px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+  outline: 1px solid rgba(222, 210, 170, 0.14);
+  outline-offset: 5px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+.hud__kiosk-title {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--text);
+}
+.hud__kiosk-title::after {
+  content: '';
+  display: block;
+  width: 72px;
+  height: 5px;
+  margin: 12px 0 0;
+  background: repeating-linear-gradient(-45deg, var(--accent) 0 7px, transparent 7px 14px);
+}
+.hud__kiosk-sub {
+  margin-top: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+}
+.hud__kiosk-salvage {
+  margin-top: 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+}
+.hud__kiosk-salvage b {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  /* Tabular numerals: the readout must not reflow while salvage ticks up. */
+  font-variant-numeric: tabular-nums;
+}
+
+.hud__kiosk-list {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+.hud__kiosk-row {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 12px 16px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(236, 231, 216, 0.04);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.hud__kiosk-row:not(:disabled):hover {
+  border-color: rgba(222, 210, 170, 0.5);
+  background: rgba(236, 231, 216, 0.07);
+}
+.hud__kiosk-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Disabled rows stay readable: the player needs to know what exists and why it
+   is closed. `disabled` already removes them from the tab order. */
+.hud__kiosk-row:disabled { opacity: 0.45; cursor: default; }
+.hud__kiosk-row[data-state='ok'] { border-color: var(--ok); }
+.hud__kiosk-row[data-state='deny'] { border-color: var(--danger); }
+/* Sell rows are a different economic direction, so they get a distinct edge
+   and a cool price color: the player never mistakes a payout for a cost. */
+.hud__kiosk-row--sell {
+  border-left: 3px solid rgba(125, 216, 255, 0.55);
+  background: rgba(125, 216, 255, 0.035);
+}
+.hud__kiosk-row--sell .hud__kiosk-cost { color: #7dd8ff; }
+.hud__kiosk-row--sell .hud__kiosk-name { font-size: 14px; font-weight: 600; }
+
+.hud__kiosk-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.hud__kiosk-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.hud__kiosk-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.hud__kiosk-cost {
+  flex: none;
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+/* A price the player cannot pay yet reads as information, not as an offer. */
+.hud__kiosk-cost--short { color: rgba(255, 215, 107, 0.55); }
+.hud__kiosk-cost--blocked {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.hud__kiosk-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ---------- Narrow viewports: one card per row, tighter plate ---------- */
+@media (max-width: 640px) {
+  .hud__draft-panel,
+  .hud__kiosk-panel { padding: 18px 16px 16px; }
+  .hud__draft-title { font-size: 28px; letter-spacing: 0.24em; }
+  .hud__draft-cards { grid-template-columns: 1fr; gap: 10px; margin-top: 16px; }
+  .hud__draft-card { min-height: 0; }
+  .hud__draft-actions { margin-top: 14px; gap: 8px; }
+  .hud__draft-actions .hud__btn { padding: 11px 16px; font-size: 12px; }
+  .hud__kiosk-title { font-size: 26px; letter-spacing: 0.24em; }
+  .hud__kiosk-salvage b { font-size: 28px; }
+  .hud__kiosk-row { flex-direction: column; align-items: flex-start; gap: 6px; padding: 11px 12px; }
+  .hud__kiosk-cost { align-self: flex-end; }
+}
+
+/* Reduced motion: every state change is already carried by color, so the
+   transitions are pure decoration and can go. */
+@media (prefers-reduced-motion: reduce) {
+  .hud__draft,
+  .hud__draft.hidden,
+  .hud__kiosk,
+  .hud__kiosk.hidden,
+  .hud__draft-panel,
+  .hud__draft-card,
+  .hud__kiosk-row { transition: none; }
+}
+
+
+/* ==========================================================================
+   Run telemetry: ability chips, run chips, boss bar, status pips, shield,
+   achievement toasts and the achievement ledger.
+   Everything here reuses the design tokens in :root. Nothing introduces a
+   new hue: accent = interactive/current, danger = harm, gold = earned.
+   ========================================================================== */
+
+/* ---------- Ability chips (bottom bar, beside the ammo readout) ---------- */
+.hud__abilities {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-right: 18px;
+}
+.hud__abilities[hidden] { display: none; }
+
+.hud__ability {
+  min-width: 78px;
+  padding: 6px 9px 7px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  transition: border-color 0.12s, background 0.12s;
+}
+.hud__ability-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+}
+.hud__ability-top b {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.hud__ability-tag { color: var(--text-dim); }
+.hud__ability-bar {
+  margin-top: 5px;
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.hud__ability-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  /* Dim while recharging; the `ready` class promotes it to accent. */
+  background: var(--line);
+  transition: width 0.12s linear, background 0.12s;
+}
+/* A banked charge is the only state worth accent: the bar is full and amber. */
+.hud__ability-bar i.ready { background: var(--accent); }
+/* No charges: the chip dims. The n/N already says 0/2; the dim is the glanceable
+   form of the same fact. */
+.hud__ability.depleted { opacity: 0.62; }
+
+/* Cooking a grenade: gold border and fill, the same "earned moment" gold the
+   hitmarker uses for a headshot. The window has a visible start and end. */
+.hud__ability.cooking {
+  border-color: var(--gold);
+  background: rgba(255, 215, 107, 0.1);
+}
+.hud__ability.cooking .hud__ability-bar i { background: var(--gold); }
+.hud__ability.cooking .hud__ability-top b { color: var(--gold); }
+
+/* ---------- Run chips (top row) ---------- */
+/* The row can now carry eight chips, so it wraps instead of running off the
+   edge; centering keeps the score/wave/kills cluster in the middle. */
+.hud__top { flex-wrap: wrap; justify-content: center; }
+
+/* Excludes the combo chip: that one deliberately keeps its slot when hidden so
+   the score/wave/kills chips never shift as a streak starts and lapses. */
+.hud__chip[hidden]:not(.hud__chip--combo) { display: none; }
+
+.hud__chip-tag {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+.hud__chip--gold { color: var(--gold); border-color: rgba(255, 215, 107, 0.35); }
+.hud__chip--gold .hud__chip-tag { color: rgba(255, 215, 107, 0.7); }
+
+.hud__chip--mutation {
+  color: var(--text);
+  border-color: rgba(255, 217, 138, 0.4);
+  background: rgba(255, 217, 138, 0.08);
+  /* The description is a native title, so this chip is the one run chip that
+     needs to receive hover. It has no click action. */
+  pointer-events: auto;
+  cursor: help;
+}
+.hud__chip--mutation b { letter-spacing: 0.1em; }
+
+/* Wager chip: states that this run was deployed with challenges, and how much
+   score they are worth. Danger-colored, matching the menu chips, so the two
+   read as the same decision. Hover shows the pick list. */
+.hud__chip--wager {
+  color: var(--danger);
+  border-color: rgba(255, 90, 70, 0.45);
+  background: rgba(255, 90, 70, 0.08);
+  pointer-events: auto;
+  cursor: help;
+}
+.hud__chip--wager .hud__chip-tag { color: rgba(255, 90, 70, 0.75); }
+.hud__chip--wager b { font-variant-numeric: tabular-nums; }
+
+/* Seed chip: the one top-row chip with an action, so it is a real button and
+   keeps the pointer affordance the other chips do not have. */
+.hud__chip--seed {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.hud__chip--seed:hover { border-color: var(--accent); color: var(--accent); }
+/* clip-path clips an outline away, so focus is drawn as an inset ring plus an
+   accent hairline: the same signal, in a shape the chamfer cannot eat. */
+.hud__chip--seed:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.hud__chip--seed b { font-variant-numeric: tabular-nums; }
+
+/* ---------- Boss bar ---------- */
+.hud__boss {
+  position: absolute;
+  left: 50%;
+  /* 34px above the bottom edge; the bottom bar sits at 22px, so the bar clears
+     the health and ammo readouts on every viewport that fits them. */
+  bottom: calc(34px + var(--safe-b));
+  transform: translateX(-50%);
+  width: min(560px, 74vw);
+  padding: 7px 12px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+  /* Must never eat a click: the player may be firing through this strip. */
+  pointer-events: none;
+  z-index: 2;
+}
+.hud__boss[hidden] { display: none; }
+.hud__boss-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--text);
+}
+.hud__boss-phase { color: var(--danger); font-variant-numeric: tabular-nums; }
+.hud__boss-bar {
+  margin-top: 6px;
+  height: 8px;
+  border: 1px solid var(--line);
+  background: rgba(10, 10, 7, 0.8);
+  overflow: hidden;
+}
+.hud__boss-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--danger);
+  transition: width 0.15s ease-out;
+}
+/* Core destroyed: the fill gains a gold top edge and the phase text has already
+   switched to CORE DOWN, so the two changes read as one event. */
+.hud__boss-fill.core-down { border-top: 2px solid var(--gold); }
+
+/* ---------- Status effect pips ---------- */
+/* Round on purpose: a pip is a dot, which the Chamfer Rule allows. */
+.hud__pip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor;
+}
+.hud__pip[hidden] { display: none; }
+.hud__pip b { font-weight: 700; }
+.hud__pip--burn { color: #ff8a3c; background: rgba(255, 138, 60, 0.14); }
+.hud__pip--slow { color: #7dd8ff; background: rgba(125, 216, 255, 0.14); }
+
+/* ---------- Shield on the health bar ---------- */
+/* Second segment, positioned by updateShield() from the live health fraction.
+   The bar clips it, so the two segments can never sum past 100 percent. */
+.hud__shield-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: #7dd8ff;
+  transition: left 0.15s ease-out, width 0.15s ease-out;
+}
+.hud__shield-fill.on { box-shadow: 0 0 8px rgba(125, 216, 255, 0.5); }
+.hud__shield-n {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #7dd8ff;
+  font-variant-numeric: tabular-nums;
+}
+.hud__shield-n[hidden] { display: none; }
+
+/* ---------- Achievement toasts ---------- */
+.hud__toasts {
+  position: absolute;
+  top: calc(20px + var(--safe-t));
+  right: calc(20px + var(--safe-r));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(300px, 70vw);
+  pointer-events: none;
+  z-index: 3;
+}
+.hud__toast {
+  padding: 10px 14px 11px;
+  border: 1px solid rgba(255, 215, 107, 0.4);
+  border-left: 3px solid var(--gold);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  opacity: 0;
+  transform: translateX(18px);
+  transition: opacity 0.24s ease-out, transform 0.24s ease-out;
+}
+.hud__toast.in { opacity: 1; transform: translateX(0); }
+.hud__toast.out { opacity: 0; transform: translateX(18px); }
+.hud__toast-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  color: var(--gold);
+  text-transform: uppercase;
+}
+.hud__toast-name {
+  margin-top: 3px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+.hud__toast-desc {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+/* ---------- Seed + daily row (menu) ---------- */
+.hud__seed-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hud__seed-input {
+  pointer-events: auto;
+  width: 132px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(236, 231, 216, 0.05);
+  transition: border-color 0.12s;
+}
+.hud__seed-input::placeholder { color: var(--text-dim); letter-spacing: 0.2em; }
+.hud__seed-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Refused seed: red frame only, no shake. The border is the whole message. */
+.hud__seed-input.deny { border-color: var(--danger); }
+.hud__btn--seed { font-size: 14px; padding: 11px 20px; letter-spacing: 0.18em; }
+
+/* ---------- Achievement ledger (menu) ---------- */
+.hud__ach {
+  margin-top: 12px;
+  text-align: left;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.hud__ach[hidden] { display: none; }
+.hud__ach-summary {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-align: center;
+  margin-bottom: 8px;
+}
+.hud__ach-list {
+  /* The list is long by design (32 rows); the panel caps it so the menu card
+     keeps its shape, and the scroll is local to this box. */
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 6px;
+}
+.hud__ach-tier {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 3px;
+}
+.hud__ach-tier:first-child { margin-top: 0; }
+.hud__ach-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+.hud__ach-name { flex: 1; min-width: 0; }
+/* Locked rows stay dim; an unlocked row is the only gold in the panel. */
+.hud__ach-row--done .hud__ach-name { color: var(--gold); }
+.hud__ach-prog { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.hud__ach-mark {
+  width: 66px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.hud__ach-row--done .hud__ach-mark { color: var(--gold); }
+
+/* ---------- Death card additions ---------- */
+/* One block = one two-column row group. The stack and its gaps live on
+   .hud__death-stats; this is only the internal layout of a single block. */
+.hud__death-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 26px;
+}
+/* Blocks after the first get a hairline divider, so a legacy six-field card
+   (one block) and a full run summary (four blocks) both read as sections. */
+.hud__death-block + .hud__death-block {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+/* Blocks 3 and 4 (seed, upgrade chips) are not two-column rows; they stack. */
+.hud__death-seed,
+.hud__death-upgrades {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+.hud__death-upgrades { gap: 5px; }
+.hud__death-seed {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.hud__death-seed-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  color: var(--text-dim);
+}
+.hud__death-seed-code {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.hud__btn--tiny {
+  font-size: 11px;
+  padding: 6px 12px;
+  letter-spacing: 0.18em;
+  min-width: 74px;
+}
+.hud__death-upgrades {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.hud__death-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text);
+  border: 1px solid var(--line);
+  background: rgba(236, 231, 216, 0.05);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+}
+
+/* ---------- Narrow viewports ---------- */
+@media (max-width: 640px) {
+  .hud__abilities { gap: 6px; margin-right: 10px; }
+  .hud__ability { min-width: 62px; padding: 5px 7px 6px; }
+  .hud__ability-top { font-size: 10px; letter-spacing: 0.1em; }
+  .hud__ability-top b { font-size: 12px; }
+  /* The boss bar gives up width before it gives up legibility. */
+  .hud__boss { width: min(420px, 88vw); padding: 6px 9px 7px; bottom: calc(28px + var(--safe-b)); }
+  .hud__boss-head { font-size: 11px; letter-spacing: 0.14em; }
+  .hud__toasts { width: min(240px, 74vw); top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
+  .hud__toast-name { font-size: 15px; }
+  .hud__toast-desc { font-size: 12px; }
+  .hud__seed-input { width: 108px; font-size: 14px; }
+  .hud__ach-list { max-height: 170px; }
+  .hud__death-block { grid-template-columns: 1fr; gap: 7px; }
+  .hud__death-chip { font-size: 10px; }
+  .hud__death-seed { gap: 7px; }
+}
+
+/* ---------- Reduced motion: the toast appears and disappears, it does not move ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .hud__toast { transition: none; transform: none; }
+  .hud__toast.in { transform: none; }
+  .hud__toast.out { transform: none; }
+  .hud__shield-fill { transition: none; }
+  .hud__ability-bar i { transition: none; }
+  .hud__boss-fill { transition: none; }
+}
+
+/* ---------- Touch mode: the thumbs own the bottom corners ---------- */
+/* The bottom bar lifts by 22px under touch, so the ability chips and the boss
+   bar lift with it instead of landing under a thumb. */
+.hud--touch .hud__abilities { margin-bottom: 30px; }
+.hud--touch .hud__boss { bottom: calc(56px + var(--safe-b)); }
+
+/* ---------- Gameplay HUD hides under full-screen overlays ---------- */
+.hud__abilities, .hud__boss { transition: opacity 0.2s; }
+.hud--overlay .hud__abilities,
+.hud--overlay .hud__boss { opacity: 0; }

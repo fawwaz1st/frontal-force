@@ -6,6 +6,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { clamp, damp, dampAngle } from '../src/core/math.ts';
+import {
+  CHALLENGES,
+  CHALLENGE_IDS,
+  challengeLabel,
+  challengeScoreMul,
+  foldChallenges,
+} from '../src/game/Challenges.ts';
 
 const readSrc = (rel: string): string =>
   readFileSync(fileURLToPath(new URL(`../src/${rel}`, import.meta.url)), 'utf8');
@@ -74,7 +81,7 @@ check('Waves.ts still contains the endless formulas + constants', () => {
   assert.match(wavesSrc, /Math\.min\(1\.3, 1 \+ 0\.02 \* Math\.min\(this\.wave, 15\)\)/);
   assert.match(wavesSrc, /Math\.max\(0\.25, Math\.pow\(0\.94, this\.wave - 1\)\)/);
   assert.equal(literal(wavesSrc, 'ENDLESS_ALIVE_CAP'), 24);
-  assert.match(wavesSrc, /overrun: \{[^}]*endless: true \}/);
+  assert.match(wavesSrc, /overrun: \{[^}]*endless: true,/);
   // Both the enemy spawn path and damageScale must route through hpMul.
   const uses = wavesSrc.match(/WaveManager\.hpMul\(/g) ?? [];
   assert.ok(uses.length >= 2, `hpMul must be shared by spawn + damageScale (found ${uses.length})`);
@@ -98,8 +105,8 @@ check('Game.ts still contains combo constants + formula', () => {
   assert.match(gameSrc, /Math\.min\(1 \+ Math\.floor\(this\.combo \/ 2\), 8\)/);
 });
 
-// ---------- warden shield math (src/enemies/Enemies.ts) ----------
-const enemiesSrc = readSrc('enemies/Enemies.ts');
+// ---------- warden shield math (src/ai/Enemies.ts) ----------
+const enemiesSrc = readSrc('ai/Enemies.ts');
 // Front cone: forward·shotDir < -0.5 ⇔ within ±60° of dead-on frontal.
 // Shot travels +z into the enemy's face at 0° off-axis; forward = (0,0,-1).
 const frontBlocked = (offAxisDeg: number): boolean => {
@@ -175,6 +182,7 @@ check('storage: SaveData declares every expected field', () => {
       'quality',
       'volume',
       'mode',
+      'challenges',
     ].sort(),
   );
 });
@@ -259,6 +267,104 @@ check('threat: grudge decays to zero over the window', () => {
 check('threat: hysteresis above 1 so the incumbent wins ties', () => {
   const h = Number(/TARGET_SWITCH_HYSTERESIS = ([\d.]+)/.exec(combatantSrc)?.[1]);
   assert.ok(h > 1, `switch threshold must exceed 1 (got ${h})`);
+});
+
+// ---------- fire-order precision (src/combat/WeaponController.ts) ----------
+const weaponSrc = readSrc('combat/WeaponController.ts');
+check('fire: the aim is sampled BEFORE this shot recoil is applied', () => {
+  // Regression: addRecoil() rotates the pitch/yaw that forward() reads. When it
+  // ran first, every round was deflected by the kick it had not been fired with
+  // yet, so the first bullet of a burst left the crosshair. The aim read must
+  // come first in source order.
+  const aim = weaponSrc.indexOf('this.player.forward(this.tmpDir);');
+  const recoil = weaponSrc.indexOf('this.player.addRecoil(weapon.def.recoil);');
+  assert.ok(aim > 0, 'forward() call not found in the fire path');
+  assert.ok(recoil > 0, 'addRecoil() call not found in the fire path');
+  assert.ok(aim < recoil, 'forward() must be read before addRecoil() rotates the aim');
+});
+check('fire: shot statistics count hits, headshots and kills', () => {
+  // The result codes are: 0 miss, 1 body, 2 headshot, 3 headshot kill,
+  // 4 body kill, 5 blocked. Accuracy counts 1..4; headshots count 2..3.
+  const hitSet = [1, 2, 3, 4];
+  const headSet = [2, 3];
+  assert.deepEqual(hitSet.filter((r) => r >= 1 && r <= 4), [1, 2, 3, 4]);
+  assert.deepEqual(headSet, [2, 3]);
+  assert.match(weaponSrc, /if \(hit\.killed\) return enemyHit\.headshot \? 3 : 4;/);
+  assert.match(weaponSrc, /if \(hit\.blocked\) return 5;/);
+});
+check('fire: damage stats report post-mitigation damage', () => {
+  // `dealt` is what the health bar actually lost, so a warden plate or a
+  // kill-shot overkill cannot inflate damage-dealt or lifesteal.
+  assert.match(weaponSrc, /this\.onDamageDealt\?\.\(hit\.dealt, enemyHit\.headshot\)/);
+  const enemiesSrc2 = readSrc('ai/Enemies.ts');
+  assert.match(enemiesSrc2, /const dealt = Math\.max\(0, Math\.min\(damage, enemy\.health\)\)/);
+  assert.match(enemiesSrc2, /return \{ killed: true, blocked, dealt \};/);
+});
+
+// ---------- challenge wagers (src/game/Challenges.ts) ----------
+check('challenges: every id in the list has a definition', () => {
+  for (const id of CHALLENGE_IDS) {
+    assert.ok(CHALLENGES[id], `missing definition for ${id}`);
+    assert.equal(CHALLENGES[id].id, id);
+    assert.ok(CHALLENGES[id].description.length > 0);
+  }
+});
+check('challenges: no selection is a pure identity', () => {
+  const m = foldChallenges([]);
+  assert.equal(m.scoreMul, 1);
+  assert.equal(m.enemyHpMul, 1);
+  assert.equal(m.enemySpeedMul, 1);
+  assert.equal(m.enemyCountMul, 1);
+  assert.equal(m.playerDamageMul, 1);
+  assert.equal(m.playerSpreadMul, 1);
+  assert.equal(m.extraAffixes, 0);
+});
+check('challenges: payouts compose multiplicatively', () => {
+  // Horde x1.45 and Glass Cannon x1.30 => 1.885, not 1.75. Stacking must be a
+  // real decision, so the multipliers compound.
+  closeTo(challengeScoreMul(['horde', 'glassCannon']), 1.45 * 1.3, 1e-9);
+  closeTo(challengeScoreMul(['ironclad', 'relentless', 'scatter']), 1.3 * 1.25 * 1.25, 1e-9);
+});
+check('challenges: each wager only moves the stats it claims', () => {
+  // Ironclad touches enemy health and nothing else.
+  const iron = foldChallenges(['ironclad']);
+  assert.equal(iron.enemyHpMul, 1.4);
+  assert.equal(iron.enemySpeedMul, 1);
+  assert.equal(iron.playerDamageMul, 1);
+  // Glass Cannon doubles incoming damage and nothing else.
+  const glass = foldChallenges(['glassCannon']);
+  assert.equal(glass.playerDamageMul, 2);
+  assert.equal(glass.enemyHpMul, 1);
+  // Famine halves reserve ammo only.
+  const famine = foldChallenges(['famine']);
+  assert.equal(famine.playerAmmoMul, 0.5);
+  assert.equal(famine.playerSpreadMul, 1);
+  // Scatter widens the cone only.
+  const scatter = foldChallenges(['scatter']);
+  assert.equal(scatter.playerSpreadMul, 1.6);
+  assert.equal(scatter.playerDamageMul, 1);
+  // Horde is the only one that adds affixes.
+  assert.equal(foldChallenges(['horde']).extraAffixes, 1);
+  assert.equal(foldChallenges(['ironclad']).extraAffixes, 0);
+});
+check('challenges: extra affixes add up across picks', () => {
+  assert.equal(foldChallenges(['horde', 'horde']).extraAffixes, 2);
+});
+check('challenges: label joins the picked names', () => {
+  assert.equal(challengeLabel([]), '');
+  assert.equal(challengeLabel(['horde']), 'HORDE');
+  assert.equal(challengeLabel(['horde', 'glassCannon']), 'HORDE + GLASS CANNON');
+});
+check('challenges: the fold is order-independent', () => {
+  const a = foldChallenges(['horde', 'ironclad', 'famine']);
+  const b = foldChallenges(['famine', 'horde', 'ironclad']);
+  for (const key of Object.keys(a) as (keyof typeof a)[]) {
+    closeTo(a[key], b[key], 1e-9);
+  }
+});
+check('challenges: an unknown id is ignored, not fatal', () => {
+  const m = foldChallenges(['horde', 'notARealChallenge' as never]);
+  closeTo(m.scoreMul, 1.45, 1e-9);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

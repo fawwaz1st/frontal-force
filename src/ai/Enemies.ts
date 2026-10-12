@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { Capsule } from 'three/addons/math/Capsule.js';
 import type { Octree } from 'three/addons/math/Octree.js';
-import type { Effects } from '../combat/Effects';
+import type { Effects } from '../render/Effects';
 import type { GameAudio } from '../audio/Audio';
 import { clamp, damp, dampAngle, randRange } from '../core/math';
 import {
   TacticalDirector,
   type CoverSpotData,
   type TacticalClaim,
-} from '../game/Tactics';
+} from './Tactics';
 import {
   GRUDGE_WINDOW,
   grudgeAt,
@@ -19,8 +19,35 @@ import {
   threatScore,
   type CombatTarget,
 } from '../combat/Combatant';
+import {
+  AFFIXES,
+  AFFIX_IDS,
+  affixCountForWave,
+  applyAffix,
+  eliteChanceForWave,
+  eliteScoreMul,
+  makeEliteHalo,
+  type AffixId,
+  type AffixStats,
+} from './Affixes';
 
-export type EnemyKind = 'grunt' | 'rusher' | 'gunner' | 'warden';
+export type EnemyKind =
+  | 'grunt' | 'rusher' | 'gunner' | 'warden'
+  /** Long-range one-shot threat: a laser telegraph then a fast, hard-hitting bolt. */
+  | 'sniper'
+  /** Floating drone that ignores cover and orbits at head height. */
+  | 'flyer'
+  /** Charges the player and detonates; the counter-play is killing it early. */
+  | 'exploder'
+  /** Fragile support that heals its squad, so it changes the target priority. */
+  | 'healer'
+  /** Spawns grunts on a cooldown; ignores the player to keep the pipeline up. */
+  | 'summoner'
+  /** Every fifth wave. Phased, weak-pointed, enrages when the timer runs out. */
+  | 'wardenPrime';
+
+/** Kinds that count as "elite" for scoring even without affixes. */
+export const ELITE_KINDS: readonly EnemyKind[] = ['wardenPrime'];
 
 interface EnemyDef {
   health: number;
@@ -39,6 +66,23 @@ const DEFS: Record<EnemyKind, EnemyDef> = {
   rusher: { health: 40, speed: 6.2, radius: 0.38, height: 1.4, color: 0xff5c5c, attackRange: 1.7, attackCooldown: 0.9, damage: 14, score: 150 },
   gunner: { health: 110, speed: 2.2, radius: 0.5, height: 1.9, color: 0xffb03a, attackRange: 30, attackCooldown: 2.4, damage: 12, score: 250 },
   warden: { health: 180, speed: 2.6, radius: 0.55, height: 2.0, color: 0x35f0c8, attackRange: 22, attackCooldown: 2.4, damage: 16, score: 400 },
+  // Sniper: the longest telegraph in the game (1.1 s) buys the biggest single
+  // hit. Its 44 m range means it must be found and killed, not out-ranged.
+  sniper: { health: 70, speed: 2.4, radius: 0.4, height: 1.75, color: 0xff4d6d, attackRange: 44, attackCooldown: 3.4, damage: 34, score: 450 },
+  // Flyer: ignores cover entirely, so it punishes pure corner-camping. Low HP
+  // and a slow bob make it a priority but not a threat spike.
+  flyer: { health: 55, speed: 4.4, radius: 0.42, height: 1.5, color: 0x7dd8ff, attackRange: 18, attackCooldown: 1.5, damage: 9, score: 220 },
+  // Exploder: fast, fragile, and its damage is on DEATH. Killing it at range
+  // is the whole counter-play, which teaches spacing without a tutorial.
+  exploder: { health: 45, speed: 5.0, radius: 0.44, height: 1.55, color: 0xff9f1c, attackRange: 2.6, attackCooldown: 2.0, damage: 34, score: 200 },
+  // Healer: 3%/s to every enemy within 9 m. Killing it first is the lesson.
+  healer: { health: 90, speed: 2.8, radius: 0.42, height: 1.7, color: 0x7fe08a, attackRange: 14, attackCooldown: 2.8, damage: 6, score: 350 },
+  // Summoner: spawns a grunt every 6 s. Ignores the player, so it must be
+  // hunted rather than waited out.
+  summoner: { health: 150, speed: 2.0, radius: 0.5, height: 1.85, color: 0xc98aff, attackRange: 20, attackCooldown: 6.0, damage: 10, score: 500 },
+  // Warden Prime: the every-fifth-wave boss. 2200 base health, three phases,
+  // a rear weak point at 2.5x, and an enrage timer.
+  wardenPrime: { health: 2200, speed: 2.2, radius: 0.85, height: 3.1, color: 0xffd76b, attackRange: 30, attackCooldown: 1.5, damage: 20, score: 5000 },
 };
 
 export interface Enemy {
@@ -74,6 +118,27 @@ export interface Enemy {
   staggerT: number;
   tacticalId: number;
   state: 'advance' | 'cover' | 'peek' | 'search' | 'flank' | 'suppress';
+  /** Affixes carried (empty for ordinary enemies). */
+  affixes: AffixId[];
+  /** True for affixed enemies and boss kinds. */
+  elite: boolean;
+  /** Flat damage reduction from the Armored affix. */
+  flatArmor: number;
+  /** Stagger/knockback immunity (Juggernaut). */
+  ccImmune: boolean;
+  /** Remaining burn stacks (damage over time). */
+  burnT: number;
+  burnDps: number;
+  /** Slow applied by the Glacial affix, in seconds. */
+  slowT: number;
+  /** Boss phase 1..3; 0 for non-bosses. */
+  phase: number;
+  /** Boss enrage countdown in seconds; Infinity for non-bosses. */
+  enrageT: number;
+  /** True once the boss weak point has been destroyed. */
+  weakPointBroken: boolean;
+  /** Visual halo for elites, or null. */
+  halo: THREE.Mesh | null;
   /** Current chosen victim. Null only before the first resolve pass. */
   target: CombatTarget | null;
   /** Seconds until the next target re-score (staggered per agent). */
@@ -134,6 +199,29 @@ const PERCEPTION_INTERVAL = 0.125;
 const SEARCH_MEMORY = 6;
 const MAX_ACTIVE_SHOOTERS = 4;
 const BURST_MAX = 3;
+/** Boss phase thresholds (fraction of max health remaining). */
+const BOSS_PHASE_2 = 0.66;
+const BOSS_PHASE_3 = 0.33;
+/** Seconds before a boss enrages: +25% damage, 20% shorter telegraphs. */
+const BOSS_ENRAGE_TIME = 90;
+/** Weak-point damage multiplier (Doom-style permanent disable). */
+const BOSS_WEAKPOINT_MUL = 2.5;
+/** Exploder detonation radius and damage. */
+const EXPLODER_RADIUS = 4.2;
+const EXPLODER_DAMAGE = 46;
+/** Healer: radius and fraction of max health restored per second. */
+const HEALER_RADIUS = 9;
+const HEALER_RATE = 0.03;
+/** Summoner cadence in seconds. */
+const SUMMON_INTERVAL = 6;
+/** Flyer hover height above the floor. */
+const FLYER_HEIGHT = 1.9;
+/** Burn applied by Blazing affixes: damage per second and duration. */
+const AFFIX_BURN_DPS = 9;
+const AFFIX_BURN_TIME = 3;
+/** Glacial slow: fraction of speed removed and duration. */
+const AFFIX_SLOW_MUL = 0.65;
+const AFFIX_SLOW_TIME = 2;
 
 export class EnemyManager {
   private readonly group = new THREE.Group();
@@ -199,6 +287,7 @@ export class EnemyManager {
   private readonly tmp3 = new THREE.Vector3();
   private readonly tmp4 = new THREE.Vector3();
   private readonly tmp5 = new THREE.Vector3();
+  private readonly tmpHead = new THREE.Vector3();
   private readonly tmpRay = new THREE.Ray();
   /** Per-step readiness snapshot — hoisted out of the per-enemy attack scan
    *  so `updateAttack` never walks the roster again (was O(n²) per step). */
@@ -241,6 +330,19 @@ export class EnemyManager {
 
   public get aliveCount(): number {
     return this.enemies.reduce((n, e) => n + (e.dead ? 0 : 1), 0);
+  }
+
+  /** Live elites (affixed or boss kinds). Drives the HUD threat readout. */
+  public get eliteAliveCount(): number {
+    return this.enemies.reduce((n, e) => n + (!e.dead && e.elite ? 1 : 0), 0);
+  }
+
+  /** The live boss, or null. At most one exists at a time by design. */
+  public get activeBoss(): Enemy | null {
+    for (const enemy of this.enemies) {
+      if (!enemy.dead && enemy.kind === 'wardenPrime') return enemy;
+    }
+    return null;
   }
 
   /** Iterate live (non-dead, fully-spawned) enemies — used by the radar. */
@@ -380,7 +482,25 @@ export class EnemyManager {
     }
   }
 
-  public spawn(kind: EnemyKind, position: THREE.Vector3, hpMul = 1, spdMul = 1, atkMul = 1): void {
+  /**
+   * Spawn an enemy.
+   *
+   * `wave` drives the elite roll: affixed elites appear from wave 3, carry
+   * more affixes as the run climbs, and are always worth substantially more
+   * score. The affix stats are applied to the per-spawn def clone, so the
+   * shared DEFS table is never mutated.
+   */
+  public spawn(
+    kind: EnemyKind,
+    position: THREE.Vector3,
+    hpMul = 1,
+    spdMul = 1,
+    atkMul = 1,
+    wave = 1,
+    eliteAllowed = true,
+    /** Extra affixes granted to an elite, from the run's challenges. */
+    extraAffixes = 0,
+  ): void {
     // Per-spawn def clone: wave scaling never mutates the shared DEFS table.
     const base = DEFS[kind];
     const def: EnemyDef = {
@@ -389,11 +509,77 @@ export class EnemyManager {
       speed: base.speed * spdMul,
       attackCooldown: base.attackCooldown * atkMul,
     };
+
+    // Elite roll. Boss kinds are always elite but never carry affixes: their
+    // own phase kit is the variety, and stacking affixes on a 2200 HP boss
+    // would make the fight unreadable.
+    const isBoss = kind === 'wardenPrime';
+    const affixes: AffixId[] = [];
+    if (!isBoss && eliteAllowed && wave >= 3 && Math.random() < eliteChanceForWave(wave)) {
+      const count = affixCountForWave(wave) + Math.max(0, Math.floor(extraAffixes));
+      const pool = AFFIX_IDS.slice();
+      for (let i = 0; i < count && pool.length > 0; i++) {
+        const idx = Math.floor(Math.random() * pool.length);
+        const picked = pool.splice(idx, 1)[0];
+        if (picked) affixes.push(picked);
+      }
+    }
+    const elite = isBoss || affixes.length > 0;
+    let flatArmor = 0;
+    let ccImmune = false;
+    let opacity = 1;
+    let glow = 0;
+    let tint: number | null = null;
+    if (affixes.length > 0) {
+      const stats: AffixStats = {
+        health: def.health,
+        damage: def.damage,
+        speed: def.speed,
+        score: def.score,
+        flatArmor: 0,
+        ccImmune: false,
+        opacity: 1,
+        glow: 0,
+        tint: null,
+      };
+      for (const id of affixes) applyAffix(stats, AFFIXES[id]);
+      def.health = Math.round(stats.health);
+      def.damage = Math.round(stats.damage * 10) / 10;
+      def.speed = stats.speed;
+      def.score = Math.round(stats.score * eliteScoreMul(affixes.length));
+      flatArmor = stats.flatArmor;
+      ccImmune = stats.ccImmune;
+      opacity = stats.opacity;
+      glow = stats.glow;
+      tint = stats.tint;
+    } else if (isBoss) {
+      def.score = Math.round(def.score * eliteScoreMul(3));
+    }
+
     const group = new THREE.Group();
     const model = this.buildModel(kind, def.height / 1.7);
     group.add(model.root);
     group.position.copy(position);
     this.group.add(group);
+
+    // Elite tell: one material tint plus a halo. Readable in under a second,
+    // which is the rule every affix has to satisfy.
+    let halo: THREE.Mesh | null = null;
+    if (elite) {
+      const bodyMat = model.body.material as THREE.MeshStandardMaterial;
+      if (tint !== null) bodyMat.color.setHex(tint);
+      if (glow > 0) {
+        const strip = this.stripMats.get(kind);
+        if (strip) strip.emissiveIntensity = glow;
+      }
+      if (opacity < 1) {
+        bodyMat.transparent = true;
+        bodyMat.opacity = opacity;
+      }
+      halo = makeEliteHalo(def.radius * 1.5, tint ?? base.color);
+      halo.position.y = 0.08;
+      group.add(halo);
+    }
 
     const collider = new Capsule(
       new THREE.Vector3(position.x, position.y + def.radius, position.z),
@@ -407,6 +593,17 @@ export class EnemyManager {
       legL: model.legL, legR: model.legR, armL: model.armL, armR: model.armR,
       walkPhase: Math.random() * Math.PI * 2,
       collider,
+      affixes,
+      elite,
+      flatArmor,
+      ccImmune,
+      burnT: 0,
+      burnDps: 0,
+      slowT: 0,
+      phase: isBoss ? 1 : 0,
+      enrageT: isBoss ? BOSS_ENRAGE_TIME : Number.POSITIVE_INFINITY,
+      weakPointBroken: false,
+      halo,
       // Seed the objective at spawn: without this, blind agents search their
       // own spawn point and freeze outside perception range forever.
       lastKnown: this.hasPlayerPos ? this.lastPlayerPos.clone() : position.clone(),
@@ -440,19 +637,55 @@ export class EnemyManager {
     this.audio.spawn();
   }
 
-  /** Capsule ray test used by the player's hitscan. Returns closest hit distance or null. */
-  public raycast(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number): { enemy: Enemy; distance: number; headshot: boolean } | null {
+  /**
+   * Capsule + head-sphere ray test used by the player's hitscan.
+   *
+   * Why a separate head sphere instead of a Y-threshold: a plane cut counts a
+   * shot that sails 3 m ABOVE a grunt's head as a headshot, and it misses the
+   * case where the head is the only thing peeking over cover. The sphere is
+   * the standard FPS answer and it is what makes "one-shot the grunt" feel
+   * honest at long range.
+   *
+   * Forgiveness (research: enemies get slightly LARGER hitboxes than their
+   * mesh): the torso capsule is used as-is, and the head sphere is 1.15x the
+   * body radius.
+   */
+  public raycast(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    maxDist: number,
+  ): { enemy: Enemy; distance: number; headshot: boolean } | null {
     let best: { enemy: Enemy; distance: number; headshot: boolean } | null = null;
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
-      const distance = this.rayCapsule(origin, dir, enemy.collider);
-      if (distance !== null && distance <= maxDist && (!best || distance < best.distance)) {
-        const hitY = origin.y + dir.y * distance;
-        const headFloor = enemy.group.position.y + enemy.def.height * 0.78;
-        best = { enemy, distance, headshot: hitY > headFloor };
-      }
+      const bodyDistance = this.rayCapsule(origin, dir, enemy.collider);
+      const headDistance = this.rayHead(origin, dir, enemy);
+      const distance =
+        bodyDistance === null
+          ? headDistance
+          : headDistance === null
+            ? bodyDistance
+            : Math.min(bodyDistance, headDistance);
+      if (distance === null || distance > maxDist) continue;
+      if (best && distance >= best.distance) continue;
+      // A head hit is a head hit only when the head sphere is what was struck.
+      const headshot =
+        headDistance !== null && (bodyDistance === null || headDistance <= bodyDistance + 1e-4);
+      best = { enemy, distance, headshot };
     }
     return best;
+  }
+
+  /** Head sphere test. Centre sits at 88 % of the body height, radius is
+   *  1.15x the body radius (a head is a little wider than the neck). */
+  private rayHead(origin: THREE.Vector3, dir: THREE.Vector3, enemy: Enemy): number | null {
+    const radius = enemy.def.radius * 1.15;
+    this.tmpHead.set(
+      enemy.group.position.x,
+      enemy.group.position.y + enemy.def.height * 0.88,
+      enemy.group.position.z,
+    );
+    return this.raySphere(origin, dir, this.tmpHead, radius);
   }
 
   /**
@@ -469,8 +702,10 @@ export class EnemyManager {
     force?: THREE.Vector3,
     byPlayer = false,
     attackerId = -1,
-  ): { killed: boolean; blocked: boolean } {
-    if (enemy.dead) return { killed: false, blocked: false };
+    /** True for a shot to the boss's rear core (or any hit when it is broken). */
+    weakPoint = false,
+  ): { killed: boolean; blocked: boolean; dealt: number } {
+    if (enemy.dead) return { killed: false, blocked: false, dealt: 0 };
     // Always record who shot us: the grudge is what makes an enemy switch OFF
     // its current victim onto whoever is actually hurting it, so suppressing it
     // when the attacker IS the current victim would defeat the point.
@@ -483,30 +718,182 @@ export class EnemyManager {
       const resolved = this.resolveWardenHit(enemy, amount, point, force);
       damage = resolved.damage;
       blocked = resolved.blocked;
+    } else if (enemy.kind === 'wardenPrime') {
+      const resolved = this.resolveBossHit(enemy, amount, point, weakPoint);
+      damage = resolved.damage;
+      blocked = resolved.blocked;
     }
+    // Armored affix: flat reduction, floored at 1 so a weak weapon is never
+    // literally useless (a zero-damage hit reads as a bug to the player).
+    if (enemy.flatArmor > 0) damage = Math.max(1, damage - enemy.flatArmor);
+    // Juggernaut affix trades stagger immunity for 30 % extra damage.
+    if (enemy.ccImmune) damage *= 1.3;
+    // Glacial / Blazing on-hit effects are applied by the attacker's weapon
+    // path via `applyAffixOnHit`, so this method stays about damage only.
+    // `dealt` is the damage the health bar ACTUALLY lost — capped at the
+    // remaining health so an overkill execute never inflates the damage
+    // statistics or the lifesteal heal derived from them.
+    const dealt = Math.max(0, Math.min(damage, enemy.health));
     enemy.health -= damage;
     enemy.flashT = 0.14;
     this.effects.impact(point, this.tmp.copy(point).sub(enemy.group.position).normalize());
     // Physics kickback: heavier hits shove the body along the shot line
     // (resolved against walls by the normal octree pass next frame).
     // A blocked shot transfers no momentum — the shield eats it.
-    if (force && !blocked) {
+    if (force && !blocked && !enemy.ccImmune) {
       const push = Math.min(0.22, 0.05 + damage * 0.0035);
       enemy.collider.translate(this.tmp2.copy(force).setY(0).normalize().multiplyScalar(push));
     }
     if (enemy.health <= 0) {
-      enemy.dead = true;
-      enemy.deadT = CORPSE_LIFE;
-      this.tactics.release(enemy.tacticalId);
-      enemy.claim = null;
-      this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1), enemy.def.color, 5, 0.45);
-      this.effects.burst(enemy.group.position.clone().setY(enemy.group.position.y + 1), enemy.def.color, 10, 1.6);
-      this.audio.kill();
-      this.onEnemyKilled?.(enemy, byPlayer);
-      return { killed: true, blocked };
+      this.killEnemy(enemy, byPlayer);
+      return { killed: true, blocked, dealt };
     }
-    return { killed: false, blocked };
+    return { killed: false, blocked, dealt };
   }
+
+  /** Shared kill path: death effects, affix on-death hooks, score callback. */
+  private killEnemy(enemy: Enemy, byPlayer: boolean): void {
+    enemy.dead = true;
+    enemy.deadT = CORPSE_LIFE;
+    this.tactics.release(enemy.tacticalId);
+    enemy.claim = null;
+    const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
+    this.effects.ring(at, enemy.def.color, enemy.elite ? 8 : 5, 0.45);
+    this.effects.burst(at, enemy.def.color, enemy.elite ? 20 : 10, enemy.elite ? 2.4 : 1.6);
+    this.audio.kill();
+    // On-death affix hooks. Volatile/Blazing explode, Splitting spawns copies,
+    // Glacial freezes the ground. All of them reuse existing systems.
+    for (const id of enemy.affixes) {
+      const def = AFFIXES[id];
+      if (def.onDeath === 'explode') {
+        this.effects.ring(at, 0xff8a3c, EXPLODER_RADIUS * 2.2, 0.4);
+        this.audio.blast();
+      } else if (def.onDeath === 'split' && enemy.kind !== 'wardenPrime') {
+        this.spawnSplit(enemy);
+      } else if (def.onDeath === 'freeze') {
+        this.effects.ring(at, 0xa8f0ff, 5, 0.5);
+      }
+    }
+    // The Exploder's damage is on death: killing it at range is the counter-play.
+    if (enemy.kind === 'exploder') {
+      this.effects.ring(at, 0xff9f1c, EXPLODER_RADIUS * 2.4, 0.5);
+      this.effects.burst(at, 0xff9f1c, 26, 3);
+      this.audio.blast();
+      this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
+    }
+    this.onEnemyKilled?.(enemy, byPlayer);
+  }
+
+  /**
+   * Splitting affix: two half-health copies at 70 % scale. Spawned with the
+   * affix list emptied so a chain of splits cannot fork forever.
+   */
+  private spawnSplit(parent: Enemy): void {
+    if (this.enemies.length > 60) return;
+    for (let i = 0; i < 2; i++) {
+      const angle = (i / 2) * Math.PI * 2 + parent.strafeSeed;
+      const offset = this.tmp5.set(Math.cos(angle) * 1.6, 0, Math.sin(angle) * 1.6);
+      const at = parent.group.position.clone().add(offset);
+      at.y = parent.group.position.y;
+      const before = this.enemies.length;
+      this.spawn(parent.kind, at, 1, 1, 1, 1, false);
+      const child = this.enemies[before];
+      if (!child) continue;
+      // Half health, no affixes, dimmer halo so the copies read as lesser.
+      child.health = Math.max(1, Math.round(parent.def.health * 0.5));
+      child.def.health = child.health;
+      child.affixes = [];
+      child.elite = false;
+      child.flatArmor = 0;
+      if (child.halo) child.halo.visible = false;
+      child.group.scale.setScalar(0.7);
+    }
+  }
+
+  /**
+   * Area damage used by the Exploder death, Volatile affix, and barrels.
+   * Enemies inside the radius take linear falloff; the player takes a reduced
+   * share so a single exploder can never one-shot a full-health player.
+   */
+  private explodeAt(
+    center: THREE.Vector3,
+    radius: number,
+    damage: number,
+    source: Enemy | null,
+  ): void {
+    for (const other of this.enemies) {
+      if (other.dead || other === source) continue;
+      const distance = other.group.position.distanceTo(center);
+      if (distance > radius) continue;
+      const falloff = Math.max(0.3, 1 - distance / radius);
+      const at = other.group.position.clone().setY(other.group.position.y + 1);
+      this.damageEnemy(other, damage * falloff, at, undefined, false, -1);
+    }
+  }
+
+  /**
+   * Public area damage for hazards and barrels: linear falloff to `floor`,
+   * returns how many enemies died. Kept separate from `explodeAt` so the
+   * hazard system gets the falloff shape it authored rather than the
+   * exploder's fixed one.
+   */
+  public damageArea(
+    center: THREE.Vector3,
+    radius: number,
+    damage: number,
+    floor: number,
+    byPlayer: boolean,
+  ): { killed: number; dealt: number } {
+    let killed = 0;
+    let dealt = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      const distance = enemy.group.position.distanceTo(center);
+      if (distance > radius) continue;
+      const falloff = Math.max(floor, 1 - distance / radius);
+      const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
+      const result = this.damageEnemy(enemy, damage * falloff, at, undefined, byPlayer, -1);
+      if (result.killed) killed += 1;
+      dealt += result.dealt;
+    }
+    return { killed, dealt };
+  }
+
+  /**
+   * Boss damage model. Frontal shots land at 60 %; the glowing rear core takes
+   * 2.5x and is destroyed permanently (Doom Eternal's weak-point rule: the
+   * reward for positioning is permanent, not a temporary buff).
+   */
+  private resolveBossHit(
+    enemy: Enemy,
+    amount: number,
+    point: THREE.Vector3,
+    weakPoint: boolean,
+  ): { damage: number; blocked: boolean } {
+    if (enemy.weakPointBroken) return { damage: amount, blocked: false };
+    // "Behind" is determined by the shot's approach versus the boss's facing.
+    const facingX = -Math.sin(enemy.group.rotation.y);
+    const facingZ = -Math.cos(enemy.group.rotation.y);
+    const dx = point.x - enemy.group.position.x;
+    const dz = point.z - enemy.group.position.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const dot = (dx / length) * facingX + (dz / length) * facingZ;
+    const fromBehind = dot < -0.25;
+    if (weakPoint && fromBehind) {
+      this.effects.burst(point, 0xffd76b, 8, 2.2);
+      return { damage: amount * BOSS_WEAKPOINT_MUL, blocked: false };
+    }
+    return { damage: amount * 0.6, blocked: true };
+  }
+
+  /** Called by the boss weak-point path when the core is destroyed. */
+  public breakWeakPoint(enemy: Enemy): void {
+    if (enemy.weakPointBroken) return;
+    enemy.weakPointBroken = true;
+    this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1.8), 0xffd76b, 9, 0.6);
+    this.audio.eliteKill();
+  }
+
 
   /**
    * Warden armour model: a riot shield covers the front arc. Frontal hits land
@@ -574,6 +961,7 @@ export class EnemyManager {
     this.simTime += dt;
     this.lastPlayerPos.copy(playerPos);
     this.hasPlayerPos = true;
+    this.updateAffixTicks(dt);
     // Fade out + dispose dead enemies after a short linger
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
@@ -642,9 +1030,122 @@ export class EnemyManager {
   }
 
   /** Remove a corpse and free its per-agent cloned materials (shared mats stay). */
+  /**
+   * Per-tick affix and support behaviour. One pass over the roster handles
+   * burn damage, slow timers, regen, healing auras, shields, and boss phases:
+   * keeping it in a single O(n) sweep (rather than per-affix passes) is what
+   * lets 24 affixed enemies stay inside the frame budget.
+   */
+  private updateAffixTicks(dt: number): void {
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      // Burn (Blazing / Diesel Soaked / Greek Fire).
+      if (enemy.burnT > 0) {
+        enemy.burnT -= dt;
+        const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
+        this.damageEnemy(enemy, enemy.burnDps * dt, at, undefined, false, -1);
+        if (enemy.burnT <= 0) enemy.burnDps = 0;
+        if (enemy.dead) continue;
+      }
+      if (enemy.slowT > 0) enemy.slowT = Math.max(0, enemy.slowT - dt);
+      // Self-healing affixes (Vampiric, Regenerating).
+      for (const id of enemy.affixes) {
+        const def = AFFIXES[id];
+        if (def.passive === 'regen') {
+          enemy.health = Math.min(enemy.def.health, enemy.health + enemy.def.health * 0.04 * dt);
+        }
+        // Healing aura: 3 % of the RECIPIENT's max health per second, which
+        // keeps it equally useful for a 60 HP grunt and a 2200 HP boss.
+        if (def.passive === 'healAllies') {
+          for (const other of this.enemies) {
+            if (other.dead || other === enemy) continue;
+            if (other.group.position.distanceToSquared(enemy.group.position) > HEALER_RADIUS * HEALER_RADIUS) continue;
+            other.health = Math.min(other.def.health, other.health + other.def.health * HEALER_RATE * dt);
+          }
+        }
+      }
+      // The Healer KIND has the same aura as the Mending affix, but weaker and
+      // tied to its own position, so the two stack the way players expect.
+      if (enemy.kind === 'healer') {
+        for (const other of this.enemies) {
+          if (other.dead || other === enemy) continue;
+          if (other.group.position.distanceToSquared(enemy.group.position) > HEALER_RADIUS * HEALER_RADIUS) continue;
+          other.health = Math.min(other.def.health, other.health + other.def.health * HEALER_RATE * dt);
+        }
+      }
+      // Boss phase progression and enrage.
+      if (enemy.kind === 'wardenPrime') {
+        const fraction = enemy.health / enemy.def.health;
+        const phase = fraction <= BOSS_PHASE_3 ? 3 : fraction <= BOSS_PHASE_2 ? 2 : 1;
+        if (phase !== enemy.phase) {
+          enemy.phase = phase;
+          // Each phase shortens the telegraph and speeds the boss up.
+          enemy.def.speed *= 1.08;
+          this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1.6), 0xffd76b, 7, 0.5);
+          this.audio.bossSpawn();
+        }
+        if (enemy.enrageT !== Number.POSITIVE_INFINITY) {
+          enemy.enrageT -= dt;
+          if (enemy.enrageT <= 0) {
+            enemy.enrageT = Number.POSITIVE_INFINITY;
+            enemy.def.speed *= 1.15;
+            enemy.def.damage *= 1.25;
+            this.audio.bossSpawn();
+          }
+        }
+      }
+      // Elite halo spin: one cheap visual that says "this one is different".
+      if (enemy.halo) {
+        enemy.halo.rotation.z += dt * 1.4;
+      }
+    }
+  }
+
+  /**
+   * Apply an affix's on-hit rider. Called by the player's weapon path so the
+   * effect lands on the PLAYER's terms (the enemy hit them, so the player's
+   * card pool decides what happens).
+   */
+  public applyAffixOnHit(target: CombatTarget, attacker: Enemy): void {
+    for (const id of attacker.affixes) {
+      const def = AFFIXES[id];
+      if (def.onHit === 'burn') {
+        // Marked on the target so the player HUD can show the burn.
+        if (target.targetId === 1) this.playerBurnT = Math.max(this.playerBurnT, AFFIX_BURN_TIME);
+      } else if (def.onHit === 'slow' && target.targetId === 1) {
+        this.playerSlowT = Math.max(this.playerSlowT, AFFIX_SLOW_TIME);
+      } else if (def.onHit === 'chain') {
+        this.effects.burst(attacker.group.position.clone().setY(attacker.group.position.y + 1), 0x5aa8ff, 6, 1.8);
+      }
+    }
+  }
+
+  /** Seconds of burn left on the player (Blazing affix). */
+  public playerBurnT = 0;
+  /** Seconds of slow left on the player (Glacial affix). */
+  public playerSlowT = 0;
+
+  /** Tick the player-affecting affix timers; returns burn damage for this step. */
+  public tickPlayerAffixes(dt: number): { burnDamage: number; slowFraction: number } {
+    let burnDamage = 0;
+    if (this.playerBurnT > 0) {
+      this.playerBurnT = Math.max(0, this.playerBurnT - dt);
+      burnDamage = AFFIX_BURN_DPS * dt;
+    }
+    const slowFraction = this.playerSlowT > 0 ? 1 - AFFIX_SLOW_MUL : 0;
+    if (this.playerSlowT > 0) this.playerSlowT = Math.max(0, this.playerSlowT - dt);
+    return { burnDamage, slowFraction };
+  }
+
   private disposeEnemy(enemy: Enemy): void {
     (enemy.body.material as THREE.Material).dispose();
     (enemy.eye.material as THREE.Material).dispose();
+    if (enemy.halo) {
+      this.group.remove(enemy.halo);
+      enemy.halo.geometry.dispose();
+      (enemy.halo.material as THREE.Material).dispose();
+      enemy.halo = null;
+    }
     this.group.remove(enemy.group);
   }
 
@@ -803,6 +1304,42 @@ export class EnemyManager {
       }
     } else if (enemy.kind === 'rusher') {
       move.copy(this.tmp4);
+    } else if (enemy.kind === 'exploder') {
+      // Relentless charge. No strafing: its whole design is "close the gap and
+      // detonate", and the counter-play is killing it before it arrives.
+      move.copy(this.tmp4);
+    } else if (enemy.kind === 'summoner') {
+      // The summoner ignores the player entirely and holds a far corner, so
+      // the pressure comes from what it produces rather than from itself.
+      if (distance < 22) move.addScaledVector(this.tmp4, -1);
+      else if (distance > 30) move.copy(this.tmp4);
+      const side = this.tmp5.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() > 0.001) move.addScaledVector(side.normalize(), Math.sin(this.simTime * 0.4 + enemy.strafeSeed) * 0.6);
+    } else if (enemy.kind === 'healer') {
+      // Healer stays behind the line: it backs away from the player and drifts
+      // toward the nearest wounded ally, which keeps it alive and useful.
+      const wounded = this.nearestWoundedAlly(enemy);
+      if (wounded) {
+        this.tmp5.set(
+          wounded.group.position.x - enemy.group.position.x,
+          0,
+          wounded.group.position.z - enemy.group.position.z,
+        );
+        if (this.tmp5.lengthSq() > 1) move.addScaledVector(this.tmp5.normalize(), 0.9);
+      }
+      if (distance < 16) move.addScaledVector(this.tmp4, -0.8);
+    } else if (enemy.kind === 'sniper') {
+      // Sniper wants its full reach: backs off hard under 24 m, closes over 36.
+      if (distance < 24) move.addScaledVector(this.tmp4, -1);
+      else if (distance > 36) move.copy(this.tmp4);
+      const side = this.tmp5.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() > 0.001) move.addScaledVector(side.normalize(), Math.sin(this.simTime * 0.5 + enemy.strafeSeed) * 0.1);
+    } else if (enemy.kind === 'wardenPrime') {
+      // Boss: holds mid range, strafes constantly, never hides.
+      if (distance > enemy.def.attackRange * 0.6) move.copy(this.tmp4);
+      else if (distance < 9) move.addScaledVector(this.tmp4, -0.6);
+      const side = this.tmp5.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() > 0.001) move.addScaledVector(side.normalize(), Math.sin(this.simTime * 0.7 + enemy.strafeSeed) * 0.35);
     } else if (enemy.kind === 'warden') {
       // Warden holds a mid-range firing lane: closes to ~72 % of its reach,
       // backs off when crowded, strafes while shooting. Never flanks.
@@ -827,23 +1364,40 @@ export class EnemyManager {
     }
 
     if (move.lengthSq() > 0.001) move.normalize();
-    enemy.collider.translate(move.multiplyScalar(speed * dt));
+    // The Glacial affix's slow applies to movement, and it must not be able to
+    // push a slow below zero.
+    const slowK = enemy.slowT > 0 ? AFFIX_SLOW_MUL : 1;
+    enemy.collider.translate(move.multiplyScalar(speed * slowK * dt));
     const hit = this.octree.capsuleIntersect(enemy.collider);
     if (hit) {
       enemy.collider.translate(this.tmp4.copy(hit.normal).multiplyScalar(hit.depth));
     }
     this.separateFromCrowd(enemy);
 
-    enemy.collider.start.y = Math.max(enemy.collider.start.y, FLOOR_Y + enemy.def.radius);
-    enemy.collider.end.y = enemy.collider.start.y + enemy.def.height - enemy.def.radius * 2;
-    enemy.group.position.set(
-      enemy.collider.start.x,
-      enemy.collider.start.y - enemy.def.radius,
-      enemy.collider.start.z,
-    );
+    // Flyers hover: they ignore floor snapping and float at head height so
+    // cover stops mattering against them, which is the entire point of the
+    // archetype. Their collider is lifted with the visual.
+    if (enemy.kind === 'flyer') {
+      const bob = Math.sin(this.simTime * 2.1 + enemy.strafeSeed) * 0.16;
+      enemy.collider.start.y = FLOOR_Y + FLYER_HEIGHT + bob;
+      enemy.collider.end.y = enemy.collider.start.y;
+      enemy.group.position.set(
+        enemy.collider.start.x,
+        enemy.collider.start.y - enemy.def.radius,
+        enemy.collider.start.z,
+      );
+    } else {
+      enemy.collider.start.y = Math.max(enemy.collider.start.y, FLOOR_Y + enemy.def.radius);
+      enemy.collider.end.y = enemy.collider.start.y + enemy.def.height - enemy.def.radius * 2;
+      enemy.group.position.set(
+        enemy.collider.start.x,
+        enemy.collider.start.y - enemy.def.radius,
+        enemy.collider.start.z,
+      );
+    }
 
     enemy.decisionTimer -= dt;
-    if (enemy.decisionTimer <= 0 && !enemy.claim && enemy.kind !== 'rusher') {
+    if (enemy.decisionTimer <= 0 && !enemy.claim && !EnemyManager.isRelentless(enemy.kind)) {
       enemy.decisionTimer = randRange(0.5, 1.2);
       if (enemy.visible || enemy.memory > 0) {
         const claim = this.tactics.claim(
@@ -856,11 +1410,33 @@ export class EnemyManager {
         if (claim) {
           enemy.claim = claim;
           enemy.state = 'cover';
-        } else if (enemy.kind === 'gunner' || enemy.kind === 'warden' || enemy.strafeSeed > Math.PI) {
-          enemy.state = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 'suppress' : 'flank';
+        } else if (
+          enemy.kind === 'gunner' || enemy.kind === 'warden' ||
+          enemy.kind === 'sniper' || enemy.kind === 'wardenPrime' ||
+          enemy.strafeSeed > Math.PI
+        ) {
+          enemy.state = enemy.kind === 'gunner' || enemy.kind === 'warden' ||
+            enemy.kind === 'sniper' || enemy.kind === 'wardenPrime'
+            ? 'suppress'
+            : 'flank';
         }
       }
     }
+  }
+
+  /** Nearest live ally below 90 % health, for the Healer's movement goal. */
+  private nearestWoundedAlly(healer: Enemy): Enemy | null {
+    let best: Enemy | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const other of this.enemies) {
+      if (other === healer || other.dead) continue;
+      if (other.health >= other.def.health * 0.9) continue;
+      const distance = other.group.position.distanceToSquared(healer.group.position);
+      if (distance >= bestDistance) continue;
+      bestDistance = distance;
+      best = other;
+    }
+    return best;
   }
 
   private separateFromCrowd(enemy: Enemy): void {
@@ -878,7 +1454,16 @@ export class EnemyManager {
   }
 
   private static windupOf(kind: EnemyKind): number {
+    // Sniper telegraphs longest because its hit is the largest single threat
+    // in the game: the player must have time to break line of sight.
+    if (kind === 'sniper') return 1.1;
+    if (kind === 'wardenPrime') return 0.7;
     return kind === 'warden' ? WARDEN_WINDUP : ATTACK_WINDUP;
+  }
+
+  /** True for kinds that never take cover and never stop closing. */
+  private static isRelentless(kind: EnemyKind): boolean {
+    return kind === 'rusher' || kind === 'exploder';
   }
 
   private updateAttack(
@@ -944,6 +1529,26 @@ export class EnemyManager {
       if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;
       victim.receiveDamage(def.damage, enemy.group.position);
       this.audio.melee(this.panToward(enemy.group.position, victimPos));
+    } else if (enemy.kind === 'exploder') {
+      // The Exploder's attack IS the detonation: it dies doing it, so the
+      // trade is "let it arrive" versus "spend the ammo now".
+      if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;
+      const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
+      this.effects.ring(at, 0xff9f1c, EXPLODER_RADIUS * 2.4, 0.5);
+      this.effects.burst(at, 0xff9f1c, 26, 3);
+      this.audio.blast();
+      this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
+      victim.receiveDamage(def.damage, enemy.group.position);
+      this.killEnemy(enemy, false);
+      return;
+    } else if (enemy.kind === 'summoner') {
+      // The summoner never shoots: it spawns a grunt at its own feet. That
+      // turns it into a clock the player has to beat rather than a target to
+      // trade fire with, which is the whole archetype.
+      this.audio.spawn();
+      this.effects.burst(enemy.group.position.clone().setY(enemy.group.position.y + 0.5), def.color, 8, 1.4);
+      this.spawn('grunt', enemy.group.position, 1, 1, 1, 1, false);
+      enemy.attackTimer = SUMMON_INTERVAL * randRange(0.9, 1.15);
     } else {
       this.fireProjectile(enemy, victim, victimVel);
       this.audio.enemyShot(this.panToward(enemy.group.position, victimPos));
@@ -977,12 +1582,23 @@ export class EnemyManager {
 
     enemy.animAim = damp(enemy.animAim, enemy.telegraphed ? 1 : 0, 10, dt);
     const aim = enemy.animAim;
+    const armsForward = enemy.kind === 'gunner' || enemy.kind === 'warden' ||
+      enemy.kind === 'sniper' || enemy.kind === 'wardenPrime';
     enemy.armL.rotation.x = enemy.kind === 'warden'
       ? -swing * 0.3 + (0.6 + 0.6 * aim)
-      : -swing * 0.75 * (1 - aim) + 1.25 * aim;
-    enemy.armR.rotation.x = enemy.kind === 'gunner' || enemy.kind === 'warden'
+      : enemy.kind === 'healer'
+        // Both arms raised: the heal aura is legible from the silhouette alone.
+        ? -2.1 - Math.sin(this.simTime * 3 + enemy.strafeSeed) * 0.12
+        : enemy.kind === 'summoner'
+          ? -2.4 - aim * 0.4
+          : -swing * 0.75 * (1 - aim) + 1.25 * aim;
+    enemy.armR.rotation.x = armsForward
       ? 1.35
-      : swing * 0.75 * (1 - aim) + 1.4 * aim;
+      : enemy.kind === 'healer'
+        ? -2.1 - Math.sin(this.simTime * 3 + enemy.strafeSeed + 1) * 0.12
+        : enemy.kind === 'summoner'
+          ? -2.4 - aim * 0.4
+          : swing * 0.75 * (1 - aim) + 1.4 * aim;
 
     enemy.body.rotation.x = damp(enemy.body.rotation.x, moving ? -0.07 : 0, 6, dt);
     enemy.body.position.y = 1.25 * (enemy.def.height / 1.7)
@@ -1020,6 +1636,12 @@ export class EnemyManager {
     if (kind === 'gunner') torso.scale.set(1.18, 1.05, 1.15);
     if (kind === 'rusher') torso.scale.set(0.9, 0.95, 0.9);
     if (kind === 'warden') torso.scale.set(1.1, 1.06, 1.06);
+    if (kind === 'sniper') torso.scale.set(0.92, 1.05, 0.95);
+    if (kind === 'flyer') torso.scale.set(0.95, 0.8, 0.95);
+    if (kind === 'exploder') torso.scale.set(1.1, 0.98, 1.1);
+    if (kind === 'healer') torso.scale.set(0.95, 1.0, 0.95);
+    if (kind === 'summoner') torso.scale.set(1.05, 1.08, 1.05);
+    if (kind === 'wardenPrime') torso.scale.set(1.55, 1.3, 1.4);
     // Pelvis + shoulder pads ride on the torso
     s(new THREE.Mesh(g.pelvis, dark), 0, -0.36 * scaleK, 0, torso);
     const padL = new THREE.Mesh(g.shoulder, dark);
@@ -1043,6 +1665,73 @@ export class EnemyManager {
     torso.add(chest);
     if (kind === 'gunner') {
       s(new THREE.Mesh(g.pack, dark), 0, 0.02 * scaleK, 0.28 * scaleK, torso);
+    }
+    // Per-kind silhouette props. Each one exists so the archetype is readable
+    // from the silhouette at range, which is the only reliable identification
+    // channel in a dark arena.
+    if (kind === 'sniper') {
+      // Long barrel over the right shoulder: the telegraph of a long reach.
+      const barrel = new THREE.Mesh(g.cannon, dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.scale.set(0.5, 2.4, 0.5);
+      barrel.position.set(0.28 * scaleK, 0.42 * scaleK, -0.3 * scaleK);
+      barrel.castShadow = true;
+      torso.add(barrel);
+    }
+    if (kind === 'flyer') {
+      // Two swept wings: it must read as airborne even when silhouetted.
+      for (const side of [-1, 1] as const) {
+        const wing = new THREE.Mesh(g.pack, dark);
+        wing.scale.set(2.2, 0.16, 0.9);
+        wing.position.set(side * 0.62 * scaleK, 0.34 * scaleK, 0.06 * scaleK);
+        wing.rotation.z = side * 0.35;
+        wing.castShadow = true;
+        torso.add(wing);
+      }
+    }
+    if (kind === 'exploder') {
+      // Bulbous charge tank on the chest: the visible bomb IS the threat.
+      const tank = new THREE.Mesh(g.pack, bodyMat);
+      tank.scale.set(1.5, 1.5, 1.3);
+      tank.position.set(0, 0.08 * scaleK, -0.26 * scaleK);
+      tank.castShadow = true;
+      torso.add(tank);
+    }
+    if (kind === 'healer') {
+      // Antenna array instead of a rifle: reads as support, not shooter.
+      for (let i = -1; i <= 1; i++) {
+        const rod = new THREE.Mesh(g.antenna, dark);
+        rod.scale.set(1, 2.6, 1);
+        rod.position.set(i * 0.16 * scaleK, 0.36 * scaleK, 0.16 * scaleK);
+        torso.add(rod);
+      }
+    }
+    if (kind === 'summoner') {
+      // A wide emitter collar: the spawn port the player learns to target.
+      const collar = new THREE.Mesh(g.shield, bodyMat);
+      collar.scale.set(1.5, 0.35, 1.5);
+      collar.position.set(0, 0.3 * scaleK, 0.1 * scaleK);
+      collar.rotation.x = Math.PI / 2;
+      torso.add(collar);
+    }
+    if (kind === 'wardenPrime') {
+      // Crown spikes plus a rear core the player can see from behind.
+      for (let i = -1; i <= 1; i++) {
+        const spike = new THREE.Mesh(g.antenna, bodyMat);
+        spike.scale.set(1.6, 3.2, 1.6);
+        spike.position.set(i * 0.2 * scaleK, 0.44 * scaleK, 0.02 * scaleK);
+        spike.rotation.z = i * 0.22;
+        torso.add(spike);
+      }
+      const core = new THREE.Mesh(
+        g.visor,
+        new THREE.MeshStandardMaterial({
+          color: 0x1a1408, emissive: 0xffd76b, emissiveIntensity: 3.2, roughness: 0.3,
+        }),
+      );
+      core.scale.set(1.5, 1.5, 1.5);
+      core.position.set(0, 0.05 * scaleK, 0.24 * scaleK);
+      torso.add(core);
     }
 
     const head = new THREE.Mesh(g.head, dark);
@@ -1079,12 +1768,25 @@ export class EnemyManager {
         blade.position.y = -0.5 * scaleK;
         blade.castShadow = true;
         pivot.add(blade);
-      } else if ((kind === 'gunner' || kind === 'warden') && side === 1) {
+      } else if ((kind === 'gunner' || kind === 'warden' || kind === 'wardenPrime') && side === 1) {
         const cannon = new THREE.Mesh(g.cannon, dark);
         cannon.rotation.x = Math.PI / 2;
         cannon.position.set(0, -0.3 * scaleK, -0.25 * scaleK);
+        if (kind === 'wardenPrime') cannon.scale.set(1.8, 1.8, 1.8);
         cannon.castShadow = true;
         pivot.add(cannon);
+      } else if (kind === 'wardenPrime' && side === -1) {
+        // Boss shield is a full plate, not a forearm guard.
+        const plate = new THREE.Mesh(g.shield, bodyMat);
+        plate.scale.set(1.7, 1.5, 1.2);
+        plate.position.set(0, -0.4 * scaleK, -0.16 * scaleK);
+        plate.castShadow = true;
+        pivot.add(plate);
+      } else if (kind === 'exploder') {
+        // No weapon at all: the model's arms are the trigger.
+        const fore = new THREE.Mesh(g.forearm, dark);
+        fore.position.y = -0.44 * scaleK;
+        pivot.add(fore);
       } else {
         const fore = new THREE.Mesh(g.forearm, dark);
         fore.position.y = -0.44 * scaleK;
@@ -1141,13 +1843,23 @@ export class EnemyManager {
       enemy.group.position.y + enemy.def.height * 0.75,
       enemy.group.position.z,
     );
-    const speed = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 17 : 13;
+    // Projectile speed by role: snipers fire fast enough that the bolt is a
+    // threat at its 44 m reach, heavies are slower and more readable.
+    const speed = enemy.kind === 'sniper' ? 46
+      : enemy.kind === 'wardenPrime' ? 22
+        : enemy.kind === 'gunner' || enemy.kind === 'warden' ? 17
+          : enemy.kind === 'flyer' ? 15
+            : 13;
     const horizontal = Math.hypot(victimPos.x - from.x, victimPos.z - from.z);
     const flight = Math.max(0.2, horizontal / speed);
     const aim = this.tmp2.set(victimPos.x, victimPos.y + 1.4, victimPos.z);
     if (victimVel) aim.addScaledVector(victimVel, flight);
 
-    const baseErr = enemy.kind === 'gunner' ? 0.015 : enemy.kind === 'warden' ? 0.02 : 0.05;
+    const baseErr = enemy.kind === 'sniper' ? 0.006
+      : enemy.kind === 'gunner' ? 0.015
+        : enemy.kind === 'warden' ? 0.02
+          : enemy.kind === 'wardenPrime' ? 0.012
+            : 0.05;
     const speedErr = victimVel ? Math.min(0.035, Math.hypot(victimVel.x, victimVel.z) * 0.007) : 0;
     const err = (baseErr + speedErr) * flight;
     aim.x += randRange(-err, err);
@@ -1203,12 +1915,18 @@ export class EnemyManager {
         }
       }
 
+      // Swept hit tests. A bolt at 17 m/s covers 0.28 m per tick, so a plain
+      // point-in-sphere check can skip straight past a target; testing the
+      // SEGMENT the bolt travelled over this tick cannot. This is the standard
+      // fix for tunnelling and it is what makes "I definitely hit that" true.
+      const boltRadius = 0.12;
+
       // Intended victim: a bolt only hurts the friendly it was aimed at, so a
       // stray round never clips an escort that walked into the line of fire.
       const victim = this.targets.find((t) => t.targetId === proj.targetId);
       if (victim && victim.targetable) {
         const center = this.tmp.set(victim.position.x, victim.position.y + 1.0, victim.position.z);
-        if (proj.mesh.position.distanceToSquared(center) < 0.75 * 0.75) {
+        if (this.segmentSphereHit(prev, proj.mesh.position, center, 0.75 + boltRadius)) {
           this.markAggressorForTarget(proj.targetId, proj.mesh.position);
           victim.receiveDamage(proj.damage, proj.mesh.position);
           proj.active = false;
@@ -1220,27 +1938,15 @@ export class EnemyManager {
       // Escort interception: a bolt whose path crosses a guard's body is eaten.
       // Only bolts that actually intersect are absorbed — a broad proximity
       // test would make every bot a global shield and stop the player taking
-      // fire at all (the bug this replaced).
+      // fire at all (the bug this replaced). Tested as a swept segment against
+      // the guard's torso, not as a point-to-line distance.
       let eaten = false;
       for (const guard of this.interceptors) {
         if (!guard.active) continue;
-        const toVictim = this.tmp2.set(
-          victim ? victim.position.x : proj.mesh.position.x,
-          (victim ? victim.position.y : proj.mesh.position.y) + 1,
-          victim ? victim.position.z : proj.mesh.position.z,
-        ).sub(proj.mesh.position);
-        const lenSq = toVictim.lengthSq();
-        if (lenSq < 1e-6) continue;
-        const tGuard = clamp(
-          this.tmp3.set(guard.position.x, guard.position.y + 1, guard.position.z)
-            .sub(proj.mesh.position).dot(toVictim) / lenSq,
-          0,
-          1,
-        );
-        const closest = this.tmp3.copy(proj.mesh.position).addScaledVector(toVictim, tGuard);
-        if (closest.distanceToSquared(this.tmp4.set(guard.position.x, guard.position.y + 1, guard.position.z)) < 0.6 * 0.6) {
+        const guardCenter = this.tmp4.set(guard.position.x, guard.position.y + 1, guard.position.z);
+        if (this.segmentSphereHit(prev, proj.mesh.position, guardCenter, 0.6 + boltRadius)) {
           guard.takeDamage(proj.damage);
-          this.effects.burst(closest.clone(), 0xff9f1c, 5, 1.4);
+          this.effects.burst(guardCenter.clone(), 0xff9f1c, 5, 1.4);
           eaten = true;
           break;
         }
@@ -1256,6 +1962,33 @@ export class EnemyManager {
         proj.mesh.visible = false;
       }
     }
+  }
+
+  /**
+   * True when the segment `a`→`b` passes within `radius` of `center`.
+   * The closest-point-on-segment form is used rather than a ray/sphere solve
+   * because it is branch-free, allocation-free, and handles the degenerate
+   * cases (zero-length segment, target behind the start) for free.
+   */
+  private segmentSphereHit(
+    a: THREE.Vector3,
+    b: THREE.Vector3,
+    center: THREE.Vector3,
+    radius: number,
+  ): boolean {
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const abz = b.z - a.z;
+    const lengthSq = abx * abx + aby * aby + abz * abz;
+    if (lengthSq < 1e-9) {
+      return center.distanceToSquared(a) <= radius * radius;
+    }
+    let t = ((center.x - a.x) * abx + (center.y - a.y) * aby + (center.z - a.z) * abz) / lengthSq;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = a.x + abx * t - center.x;
+    const dy = a.y + aby * t - center.y;
+    const dz = a.z + abz * t - center.z;
+    return dx * dx + dy * dy + dz * dz <= radius * radius;
   }
 
   /**

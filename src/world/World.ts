@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Octree } from 'three/addons/math/Octree.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { CoverSpotData } from '../game/Tactics';
+import type { CoverSpotData } from '../ai/Tactics';
 
 const ARENA_HALF = 47;
 export const ARENA_LIMIT = ARENA_HALF - 2;
@@ -117,8 +117,32 @@ export class World {
   private lightningTimer = REDUCE_MOTION ? Number.POSITIVE_INFINITY : 6;
   private lightningTime = -1;
   public onThunder: ((delay: number) => void) | null = null;
+  /** Live arena-mutation multipliers (see game/Waves.ts MUTATIONS). */
+  private fogMul = 1;
+  private sunMul = 1;
+  private ambientMul = 1;
+  private scene: THREE.Scene | null = null;
+  /** Base fog density, captured at build so a mutation is always relative. */
+  private baseFogDensity = 0.005;
+
+  /**
+   * Apply an arena mutation. Only light intensity and fog density change: the
+   * geometry, the octree and the AI never do, so a mutation cannot invalidate
+   * anything the player already learned about the arena.
+   */
+  public applyMutation(fogMul: number, sunMul: number, ambientMul: number): void {
+    this.fogMul = Math.max(0.2, fogMul);
+    this.sunMul = Math.max(0.05, sunMul);
+    this.ambientMul = Math.max(0.05, ambientMul);
+    if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul;
+    if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul;
+    if (this.scene?.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = this.baseFogDensity * this.fogMul;
+    }
+  }
 
   public build(scene: THREE.Scene): void {
+    this.scene = scene;
     this.group.add(this.coverGroup);
     this.buildFloor();
     this.buildWalls();
@@ -175,12 +199,12 @@ export class World {
       material.opacity = flash;
       this.lightningBolt.visible = flash > 0;
     }
-    if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY + flash * 2.4;
-    if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY + flash * 1.5;
+    if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul + flash * 2.4;
+    if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul + flash * 1.5;
     if (t > 0.38) {
       this.lightningTime = -1;
-      if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY;
-      if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY;
+      if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul;
+      if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul;
     }
   }
 
