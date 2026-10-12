@@ -322,6 +322,11 @@ export class Game {
     this.renderer.toneMappingExposure = 2.2;
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
+    // The draft and kiosk are separate overlays, not part of the HUD tree, so
+    // they must be attached explicitly. Without this they render nothing and
+    // the between-wave loop is unreachable.
+    this.container.appendChild(this.draft.root);
+    this.container.appendChild(this.kiosk.root);
 
     // Touch surfaces: `touch-action: none` must be on every element that
     // receives pointer events (it is not inherited), or the browser steals

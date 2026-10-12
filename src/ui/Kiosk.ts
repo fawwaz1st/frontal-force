@@ -143,8 +143,9 @@ export class Kiosk {
     row.type = 'button';
     row.className = 'hud__kiosk-row';
     row.dataset.itemId = item.id;
-    // Only ids the kiosk itself issued may be bought, so a stale row can never
-    // spend salvage on something the caller has stopped selling.
+    // `owned` marks a purchase that already landed, so a row cannot be bought
+    // twice before the caller re-renders the list. It starts at 0 because the
+    // first click must be allowed through (a pre-set '1' would dead-lock it).
     row.dataset.owned = '0';
 
     const text = document.createElement('span');
@@ -166,7 +167,10 @@ export class Kiosk {
     row.append(text, cost);
 
     row.addEventListener('click', () => {
-      if (row.dataset.owned !== '1') return;
+      // Only ids the kiosk is CURRENTLY offering may be bought. Checking the
+      // live item list (rather than a post-purchase marker) keeps a stale row
+      // from spending salvage while still allowing the FIRST click to land.
+      if (!this.items.some((entry) => entry.id === item.id)) return;
       if (row.disabled) return;
       const ok = this.onPurchase?.({ itemId: item.id, cost: item.cost }) ?? false;
       this.flash(row, ok ? 'ok' : 'deny');
