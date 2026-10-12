@@ -181,6 +181,17 @@ export interface Enemy {
   jukeSide: number;
   /** Countdown to the next juke; staggered so a squad never jukes in unison. */
   jukeCd: number;
+  /** Hit flinch: seconds left, amplitude in radians, and the push direction. */
+  flinchT: number;
+  flinchAmp: number;
+  flinchX: number;
+  flinchZ: number;
+  /** Seconds spent failing to make progress against geometry. */
+  stuckT: number;
+  /** Seconds left on a committed sideways detour around an obstacle. */
+  detourT: number;
+  /** Which side the detour commits to (+1 / -1). */
+  detourSide: number;
 }
 
 export interface Projectile {
@@ -195,6 +206,9 @@ export interface Projectile {
   /** Short player-facing name of the shooter, so the HUD can name the source
    *  of an incoming hit instead of leaving the player guessing. */
   sourceLabel: string;
+  /** True once this bolt has already whipped past the player. Without it a
+   *  single bolt fires a near-miss sound on every tick it stays close. */
+  nearMissed: boolean;
 }
 
 /** Anything that can intercept a bolt before it reaches the player. */
@@ -225,6 +239,10 @@ const BURST_MAX = 3;
 /** Boss phase thresholds (fraction of max health remaining). */
 const BOSS_PHASE_2 = 0.66;
 const BOSS_PHASE_3 = 0.33;
+/** CombatTarget id of the human player. Mirrors WeaponController's constant;
+ *  duplicated as a literal because the AI module must not import the weapon
+ *  module just for one number (that would be a cycle). */
+const PLAYER_TARGET_ID = 1;
 /** Seconds before a boss enrages: +25% damage, 20% shorter telegraphs. */
 const BOSS_ENRAGE_TIME = 90;
 /** Weak-point damage multiplier (Doom-style permanent disable). */
@@ -276,6 +294,53 @@ const AGILITY_SLIDE_RANGE = 9;
 /** Dodge cooldown bounds, in seconds. */
 const AGILITY_DODGE_CD_MIN = 0.7;
 const AGILITY_DODGE_CD_MAX = 1.9;
+
+// ---------------------------------------------------------------------------
+// Squad tactics.
+//
+// The old AI was ten independent agents that happened to share an arena. Each
+// one picked its own victim and walked at it, so a wave read as a queue of
+// duels rather than as a squad. Three mechanisms fix that, and all three are
+// cheap: they are properties of the roster, not per-agent pathfinding.
+//
+//   1. FIRE TEAMS. The roster is split into teams of three by tactical id.
+//      A team shares ONE victim, so a squad concentrates instead of spreading.
+//   2. BOUNDING. Inside a team, at most one agent is "up" (advancing) at a
+//      time; the others hold and cover it. That is the real infantry bounding
+//      overwatch, and it is what makes a squad look like it has a plan.
+//   3. SUPPRESSION. An agent that has held a firing position for a while keeps
+//      firing even without a clean line, which is what makes cover feel
+//      contested instead of binary.
+// ---------------------------------------------------------------------------
+/** Agents per fire team. Three is the smallest group that can bound (one up,
+ *  one covering, one reloading) and it maps cleanly onto the wave sizes. */
+const FIRE_TEAM_SIZE = 3;
+/** How long an agent holds its firing position before rotating out. */
+const BOUND_HOLD_TIME = 2.2;
+/** Cadence of the team state refresh. Not per frame: teams move on the scale
+ *  of seconds, and a per-frame recompute would be pure waste. */
+const TEAM_TICK = 0.35;
+
+/** One fire team's shared state, rebuilt from the roster each tick. */
+interface FireTeam {
+  /** Shared victim. Every member of the team shoots at this. */
+  focus: CombatTarget | null;
+  /** Seconds the current member has been up (advancing). */
+  boundT: number;
+  /** Tactical id of the member currently advancing. */
+  upId: number;
+}
+
+/**
+ * Multiplier applied to a candidate's threat score when it is the team's
+ * shared victim. Deliberately modest: a large bonus would override the
+ * individual's own judgement and make the squad walk past a target in front
+ * of it, which reads as the AI being blind rather than coordinated.
+ */
+const FOCUS_FIRE_BONUS = 1.6;
+/** A holding agent keeps its hold while the target is inside this range. Past
+ *  it the agent is too far from the fight to be useful as covering fire. */
+const HOLD_MAX_RANGE = 24;
 
 /**
  * Per-kind armor look. Ten archetypes sharing one gunmetal frame with a
@@ -416,6 +481,9 @@ export class EnemyManager {
   private readyRushers = 0;
   /** Reused return slot for `resolveWardenHit` (no per-hit object churn). */
   private readonly wardenHit = { damage: 0, blocked: false };
+  /** Fire-team state, keyed by team index. Rebuilt each team tick. */
+  private readonly teams = new Map<number, FireTeam>();
+  private teamTimer = 0;
 
   public constructor(
     scene: THREE.Scene,
@@ -445,7 +513,7 @@ export class EnemyManager {
       this.group.add(bolt);
       this.projectiles.push({
         mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false,
-        targetId: -1, sourceLabel: '',
+        targetId: -1, sourceLabel: '', nearMissed: false,
       });
     }
   }
@@ -553,6 +621,13 @@ export class EnemyManager {
     const incumbent = enemy.target;
     let best: CombatTarget | null = null;
     let bestScore = 0;
+    // Focus fire: a team member prefers the team's shared victim. This is a
+    // BONUS rather than a hard override, so an agent with a genuinely better
+    // shot (a flanker that just cleared cover) still takes it. Forcing the
+    // team target outright made squads walk past targets they could see, which
+    // read as the AI ignoring the player.
+    const team = this.teamOf(enemy);
+    const focus = team?.focus ?? null;
     for (const candidate of this.targets) {
       if (!candidate.targetable) continue;
       const distance = enemy.group.position.distanceTo(candidate.position);
@@ -572,7 +647,7 @@ export class EnemyManager {
         hpFraction: candidate.hpFraction,
         aimPressure: candidate.aimPressureAt(enemy.group.position),
         visibility,
-      });
+      }) * (candidate === focus ? FOCUS_FIRE_BONUS : 1);
       if (score <= bestScore) continue;
       bestScore = score;
       best = candidate;
@@ -757,6 +832,13 @@ export class EnemyManager {
       jukeT: 0,
       jukeSide: Math.random() < 0.5 ? -1 : 1,
       jukeCd: randRange(1.2, 3.4),
+      flinchT: 0,
+      flinchAmp: 0,
+      flinchX: 0,
+      flinchZ: 0,
+      stuckT: 0,
+      detourT: 0,
+      detourSide: 1,
       telegraphed: false,
       animAim: 0,
       flashT: 0,
@@ -868,6 +950,23 @@ export class EnemyManager {
     const dealt = Math.max(0, Math.min(damage, enemy.health));
     enemy.health -= damage;
     enemy.flashT = 0.14;
+    // Flinch. The white flash says "I hit it"; the flinch says "it FELT that".
+    // Strength scales with the fraction of the target's max health the hit
+    // took, so a DMR round visibly rocks a grunt while a beam tick does not.
+    // Capped so a big single hit cannot spin a body around.
+    if (!blocked && dealt > 0) {
+      const weight = clamp(dealt / enemy.def.health, 0, 1);
+      enemy.flinchT = Math.max(enemy.flinchT, 0.12 + weight * 0.14);
+      enemy.flinchAmp = Math.min(0.22, 0.05 + weight * 0.3);
+      // Direction: rock AWAY from the shooter, so the hit has a vector.
+      if (force) {
+        enemy.flinchX = force.x;
+        enemy.flinchZ = force.z;
+      } else {
+        enemy.flinchX = enemy.group.position.x - point.x;
+        enemy.flinchZ = enemy.group.position.z - point.z;
+      }
+    }
     // Getting shot makes an agent MOVE. A lateral dodge away from the shot
     // line is the single biggest readability win for "the AI is alive": the
     // player sees the reaction to their own trigger pull. Never dodges while
@@ -913,14 +1012,14 @@ export class EnemyManager {
     const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
     this.effects.ring(at, enemy.def.color, enemy.elite ? 8 : 5, 0.45);
     this.effects.burst(at, enemy.def.color, enemy.elite ? 20 : 10, enemy.elite ? 2.4 : 1.6);
-    this.audio.kill();
+    this.audio.killAt(at.x, at.z);
     // On-death affix hooks. Volatile/Blazing explode, Splitting spawns copies,
     // Glacial freezes the ground. All of them reuse existing systems.
     for (const id of enemy.affixes) {
       const def = AFFIXES[id];
       if (def.onDeath === 'explode') {
         this.effects.ring(at, 0xff8a3c, EXPLODER_RADIUS * 2.2, 0.4);
-        this.audio.blast();
+        this.audio.blastAt(at.x, at.z);
       } else if (def.onDeath === 'split' && enemy.kind !== 'wardenPrime') {
         this.spawnSplit(enemy);
       } else if (def.onDeath === 'freeze') {
@@ -931,7 +1030,7 @@ export class EnemyManager {
     if (enemy.kind === 'exploder') {
       this.effects.ring(at, 0xff9f1c, EXPLODER_RADIUS * 2.4, 0.5);
       this.effects.burst(at, 0xff9f1c, 26, 3);
-      this.audio.blast();
+      this.audio.blastAt(at.x, at.z);
       this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
     }
     this.onEnemyKilled?.(enemy, byPlayer);
@@ -1136,10 +1235,21 @@ export class EnemyManager {
       if (!enemy || !enemy.dead) continue;
       enemy.deadT -= dt;
       const k = Math.max(0, enemy.deadT / CORPSE_LIFE);
-      // Topple backward over ~0.6 s, then hold on the ground as the glow fades
-      const fall = clamp((1 - k) * 6, 0, 1);
-      enemy.group.rotation.x = fall * 1.45;
-      enemy.group.rotation.z = fall * Math.sin(enemy.strafeSeed) * 0.2;
+      // Death has three beats, and separating them is what makes it read as a
+      // body rather than as a mesh rotating.
+      //   IMPACT   0.00-0.10 s  squash: the body compresses where it was hit
+      //   TOPPLE   0.10-0.60 s  falls over, with a little spin from its seed
+      //   SETTLE   0.60 s+       lies still while the glow drains out
+      const age = CORPSE_LIFE - enemy.deadT;
+      const squash = age < 0.1 ? 1 - (1 - age / 0.1) * 0.45 : 1;
+      const fall = clamp((age - 0.1) * 2, 0, 1);
+      // Ease-out on the topple: a body accelerates as it falls and then stops.
+      const topple = 1 - Math.pow(1 - fall, 3);
+      enemy.group.rotation.x = topple * 1.5;
+      enemy.group.rotation.z = topple * Math.sin(enemy.strafeSeed) * 0.25;
+      // Squash is applied to the BODY, not the group, so the rotation above is
+      // not scaled with it (scaling the group would also scale the fall).
+      enemy.body.scale.set(1 + (1 - squash) * 0.35, squash, 1 + (1 - squash) * 0.35);
       (enemy.body.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.02 + k * 0.4;
       (enemy.eye.material as THREE.MeshStandardMaterial).emissiveIntensity = k * 3;
       if (enemy.deadT <= 0) {
@@ -1177,11 +1287,93 @@ export class EnemyManager {
     }
     this.readyShooters = readyShooters;
     this.readyRushers = readyRushers;
+    // Squad state refreshes on its own cadence, before the per-agent pass, so
+    // every member of a team reads the SAME team state this step.
+    this.teamTimer -= dt;
+    if (this.teamTimer <= 0) {
+      this.teamTimer = TEAM_TICK;
+      this.updateTeams();
+    }
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
       this.updateEnemy(enemy, dt, playerDead);
     }
     this.updateProjectiles(dt);
+  }
+
+  /**
+   * Rebuild the fire teams. Runs on a slow cadence because a team's plan does
+   * not change sixty times a second.
+   *
+   * Each team picks ONE victim: the one its members collectively have the best
+   * shot at, scored by visibility and proximity. A shared victim is what turns
+   * three agents into a squad, because it is what makes them shoot the same
+   * thing at the same time.
+   *
+   * Bounding is a rotation: the member with the best line holds while the team
+   * advances one at a time. Melee archetypes are excluded from holding, because
+   * a rusher that stops to cover is just a slow rusher.
+   */
+  private updateTeams(): void {
+    // Group live agents by team index. Rebuild from the roster each tick so a
+    // death cannot leave a ghost in a team.
+    const buckets = new Map<number, Enemy[]>();
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      if (enemy.kind === 'rusher' || enemy.kind === 'exploder' || enemy.kind === 'flyer') continue;
+      if (enemy.kind === 'wardenPrime' || enemy.kind === 'summoner') continue;
+      const team = Math.floor(enemy.tacticalId / FIRE_TEAM_SIZE);
+      const list = buckets.get(team) ?? [];
+      list.push(enemy);
+      buckets.set(team, list);
+    }
+    for (const [key, members] of buckets) {
+      let team = this.teams.get(key);
+      if (!team) {
+        team = { focus: null, boundT: 0, upId: -1 };
+        this.teams.set(key, team);
+      }
+      // Drop a focus that is gone or no longer targetable.
+      if (team.focus && !team.focus.targetable) team.focus = null;
+      // Pick a focus when the team has none: the target the most members can
+      // currently see, breaking ties on distance. Voting by line of sight is
+      // what keeps a team from committing to someone only one member can hit.
+      if (!team.focus) {
+        let bestTarget: CombatTarget | null = null;
+        let bestVotes = 0;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const candidate of this.targets) {
+          if (!candidate.targetable) continue;
+          let votes = 0;
+          let totalDistance = 0;
+          for (const member of members) {
+            const distance = member.group.position.distanceTo(candidate.position);
+            totalDistance += distance;
+            if (member.targetVisible || (member.memory > 0 && member.visible)) votes += 1;
+          }
+          if (votes < bestVotes) continue;
+          if (votes === bestVotes && totalDistance >= bestDistance) continue;
+          bestVotes = votes;
+          bestDistance = totalDistance;
+          bestTarget = candidate;
+        }
+        team.focus = bestTarget;
+      }
+      // Rotation: advance the "up" slot when its hold expires.
+      team.boundT += TEAM_TICK;
+      if (team.boundT < BOUND_HOLD_TIME) continue;
+      team.boundT = 0;
+      const currentIdx = members.findIndex((m) => m.tacticalId === team.upId);
+      const next = members[(currentIdx + 1) % Math.max(1, members.length)];
+      team.upId = next ? next.tacticalId : -1;
+    }
+  }
+
+  /** The team an agent belongs to, or null for the lone archetypes. */
+  private teamOf(enemy: Enemy): FireTeam | null {
+    if (enemy.kind === 'rusher' || enemy.kind === 'exploder' || enemy.kind === 'flyer'
+      || enemy.kind === 'wardenPrime' || enemy.kind === 'summoner') return null;
+    return this.teams.get(Math.floor(enemy.tacticalId / FIRE_TEAM_SIZE)) ?? null;
   }
 
   public clear(): void {
@@ -1191,6 +1383,10 @@ export class EnemyManager {
       this.disposeEnemy(enemy);
     }
     this.enemies.length = 0;
+    // Fire teams hold references to agents that no longer exist. Clearing the
+    // map is what stops a stale focus from surviving into the next wave.
+    this.teams.clear();
+    this.teamTimer = 0;
     for (const p of this.projectiles) {
       p.active = false;
       p.mesh.visible = false;
@@ -1354,12 +1550,28 @@ export class EnemyManager {
       enemy.group.rotation.y = dampAngle(enemy.group.rotation.y, targetYaw, 10, dt);
     }
 
+    // Bounding overwatch. A team advances one member at a time: the agent in
+    // the "up" slot closes, everyone else holds a firing position and covers
+    // it. The hold is not a freeze: a holding agent still strafes and still
+    // shoots, it just does not close. That is the difference between a squad
+    // with a plan and a squad that all walks forward together.
+    //
+    // A holding agent gives up its hold once it is genuinely far from the
+    // fight, so a bounding squad can never leave a member behind.
+    const team = this.teamOf(enemy);
+    const holding = team !== null && team.upId >= 0 && team.upId !== enemy.tacticalId
+      && targetDistance < HOLD_MAX_RANGE;
+
     // A dead human no longer freezes the AI: escorts are still valid victims,
     // so the roster keeps fighting instead of going passive.
     const anyVictim = this.targets.some((t) => t.targetable);
     if (anyVictim) {
       this.updateAgility(enemy, dt);
-      this.moveEnemy(enemy, dt, toTarget, targetDistance, objective);
+      // `objective` is the live victim position when visible, so it is the
+      // right thing to hold range against: a holding agent measures its
+      // standoff from what it is actually shooting at.
+      if (holding) this.holdPosition(enemy, dt, toTarget, objective);
+      else this.moveEnemy(enemy, dt, toTarget, targetDistance, objective);
       // Ballistic lead must use the VICTIM's velocity, not the player's —
       // leading with the wrong vector makes bolts aimed at an escort miss.
       this.updateAttack(enemy, dt, enemy.target?.velocity);
@@ -1434,6 +1646,13 @@ export class EnemyManager {
     if (enemy.state === 'peek' && enemy.visible && enemy.seenFor > 1.5) {
       enemy.state = 'suppress';
       enemy.attackTimer = Math.min(enemy.attackTimer, EnemyManager.windupOf(enemy.kind) + 0.2);
+    }
+    // Suppression: once an agent has held a firing position it keeps shooting
+    // on a shorter cadence even when its line is imperfect. Without this, a
+    // player who breaks line of sight is completely safe, which makes cover a
+    // binary on/off switch instead of a contested position.
+    if (enemy.state === 'suppress' && !enemy.visible && enemy.memory > 0) {
+      enemy.attackTimer = Math.min(enemy.attackTimer, EnemyManager.windupOf(enemy.kind) + 0.25);
     }
     // A searching agent that has never seen anyone still needs a nudge.
     if (!enemy.visible && enemy.memory <= 0 && playerDead) enemy.state = 'search';
@@ -1565,12 +1784,60 @@ export class EnemyManager {
     // The Glacial affix's slow applies to movement, and it must not be able to
     // push a slow below zero.
     const slowK = enemy.slowT > 0 ? AFFIX_SLOW_MUL : 1;
-    enemy.collider.translate(this.tmp4.copy(move).multiplyScalar(speed * slowK * dt));
+    const step = speed * slowK * dt;
+    // Record where we started so we can tell whether the step actually landed.
+    const beforeX = enemy.collider.start.x;
+    const beforeZ = enemy.collider.start.z;
+    enemy.collider.translate(this.tmp4.copy(move).multiplyScalar(step));
     const hit = this.octree.capsuleIntersect(enemy.collider);
     if (hit) {
       enemy.collider.translate(this.tmp4.copy(hit.normal).multiplyScalar(hit.depth));
     }
     this.separateFromCrowd(enemy);
+
+    // Stuck detection. The capsule resolve above can leave an agent pressed
+    // flat against a crate with its move vector pointing straight into it, and
+    // an agent that cannot move but keeps trying reads as broken. When a step
+    // produces almost no displacement, commit to a lateral heading for a short
+    // window so the agent walks around the obstacle instead of grinding.
+    if (step > 1e-5 && enemy.kind !== 'flyer') {
+      const movedX = enemy.collider.start.x - beforeX;
+      const movedZ = enemy.collider.start.z - beforeZ;
+      const progress = Math.hypot(movedX, movedZ);
+      if (progress < step * 0.35) {
+        enemy.stuckT += dt;
+        if (enemy.stuckT > 0.25 && enemy.detourT <= 0) {
+          // Pick the side once and hold it: alternating every frame would make
+          // the agent vibrate in place instead of committing to a way around.
+          const side = Math.sin(enemy.strafeSeed) >= 0 ? 1 : -1;
+          enemy.detourT = 0.6;
+          enemy.detourSide = side;
+          enemy.stuckT = 0;
+        }
+      } else {
+        enemy.stuckT = Math.max(0, enemy.stuckT - dt * 2);
+      }
+    }
+    if (enemy.detourT > 0) {
+      enemy.detourT = Math.max(0, enemy.detourT - dt);
+      // Slide sideways relative to the current heading. This is applied as a
+      // direct translate so it works for every archetype's steering without
+      // each of their branches having to know about obstacles.
+      const len = Math.hypot(move.x, move.z);
+      if (len > 1e-4) {
+        const nx = -move.z / len;
+        const nz = move.x / len;
+        enemy.collider.translate(this.tmp4.set(
+          nx * enemy.detourSide * step * 1.4,
+          0,
+          nz * enemy.detourSide * step * 1.4,
+        ));
+        const slide = this.octree.capsuleIntersect(enemy.collider);
+        if (slide) {
+          enemy.collider.translate(this.tmp4.copy(slide.normal).multiplyScalar(slide.depth));
+        }
+      }
+    }
 
     // Flyers hover: they ignore floor snapping and float at head height so
     // cover stops mattering against them, which is the entire point of the
@@ -1653,6 +1920,45 @@ export class EnemyManager {
       enemy.jukeSide = -enemy.jukeSide;
       enemy.jukeT = AGILITY_JUKE_TIME;
     }
+  }
+
+  /**
+   * Bounding overwatch: hold a firing position instead of closing.
+   *
+   * A holding agent strafes to keep its angle open and drifts to maintain a
+   * standoff, but it never advances. It still shoots, still dodges, still
+   * takes cover: the ONLY thing it gives up is the approach, which is what
+   * lets the agent in the up slot move without being alone.
+   */
+  private holdPosition(
+    enemy: Enemy,
+    dt: number,
+    toTarget: THREE.Vector3,
+    objective: THREE.Vector3,
+  ): void {
+    const move = this.tmp3.set(0, 0, 0);
+    // Hold at roughly the kind's preferred engagement range: close enough to
+    // shoot, far enough to be a separate problem from the agent advancing.
+    const standoff = enemy.kind === 'gunner' || enemy.kind === 'warden'
+      ? enemy.def.attackRange * 0.6
+      : enemy.def.attackRange * 0.5;
+    const distance = this.tmp5.copy(objective).sub(enemy.group.position).setY(0).length();
+    if (distance > standoff * 1.15) {
+      // Too far to cover anyone: creep forward, but at half pace so the up
+      // slot still clearly outpaces the team.
+      move.copy(toTarget).multiplyScalar(0.5);
+    } else if (distance < standoff * 0.75) {
+      // Crowded: back off, which also opens the angle for the advancing agent.
+      move.copy(toTarget).multiplyScalar(-0.5);
+    } else {
+      // In the pocket: strafe to keep a firing lane instead of standing still.
+      const side = this.tmp2.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() > 0.001) {
+        move.copy(side.normalize()).multiplyScalar(Math.sin(this.simTime * 0.8 + enemy.strafeSeed) * 0.7);
+      }
+    }
+    if (move.lengthSq() > 0.001) move.normalize();
+    this.applyEnemyMove(enemy, move, enemy.def.speed * 0.75, dt, objective);
   }
 
   /**
@@ -1811,7 +2117,7 @@ export class EnemyManager {
       const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
       this.effects.ring(at, 0xff9f1c, EXPLODER_RADIUS * 2.4, 0.5);
       this.effects.burst(at, 0xff9f1c, 26, 3);
-      this.audio.blast();
+      this.audio.blastAt(at.x, at.z);
       this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
       victim.receiveDamage(def.damage, enemy.group.position, def.label);
       this.killEnemy(enemy, false);
@@ -1826,7 +2132,7 @@ export class EnemyManager {
       enemy.attackTimer = SUMMON_INTERVAL * randRange(0.9, 1.15);
     } else {
       this.fireProjectile(enemy, victim, victimVel);
-      this.audio.enemyShot(this.panToward(enemy.group.position, victimPos));
+      this.audio.enemyShotAt(enemy.group.position.x, enemy.group.position.z);
       enemy.burst -= 1;
       if (enemy.burst <= 0) {
         enemy.burst = 1 + Math.floor(Math.random() * BURST_MAX);
@@ -1879,7 +2185,19 @@ export class EnemyManager {
     // is indistinguishable from a speed bug, so the body drops and pitches.
     const sliding = enemy.slideT > 0;
     const dodging = enemy.dodgeT > 0 || enemy.jukeT > 0;
-    enemy.body.rotation.x = damp(enemy.body.rotation.x, sliding ? 0.34 : moving ? -0.07 : 0, 12, dt);
+    // Flinch: the body rocks away from the shot, then springs back. It is
+    // additive on top of the base pose so a flinching agent mid-slide still
+    // reads as sliding. The amplitude decays with the timer, which is what
+    // makes it a knock rather than a lean.
+    let flinch = 0;
+    if (enemy.flinchT > 0) {
+      enemy.flinchT = Math.max(0, enemy.flinchT - dt);
+      const k = enemy.flinchT / 0.26;
+      // A damped oscillation: one hard push, one small rebound.
+      flinch = Math.sin(k * Math.PI * 1.6) * enemy.flinchAmp * k;
+    }
+    enemy.body.rotation.x = damp(enemy.body.rotation.x, sliding ? 0.34 : moving ? -0.07 : 0, 12, dt)
+      + flinch;
     enemy.body.position.y = (sliding ? 0.72 : 1.25) * (enemy.def.height / 1.7)
       + (moving && !sliding ? Math.abs(Math.sin(enemy.walkPhase * 2)) * 0.035 : 0);
     enemy.group.rotation.z = sliding
@@ -2137,6 +2455,7 @@ export class EnemyManager {
     const proj = this.projectiles.find((p) => !p.active);
     if (!proj) return;
     proj.sourceLabel = enemy.def.label;
+    proj.nearMissed = false;
     const victimPos = victim.position;
     const from = this.tmp.set(
       enemy.group.position.x,
@@ -2209,9 +2528,35 @@ export class EnemyManager {
           const normal = wallHit.triangle.getNormal(this.tmp3);
           if (normal.dot(seg) > 0) normal.negate();
           this.effects.impact(wallHit.position, normal);
+          // A bolt striking the world is a concrete tick. The octree does not
+          // report WHICH mesh was hit (it returns a bare triangle), so rather
+          // than guess a material from nothing, this plays the honest default
+          // and the player still gets the distance and the pan.
+          this.audio.impactAt('concrete', wallHit.position.x, wallHit.position.z);
           proj.active = false;
           proj.mesh.visible = false;
           continue;
+        }
+      }
+
+      // Near miss. A bolt that passes close to the player but does not hit is
+      // the single most valuable cue an FPS can give: it is how the player
+      // learns they are being shot at from a direction they are not facing.
+      // Gated on the player being the intended victim so escort fire does not
+      // buzz in the player's ear.
+      if (proj.targetId === PLAYER_TARGET_ID) {
+        const px = this.lastPlayerPos.x - proj.mesh.position.x;
+        const pz = this.lastPlayerPos.z - proj.mesh.position.z;
+        const planar = Math.hypot(px, pz);
+        // 1.4 m is just outside body radius: close enough to whip past, far
+        // enough that a bolt which will actually hit does not double up.
+        if (planar > 1.4 && planar < 3.4 && proj.life > 0) {
+          // One whizz per bolt, not per tick: a bolt lives ~20 ticks and would
+          // otherwise fire 20 near-miss sounds.
+          if (!proj.nearMissed) {
+            proj.nearMissed = true;
+            this.audio.nearMissAt(proj.mesh.position.x, proj.mesh.position.z);
+          }
         }
       }
 

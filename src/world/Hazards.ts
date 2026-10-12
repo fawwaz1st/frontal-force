@@ -16,7 +16,6 @@ import * as THREE from 'three';
 import type { Octree } from 'three/addons/math/Octree.js';
 import type { Effects } from '../render/Effects';
 import type { GameAudio } from '../audio/Audio';
-import { clamp } from '../core/math';
 import { ARENA_LIMIT } from './World';
 
 export type HazardKind = 'barrel' | 'tesla' | 'vent';
@@ -574,7 +573,7 @@ export class Hazards {
     sink.damagePlayerInRadius(p, BARREL_SELF_RADIUS, h.damage * BARREL_SELF_FRACTION, 'BARREL BLAST');
     this.effects.ring(p, BARREL_BAND_COLOR, BARREL_RING_GROW, BARREL_RING_LIFE);
     this.effects.burst(p, BARREL_BAND_COLOR, BARREL_BLAST_SPARKS, BARREL_BLAST_SPARK_SPEED);
-    this.audio.barrelBlast(this.panToward(p));
+    this.audio.barrelBlastAt(p.x, p.z);
     this.onTrigger?.(h);
     // Cluster chain: neighbours take fatal damage stamped for the NEXT tick,
     // which is what makes a row of barrels read as one cascade.
@@ -696,18 +695,5 @@ export class Hazards {
   private runtimeOf(hazard: Hazard): HazardRuntime | null {
     for (const h of this.items) if (h === hazard) return h;
     return null;
-  }
-
-  /**
-   * Stereo pan of a world point. `update` carries no listener yaw, so the pan
-   * rides the world X axis: the arena is played along Z (spawn at +Z, arena at
-   * -Z), where world X is screen X for the player's default facing.
-   */
-  private panToward(pos: THREE.Vector3): number {
-    const dx = pos.x - this.listener.x;
-    const dz = pos.z - this.listener.z;
-    const len = Math.hypot(dx, dz);
-    if (len < 1e-4) return 0;
-    return clamp(dx / len, -1, 1);
   }
 }

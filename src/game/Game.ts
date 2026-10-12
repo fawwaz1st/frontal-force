@@ -174,6 +174,15 @@ export class Game {
   private runRecorded = false;
   private isNewRecord = false;
   private stepAcc = 0;
+  /**
+   * Hitstop: seconds of near-frozen simulation left.
+   *
+   * A 40-70 ms freeze on a big hit is the single cheapest way to make damage
+   * feel like it LANDED rather than like a number changed. It is applied as a
+   * time scale on the sim only, so the renderer keeps running and the freeze
+   * reads as a punch rather than as a stutter.
+   */
+  private hitstopT = 0;
   private lastCountdown = -1;
   private combo = 0;
   private comboTimer = 0;
@@ -409,6 +418,9 @@ export class Game {
         }
         this.hud.hitmarkerFlash(kind === 'headshot' ? 'headshot' : 'hit');
         this.audio.hitmarker(kind === 'headshot');
+        // A headshot gets a shorter, punchier freeze than a kill: it is the
+        // "that one counted" beat, and it must not compete with the kill.
+        if (kind === 'headshot') this.hitstopT = Math.max(this.hitstopT, 0.035);
       },
     );
     this.weapons.onFired = (weapon) => this.viewmodel.kick(0.025 + weapon.def.recoil * 0.8);
@@ -1271,6 +1283,13 @@ export class Game {
   // ---------- Frame update ----------
 
   private update = (dt: number): void => {
+    // Hitstop: the sim crawls for a few frames so a heavy hit has weight. The
+    // scale is 0.12 rather than 0 so nothing deadlocks (timers still tick) and
+    // so the freeze ends smoothly instead of snapping back.
+    if (this.hitstopT > 0) {
+      this.hitstopT -= dt;
+      dt *= 0.12;
+    }
     const frame = this.input.read();
     if (this.phase === 'paused' || this.phase === 'draft' || this.phase === 'kiosk') {
       // The draft and kiosk freeze the world but keep rendering: the arena
@@ -1280,6 +1299,14 @@ export class Game {
     }
     this.updateMusic();
     this.audio.musicTick();
+    // The audio listener rides the player's eye and yaw. Every positional
+    // sound resolves its pan and distance against this frame, which is what
+    // keeps a sound on the same side of the player's head as they turn.
+    this.audio.setListener(
+      this.player.position.x,
+      this.player.position.z,
+      this.player.yawAngle,
+    );
     this.flushAchievements();
     if (this.phase === 'dead') return;
     if (this.phase === 'menu') {
@@ -1558,6 +1585,10 @@ export class Game {
 
   /** Adaptive music: quiet on menu, pulse ramps with wave pressure in combat. */
   private updateMusic(): void {
+    // Room tone belongs to the arena: the menu keeps it off so the menu music
+    // has somewhere quiet to sit, and a run fades it in.
+    this.audio.setAmbience(this.phase === 'playing' || this.phase === 'paused'
+      || this.phase === 'draft' || this.phase === 'kiosk');
     if (this.phase === 'menu') {
       this.audio.setMusic(0.25, 68);
     } else if (this.phase === 'dead') {
@@ -1574,6 +1605,12 @@ export class Game {
 
   private handleKill = (enemy: Enemy, byPlayer: boolean): void => {
     this.kills += 1;
+    // A kill freezes the sim for a beat. Elites and the boss freeze longer,
+    // because the size of the pause is the size of the news.
+    if (byPlayer) {
+      this.hitstopT = Math.max(this.hitstopT, enemy.kind === 'wardenPrime' ? 0.16
+        : enemy.elite ? 0.1 : 0.06);
+    }
     const mods = this.run.mods;
     // Attribute the kill to whichever ability produced it, then clear the
     // flags: attribution is one-shot by design, or a single grenade would

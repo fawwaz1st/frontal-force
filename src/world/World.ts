@@ -4,7 +4,18 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { CoverSpotData } from '../ai/Tactics';
 import { MAPS, mapForSeed, type MapTheme } from './Maps';
 
-const ARENA_HALF = 47;
+/**
+ * Half-width of the arena, in metres.
+ *
+ * This was 47 (a 94 x 94 m box) which is far more space than the weapons or
+ * the AI can use: every enemy engages inside 44 m and the longest sight line
+ * that matters is about 40 m, so the outer third of the old arena was dead
+ * ground that only ever produced long walks. 37 keeps every fight inside the
+ * range band the weapons are tuned for and roughly doubles the encounter
+ * density, which is what "less is more" means here: fewer square metres,
+ * more fight per square metre.
+ */
+const ARENA_HALF = 37;
 export const ARENA_LIMIT = ARENA_HALF - 2;
 const REDUCE_MOTION =
   typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -104,7 +115,14 @@ export class World {
   public readonly spawnPoints: THREE.Vector3[] = [];
   public readonly pickupPoints: THREE.Vector3[] = [];
   public readonly coverSpots: CoverSpotData[] = [];
-  public readonly playerSpawn = new THREE.Vector3(0, 0, 40);
+  /**
+   * Cover spots belonging to the FIXED structures (bunker, towers, nests,
+   * tarps). Kept apart from `coverSpots` because `generateCover` clears the
+   * run's spots on every rebuild: the fixed ones are built once in `build()`
+   * and would otherwise be wiped by the first run.
+   */
+  private readonly fixedCoverSpots: CoverSpotData[] = [];
+  public readonly playerSpawn = new THREE.Vector3(0, 0, 30);
   private readonly coverGroup = new THREE.Group();
   private coverMerged: THREE.Mesh[] = [];
   private runMaterials: THREE.Material[] = [];
@@ -254,6 +272,10 @@ export class World {
     this.applyTheme(this.theme, changed);
     const rnd = mulberry32(seed);
     this.generateCover(rnd);
+    // Re-attach the fixed structures' cover spots. The generated layout owns
+    // the first half of the list; the arena's landmarks are appended after it
+    // so a claim can use either.
+    this.coverSpots.push(...this.fixedCoverSpots);
     this.markPoints(rnd);
     this.coverMerged = this.mergeDirectMeshes(this.coverGroup, true);
     this.octree.clear();
@@ -368,64 +390,105 @@ export class World {
     return merged;
   }
 
-private buildRangeDetails(): void {
-    const limestone = new THREE.MeshStandardMaterial({ color: this.theme.wall.body, roughness: 0.96, metalness: 0.01 });
+  /**
+   * The arena's fixed furniture. "Less is more" applied literally: this used
+   * to be three berms, a bunker, two tarps, four sandbag nests, seven painted
+   * stripes, and three work-lamp poles, and only ONE of those (the bunker)
+   * changed a fight. The rest was scenery the AI could not use and the player
+   * could not shoot.
+   *
+   * Every structure here now does at least one job, and each one registers its
+   * own cover spots so the AI can claim it. That is the whole rule: if a thing
+   * cannot be used, it is not built.
+   */
+  private buildRangeDetails(): void {
+    const masonry = new THREE.MeshStandardMaterial({ color: this.theme.wall.body, roughness: 0.96, metalness: 0.01 });
     const concrete = new THREE.MeshStandardMaterial({ color: this.theme.wall.cap, roughness: 0.9, metalness: 0.03 });
     const steel = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.58, metalness: 0.72 });
-    const tarp = new THREE.MeshStandardMaterial({ color: this.theme.cover.crate, roughness: 0.98, metalness: 0.01 });
-    const ochre = new THREE.MeshStandardMaterial({ color: this.theme.cover.glow, roughness: 0.82, metalness: 0.05 });
+    const fabric = new THREE.MeshStandardMaterial({ color: this.theme.cover.crate, roughness: 0.98, metalness: 0.01 });
+    const accent = new THREE.MeshStandardMaterial({ color: this.theme.cover.glow, roughness: 0.82, metalness: 0.05 });
     const dark = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.86, metalness: 0.08 });
-    this.rangeMaterials.push(limestone, concrete, steel, tarp, ochre, dark);
+    this.rangeMaterials.push(masonry, concrete, steel, fabric, accent, dark);
 
-    const bermGeometry = new THREE.ConeGeometry(1, 1, 4);
-    const bermMaterial = limestone;
-    const berms: Array<[number, number, number, number]> = [
-      [-31, 0, -27, 0], [0, 0, -30, Math.PI / 2], [31, 0, -27, 0],
-      [-31, 0, 24, 0], [0, 0, 31, Math.PI / 2], [31, 0, 24, 0],
-    ];
-    for (const [x, y, z, rotation] of berms) {
-      const berm = this.solid(bermGeometry, bermMaterial, x, y + 1.5, z, rotation + Math.PI / 4);
-      berm.scale.set(8, 3, 4.2);
+    // ---------------------------------------------------------------------
+    // 1. CENTRAL BUNKER. A hard two-sided anchor at the far end of the arena,
+    //    which is the one place a player is guaranteed to need cover from.
+    //    Two faces means it works from both sides, so it is a landmark rather
+    //    than a one-way trap.
+    // ---------------------------------------------------------------------
+    this.solid(new THREE.BoxGeometry(9, 3.2, 4.4), concrete, 0, 1.6, -28);
+    this.solid(new THREE.BoxGeometry(10, 0.35, 5.2), dark, 0, 3.3, -28);
+    // A lit sill on the player-facing wall: the read that this is cover.
+    this.solid(new THREE.BoxGeometry(7.2, 0.18, 0.18), accent, 0, 2.5, -25.65);
+    this.markStructureCover(0, -28, 4.5, 2.2);
+
+    // ---------------------------------------------------------------------
+    // 2. WATCHTOWERS. Two, mirrored, at the mid-lines. Tall enough to break a
+    //    long sight line and thin enough to fight around, which is the shape
+    //    that makes a lane interesting.
+    // ---------------------------------------------------------------------
+    for (const [x, z] of [[-21, 0], [21, 0]] as Array<[number, number]>) {
+      this.solid(new THREE.BoxGeometry(2.6, 4.6, 2.6), masonry, x, 2.3, z);
+      this.solid(new THREE.BoxGeometry(3.2, 0.3, 3.2), dark, x, 4.75, z);
+      this.solid(new THREE.BoxGeometry(3.0, 0.16, 0.16), accent, x, 4.1, z - 1.3);
+      this.markStructureCover(x, z, 1.7, 1.7);
     }
 
-    // Control bunker at the far end: a readable silhouette and a real hard cover anchor.
-    this.solid(new THREE.BoxGeometry(9, 3.2, 4.4), concrete, 0, 1.6, -35);
-    this.solid(new THREE.BoxGeometry(10, 0.35, 5.2), dark, 0, 3.3, -35);
-    this.solid(new THREE.BoxGeometry(2.2, 2.2, 0.18), dark, 0, 1.1, -32.72);
-    this.solid(new THREE.BoxGeometry(7.2, 0.18, 0.18), ochre, 0, 2.5, -32.65);
-    this.solid(new THREE.BoxGeometry(0.22, 1.5, 0.22), steel, -3.7, 4, -33.6);
-    this.solid(new THREE.BoxGeometry(0.22, 1.5, 0.22), steel, 3.7, 4, -33.6);
-
-    // Olive tarps on simple steel frames provide overhead cover without another light.
-    const tarpGeometry = new THREE.BoxGeometry(6.5, 0.08, 3.4);
-    for (const [x, z, rotation] of [[-18, -14, 0], [18, 5, Math.PI / 2]] as Array<[number, number, number]>) {
-      this.solid(tarpGeometry, tarp, x, 3.8, z, rotation);
-      const cos = Math.cos(rotation);
-      const sin = Math.sin(rotation);
-      for (const side of [-1, 1]) {
-        this.solid(new THREE.BoxGeometry(0.16, 3.8, 0.16), steel, x + cos * side * 3.1, 1.9, z - sin * side * 3.1, rotation);
-      }
-    }
-
-    // Lane furniture: target frames, low sandbag stacks, and painted range marks.
-    const bagGeometry = new THREE.BoxGeometry(1.2, 0.32, 0.5);
-    for (const [x, z, rotation] of [[-8, -22, 0.1], [8, -22, -0.1], [-24, 8, 0.3], [24, 8, -0.3]] as Array<[number, number, number]>) {
+    // ---------------------------------------------------------------------
+    // 3. SANDBAG NESTS. Four, on the diagonals, low enough to shoot over when
+    //    crouched and low enough to be worth crouching behind. This is the
+    //    structure that makes the crouch key matter outside the slide.
+    // ---------------------------------------------------------------------
+    const bag = new THREE.BoxGeometry(1.3, 0.34, 0.55);
+    for (const [x, z, ry] of [[-14, -14, 0.4], [14, -14, -0.4], [-14, 14, -0.4], [14, 14, 0.4]] as Array<[number, number, number]>) {
       for (let row = 0; row < 2; row++) {
         for (let col = 0; col < 3; col++) {
-          this.solid(bagGeometry, tarp, x + col * 0.3, 0.16 + row * 0.3, z + row * 0.15, rotation);
+          const along = (col - 1) * 1.35;
+          this.solid(bag, fabric, x + Math.cos(ry) * along, 0.17 + row * 0.34, z - Math.sin(ry) * along, ry);
         }
       }
-      this.solid(new THREE.BoxGeometry(1.8, 1.2, 0.12), concrete, x, 1.1, z - 0.9, rotation);
-    }
-    const stripeGeometry = new THREE.BoxGeometry(2.4, 0.03, 0.14);
-    for (let i = -3; i <= 3; i++) {
-      this.solid(stripeGeometry, ochre, i * 7, 0.02, 38.5, 0);
+      this.markStructureCover(x, z, 2.2, 1.0);
     }
 
-    // Three warm work lamps are visual fixtures here; their actual lights live in buildLights.
-    for (const [x, z] of [[-18, -14], [18, 5], [0, 28]] as Array<[number, number]>) {
-      this.solid(new THREE.CylinderGeometry(0.12, 0.16, 4.2, 8), steel, x, 2.1, z);
-      this.solid(new THREE.BoxGeometry(0.65, 0.24, 0.45), ochre, x, 4.25, z);
+    // ---------------------------------------------------------------------
+    // 4. OVERHEAD TARPS. Two, replacing the old decorative pair. They now
+    //    stand where they can block a sight line from the towers, so they are
+    //    the one piece of cover that works from above as well as the side.
+    // ---------------------------------------------------------------------
+    const tarp = new THREE.BoxGeometry(6.5, 0.08, 3.4);
+    for (const [x, z, ry] of [[-15, -9, 0], [15, 6, Math.PI / 2]] as Array<[number, number, number]>) {
+      this.solid(tarp, fabric, x, 3.8, z, ry);
+      const cos = Math.cos(ry);
+      const sin = Math.sin(ry);
+      for (const side of [-1, 1]) {
+        this.solid(new THREE.BoxGeometry(0.16, 3.8, 0.16), steel, x + cos * side * 3.1, 1.9, z - sin * side * 3.1, ry);
+      }
+      this.markStructureCover(x, z, 3.4, 1.8);
+    }
+  }
+
+  /**
+   * Register the four firing positions around a fixed structure. Mirrors the
+   * cover generator's `markCover`, but takes an explicit half-extent because
+   * fixed structures are not all the same size, and it registers on BOTH the
+   * long and the short axis so a corner is a valid fighting position.
+   */
+  private markStructureCover(x: number, z: number, halfX: number, halfZ: number): void {
+    const reach = 1.3;
+    const peek = 2.4;
+    // Two faces per axis: the structure is cover from either side, which is
+    // what stops a fixed landmark from becoming a one-way advantage.
+    for (const [nx, nz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as Array<[number, number]>) {
+      const cx = x + nx * (halfX + reach);
+      const cz = z + nz * (halfZ + reach);
+      // Peek points sit to either side of the stand point, along the face.
+      const tx = nz === 0 ? 0 : 1;
+      const tz = nx === 0 ? 0 : 1;
+      this.fixedCoverSpots.push({
+        center: new THREE.Vector3(cx, 0, cz),
+        left: new THREE.Vector3(cx + tx * peek, 0, cz + tz * peek),
+        right: new THREE.Vector3(cx - tx * peek, 0, cz - tz * peek),
+      });
     }
   }
 
@@ -472,7 +535,7 @@ private buildRangeDetails(): void {
     this.solid(wallGeometry, wallMaterial, x, 2.4, z, rotation);
     this.solid(capGeometry, capMaterial, x, 4.95, z, rotation);
   }
-  for (let t = -40; t <= 40; t += 8) {
+  for (let t = -32; t <= 32; t += 8) {
     this.solid(buttressGeometry, wallMaterial, t, 1.9, -(ARENA_HALF - 0.2));
     this.solid(buttressGeometry, wallMaterial, t, 1.9, ARENA_HALF - 0.2);
     this.solid(buttressGeometry, wallMaterial, -(ARENA_HALF - 0.2), 1.9, t, Math.PI / 2);
@@ -490,7 +553,7 @@ private buildRangeDetails(): void {
   });
   this.skyMaterial = skyMaterial;
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(150, 32, 18),
+    new THREE.SphereGeometry(120, 32, 18),
     skyMaterial,
   );
   sky.renderOrder = -100;
@@ -501,7 +564,7 @@ private buildRangeDetails(): void {
   });
   this.sunDiscMaterial = sunMaterial;
   const sun = new THREE.Mesh(new THREE.CircleGeometry(4.8, 32), sunMaterial);
-  sun.position.set(-72, 25, -104);
+  sun.position.set(-58, 22, -84);
   sun.lookAt(0, 0, 0);
   sun.renderOrder = -99;
   scene.add(sun);
@@ -516,9 +579,9 @@ private buildRangeDetails(): void {
   });
   this.cloudMaterial = cloudMaterial;
   for (const [x, y, z, scaleX, scaleY] of [
-    [-60, 65, -85, 42, 8],
-    [48, 74, -70, 55, 10],
-    [5, 88, 80, 62, 12],
+    [-50, 56, -70, 42, 8],
+    [40, 64, -58, 55, 10],
+    [4, 74, 66, 62, 12],
   ] as Array<[number, number, number, number, number]>) {
     const cloud = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), cloudMaterial);
     cloud.position.set(x, y, z);
@@ -625,10 +688,10 @@ private buildRangeDetails(): void {
     cg.add(ring);
     mark(0, 0, 4.2);
 
-    // Pillar ring — 6 random angles at radius 16–26
+    // Pillar ring — 6 random angles at radius 12–20
     for (let i = 0; i < 6; i++) {
       const a = rnd() * Math.PI * 2;
-      const rad = 16 + rnd() * 10;
+      const rad = 12 + rnd() * 8;
       const x = Math.cos(a) * rad;
       const z = Math.sin(a) * rad;
       add(pillar, crateMat, x, 2.1, z);
@@ -648,7 +711,7 @@ private buildRangeDetails(): void {
       let ok = false;
       for (let tries = 0; tries < 14 && !ok; tries++) {
         const a = rnd() * Math.PI * 2;
-        const rad = 7 + rnd() * 27;
+        const rad = 6 + rnd() * 20;
         x = Math.cos(a) * rad;
         z = Math.sin(a) * rad;
         ok = this.footprints.every((f) => Math.hypot(f.x - x, f.z - z) > f.r + 2.4);
@@ -725,10 +788,10 @@ private buildRangeDetails(): void {
     this.sunLight.position.set(-30, 42, -24);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(1536, 1536);
-    this.sunLight.shadow.camera.left = -54;
-    this.sunLight.shadow.camera.right = 54;
-    this.sunLight.shadow.camera.top = 54;
-    this.sunLight.shadow.camera.bottom = -54;
+    this.sunLight.shadow.camera.left = -44;
+    this.sunLight.shadow.camera.right = 44;
+    this.sunLight.shadow.camera.top = 44;
+    this.sunLight.shadow.camera.bottom = -44;
     this.sunLight.shadow.camera.near = 1;
     this.sunLight.shadow.camera.far = 130;
     this.sunLight.shadow.bias = -0.00035;
@@ -739,8 +802,11 @@ private buildRangeDetails(): void {
     this.sunLight.target.position.set(0, 0, 0);
     scene.add(this.sunLight, this.sunLight.target);
 
-    for (const [x, y, z] of [[-18, 4, -14], [18, 4, 5], [0, 4.5, 28]] as Array<[number, number, number]>) {
-      const light = new THREE.PointLight(this.theme.cover.glow, 22, 24, 2);
+    // Three work lamps, hung on the structures that actually exist. Each one
+    // sits above a fixed landmark, so the light and the thing you fight around
+    // are the same object: a lamp in empty space is decoration.
+    for (const [x, y, z] of [[-21, 5.2, 0], [21, 5.2, 0], [0, 4.4, -26]] as Array<[number, number, number]>) {
+      const light = new THREE.PointLight(this.theme.cover.glow, 26, 26, 2);
       light.position.set(x, y, z);
       this.rangeLamps.push(light);
       scene.add(light);
@@ -751,9 +817,9 @@ private buildRangeDetails(): void {
     const count = 220;
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 90;
+      positions[i * 3] = (Math.random() - 0.5) * 72;
       positions[i * 3 + 1] = Math.random() * 5 + 0.2;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 90;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 72;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -782,7 +848,7 @@ private buildRangeDetails(): void {
     let placed = 0;
     for (let tries = 0; tries < 240 && placed < 14; tries++) {
       const a = rnd() * Math.PI * 2;
-      const rad = 6 + rnd() * 30;
+      const rad = 5 + rnd() * 24;
       const x = Math.cos(a) * rad;
       const z = Math.sin(a) * rad;
       if (this.footprints.some((f) => Math.hypot(f.x - x, f.z - z) < f.r + 1.3)) continue;
@@ -792,7 +858,7 @@ private buildRangeDetails(): void {
     }
     // Fallback ring keeps the run playable even in a crowded layout
     const fallback: Array<[number, number]> = [
-      [12, 0], [-12, 0], [0, 12], [0, -12], [24, 0], [-24, 0], [0, 24], [0, -24],
+      [10, 0], [-10, 0], [0, 10], [0, -10], [19, 0], [-19, 0], [0, 19], [0, -19],
     ];
     for (const [x, z] of fallback) {
       if (placed >= 10) break;

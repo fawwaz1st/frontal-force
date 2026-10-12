@@ -31,6 +31,29 @@ Ten weapons exist; you carry four. The loadout screen is where the arsenal lives
 
 ![The loadout screen](docs/screenshots/loadout.png)
 
+## The arena
+
+The play space is 74 x 74 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so the old 94 m box was mostly dead ground that only ever produced long walks.
+
+Four fixed structures, and every one of them does a job:
+
+| Structure | What it does |
+| --- | --- |
+| **Central bunker** | A hard two-sided anchor at the far end. Both faces register cover, so it is a landmark rather than a one-way trap. |
+| **Watchtowers** (2, mirrored) | Tall enough to break a long sight line, thin enough to fight around. Each carries a work lamp. |
+| **Sandbag nests** (4, on the diagonals) | Low enough to shoot over crouched and worth crouching behind. This is what makes the crouch key matter outside the slide. |
+| **Overhead tarps** (2) | The only cover that works from above as well as the side. |
+
+Everything removed was scenery that changed no fight: six berms, four target frames, seven painted stripes, and three lamp poles standing in empty space. The rule is **if a thing cannot be used, it is not built**, and every structure registers its own cover spots so the AI can claim it. Those spots live in a separate list, because the run's generated layout clears its own spots on every rebuild.
+
+Cover density varies by theme: RUST WORKS is crowded, FROST LINE is sparse with long sight lines.
+
+## Game feel
+
+- **Hitstop.** A kill freezes the simulation for 60-160 ms (bigger kill, longer freeze), and a headshot for 35 ms. It is a time scale on the sim only, at 0.12 rather than 0, so the renderer keeps running and nothing deadlocks: the freeze reads as a punch, not a stutter.
+- **Flinch.** A hit rocks the body away from the shooter and springs back, scaled by the fraction of the target's max health the hit took. The white flash says "I hit it"; the flinch says "it felt that".
+- **Death in three beats.** Impact (squash), topple (ease-out fall with a little spin), settle (lies still while the glow drains). The squash is applied to the body, not the group, or it would scale the topple rotation with it.
+
 ## Run locally
 
 ```bash
@@ -39,7 +62,7 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 99 logic regression tests, no browser needed
+npm run check:self  # 141 logic regression tests, no browser needed
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -84,6 +107,20 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 - **World markers.** Every enemy and ally carries a marker: a dot filled to its health, coloured by enemy kind (the same hues the radar uses), with a glyph for the ones that change how you fight (`X` sniper, `+` healer, `S` summoner, `!` exploder, `E` elite, `B` boss, `A` ally). Off-screen markers clamp to the edge and hollow out.
 - **Named damage.** Every source that can hurt you names itself: the arc shows *where* the hit came from, the label under the crosshair shows *what* did it (`▲ EXPLODER`, `▲ TESLA COIL`, `▲ BARREL BLAST`, `▲ AFFIX BURN`, `▲ YOUR OWN BLAST`, or the shooter's kind for a bolt).
 - **Radar** for the wider picture, at 20 Hz so it costs a third of a 60 Hz redraw.
+
+## Sound
+
+Everything is synthesized with WebAudio, and the kit is built from five primitives layered into every sound: a transient click, a filtered noise body, a pitched thump, a tonal tail, and a room send. A gunshot that is only one of those reads as a blip; a gunshot built from all five reads as a gun.
+
+- **A real room.** A procedurally generated impulse response (decaying noise with an early-reflection cluster) runs on a convolver, and every voice decides how much of itself to send there. The room send is what makes firing feel like it happens in the arena rather than in a vacuum.
+- **Distance.** A shot 40 m away is quieter AND loses its room tail, because the tail is the distance cue: a far shot that keeps its reverb sounds close but quiet, which is worse than either. A shared low-pass on the master stands in for air absorption.
+- **A listener frame.** Pan is resolved against the player's position and yaw, so a sound stays on the same side of your head as you turn. Every call site that used to compute its own pan got it wrong the same way (it panned along the world X axis, which is only your right if you happen to be facing -Z).
+- **Near misses.** A bolt that passes within 1.4-3.4 m of you whizzes past, panned to its side. This is how you learn you are being shot at from a direction you are not facing.
+- **Material impacts.** A round striking the world ticks off concrete, rings off metal, thuds into fabric, or splinters glass.
+- **A room tone.** A quiet filtered noise bed plus a detuned sub, faded in with the run. Without it, silence between waves reads as "the game stopped".
+- **A saturated master.** A soft-clip WaveShaper sits between the bus and the compressor, so 24 enemies firing at once compress into each other instead of clipping into a mess.
+- **No clicks.** Every voice has a 2-8 ms attack. A waveform that jumps to full amplitude instantly produces a broadband transient, which the ear hears as a tick rather than as a hit.
+- **No frozen samples.** Every noise voice reads from a random offset in the buffer, or repeated shots phase-lock and sound like one sample played forever.
 
 ## The run loop
 
@@ -146,10 +183,13 @@ From wave 4, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloadi
 ## AI
 
 - **Threat table.** The player and both escorts implement `CombatTarget` (`src/combat/Combatant.ts`). Enemies score every visible candidate with a weighted utility function (proximity 0.30, role 0.20, aggression/grudge 0.20, fragility 0.15, aimPressure 0.15) and commit to the best one.
+- **Squad tactics.** Three cheap mechanisms turn a roster of individuals into a squad. **Fire teams** of three share ONE victim, so a group concentrates instead of spreading; focus fire is a 1.6x score bonus rather than a hard override, because forcing the team target made squads walk past targets in front of them. **Bounding overwatch** advances one member at a time: the others hold a firing position, and holding gives up only the approach (a holding agent still shoots, strafes and dodges). **Suppression** keeps an agent firing on a shorter cadence once it has held a position, so breaking line of sight is a contested move rather than an off switch. Melee and support archetypes are excluded from holding: a rusher that stops to cover is just a slow rusher.
+- **Agility.** Three short committed bursts punctuate the walk cycle instead of replacing it: a **dodge** (0.32 s, x2.35 speed) fired reactively the moment an agent takes fire, aimed to whichever side of the shot line it already occupies so it never runs into the stream; a **juke** (0.26 s, x2.1) that breaks a straight approach on a staggered 1.4-3.6 s cadence; and a **slide** (0.55 s, x2.9) used only by rushers and exploders, only inside a 9 m commit window.
+- **Obstacle handling.** An agent whose step produces almost no displacement commits to a lateral detour for 0.6 s, so it walks around a crate instead of grinding against it. The side is picked once, because alternating every frame vibrates in place instead of committing.
 - **Stickiness.** 0.25 s staggered re-score, 1.25x switch hysteresis, 1.5 s minimum commitment, two perception radii to stop boundary flicker, 6 s alerted memory, and a squad alert that propagates on damage in O(n).
-- **Agility.** Three short committed bursts punctuate the walk cycle instead of replacing it: a **dodge** (0.32 s, x2.35 speed) fired reactively the moment an agent takes fire, aimed to whichever side of the shot line it already occupies so it never runs into the stream; a **juke** (0.26 s, x2.1) that breaks a straight approach on a staggered 1.4-3.6 s cadence; and a **slide** (0.55 s, x2.9) used only by rushers and exploders, only inside a 9 m commit window. A burst owns movement outright for its duration and the body drops and pitches through it, so a dodge reads as a dodge and not as a slightly faster strafe. Staggered agents and flyers never burst.
 - **Projectile ownership.** A bolt carries the id of the friendly it was aimed at, so a stray round never hits a bystander.
-- **Escorts are autonomous.** Anchor + leash + role slot: the owner position is quantized to a 3 m grid and used only as an idle anchor. Soft leash 18 m, hard leash 26 m, squad role auction every 2 s (flanker <=12 m, overwatch 10-20 m, opposite orbit signs), and self-preservation that retreats under 30 % HP and re-engages at 55 %.
+- **Escorts are INDEPENDENT.** There is no leash. Each bot owns a half of the arena, split on whichever axis the enemy cloud is more spread along, and its objective is the enemy cluster inside its own sector. An empty sector falls back to reinforcing the other one, then to a patrol of its own centroid. A respawn walks in from its own sector edge, never from the player. The bot's `update` signature still accepts the player position and explicitly discards it (`void ownerPos`), so any future edit that reaches for the player has to change the signature to do it.
+- **Obstacle handling (escorts).** `moveToward` probes the direct line and two 55-degree detours, so a bot that meets a crate walks around it. The old version stopped dead on any hit within 1.4 m, which is what "the bot is stuck on a box" looked like from the player's side.
 
 ## Arena hazards
 
@@ -220,7 +260,7 @@ src/
   input/    Input.ts (keyboard/mouse/pointer-lock + touch fallback) · TouchControls.ts (pointerId map, stick, buttons)
   player/   Player.ts (capsule movement, look, recoil, crouch/slide, dash, shield)
   combat/   weapons.ts (10 defs + 4-slot loadout rules) · WeaponController.ts (fire/reload/switch/charge/ricochet/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
-  ai/       Enemies.ts (AI, affix hooks, projectiles, boss phases, radar feed) · Affixes.ts (14 elite modifiers) · Ally.ts (escort bots) · Tactics.ts (cover claims)
+  ai/       Enemies.ts (AI, fire teams, agility, affix hooks, projectiles, boss phases, radar feed) · Affixes.ts (14 elite modifiers) · Ally.ts (independent escorts) · Tactics.ts (cover claims)
   game/     Game.ts (orchestrator) · Run.ts (seeded run state + stats) · Waves.ts (modes, mutations, boss cadence) · Challenges.ts (6 difficulty wagers) · Upgrades.ts (40 cards) · Achievements.ts · AchievementCounters.ts
   ui/       Hud.ts (HUD, menu, death card, ledger) · Draft.ts (card picker) · Kiosk.ts (salvage shop) · icons.ts (inline SVG set)
   world/    World.ts (arena, octree, cover) · Maps.ts (4 arena themes) · Hazards.ts (barrels/tesla/vents) · Pickups.ts
@@ -235,10 +275,12 @@ Data flows one way: `Input -> Game -> simulation modules -> HudState -> Hud (DOM
 - **Fixed timestep simulation, interpolated rendering.** The sim runs at a fixed rate with a spiral guard; the camera interpolates between ticks, so aim stays smooth on high-refresh displays and shots resolve against the tick that fired them.
 - **Everything random is seeded.** The arena layout, the arena THEME, spawn order, card offers, and affix rolls all come from the run seed, which is why a seed code reproduces a run.
 - **A theme may change looks, never the rules.** `applyTheme` only writes material and light properties. Geometry, the collision octree, and cover claims are identical across themes, so a new map can never invalidate what a player learned about cover.
+- **A theme must be legible.** Two tests bracket every theme: a luminance floor, because a night that hides the enemies is a bug wearing atmosphere as a disguise, and an energy ceiling, because a near-white floor under a bright key light washes the frame out and a silhouette stops reading against it.
+- **If a thing cannot be used, it is not built.** Every fixed structure registers cover the AI can claim. A structure the AI cannot use is scenery, and scenery is what "less is more" deletes.
+- **An independent agent never reads the player.** The escort's `update` accepts the player position and discards it, so independence is enforced by the signature rather than by a comment.
 - **Every health point is attributable.** Anything that can damage the player passes a source label, and the HUD prints it. "I lost health and I do not know why" is a bug, not a difficulty.
-- **A dark map still has to be playable.** A test asserts a luminance floor for every theme, because a night that hides the enemies is a bug wearing atmosphere as a disguise.
 - **Zero external assets.** Geometry, materials, icons, and audio are generated in code.
-- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, slide gating, stand-up probe ordering, theme index range, theme luminance floor, loadout sanitising, charge gating, ricochet bounds) and runs in CI before every deploy.
+- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, slide gating, stand-up probe ordering, theme index range, theme luminance floor and ceiling, loadout sanitising, charge gating, ricochet bounds, audio ADSR stages, audio layering, listener-frame panning, squad focus fire, bounding holds, ally independence, hitstop scale) and runs in CI before every deploy.
 
 ## Performance
 

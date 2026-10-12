@@ -21,19 +21,19 @@ const SPAWN_OFFSETS: Array<[number, number]> = [
   [2.4, 1.8],
 ];
 
-/* ---------- Autonomy tuning: anchor + leash + role slot ---------- */
+/* ---------- Autonomy tuning: no leash, only objectives ---------- */
 
-/** Idle slot offset from the anchor — a rotated seat, not the anchor itself. */
-const SLOT_SIDE = 3;
-const SLOT_BACK = 2;
-/** Re-quantize the anchor only after the owner moves this far (kills jitter). */
-const ANCHOR_REFRESH_DISTANCE = 3;
-/** Soft leash: past this the bot heads home at full speed. */
-const LEASH_SOFT = 18;
-/** Hard leash: past this the bot breaks off entirely and sprints back. */
-const LEASH_HARD = 26;
+/**
+ * How far a bot will range from the arena centre. The bots are independent,
+ * so the only thing bounding them is the arena itself, not the player.
+ */
+const ROAM_LIMIT = BOUNDS - 2;
+/** Seconds between objective re-evaluations. Slow on purpose: a bot that
+ *  changes its mind every frame looks confused, not decisive. */
+const OBJECTIVE_INTERVAL = 1.6;
 /** Combat standoff per role — flankers close, overwatch holds a lane. */
 const FLANK_STANDOFF = 8;
+/** A flanker commits inside this range; overwatch holds a band instead. */
 const FLANK_MAX_RANGE = 12;
 const OVERWATCH_STANDOFF = 15;
 const OVERWATCH_MIN_RANGE = 10;
@@ -49,18 +49,31 @@ const REENGAGE_HP = 0.55;
 const RETREAT_MAX_TIME = 8;
 /** Nearest-enemy distance that justifies breaking contact. */
 const RETREAT_TRIGGER_RANGE = 20;
+/** A downed bot walks back in from the nearest arena edge, not from the
+ *  player, so a respawn is not a teleport to the human's shoulder. */
+const RESPAWN_INSET = 6;
+/** Sector split cadence, in seconds. Slow on purpose: the shape of a fight
+ *  does not flip fast, and a sector that changes every tick makes the pair
+ *  oscillate between the same two clusters. */
+const SECTOR_TICK = 2.5;
 
 type BotRole = 'flanker' | 'overwatch';
 
 /**
- * Humanoid escort bot — fully autonomous. It owns its own objective anchor,
- * its own victim selection, its own engagement range and its own retreat
- * decision. The human is an anchor it prefers, not a leash it obeys.
+ * Humanoid escort bot — INDEPENDENT. It owns its objective, its sector, its
+ * victim and its retreat decision. The player is not an anchor and there is no
+ * leash: a bot decides where the fight is and goes there.
  *
- * Design (research-backed): anchor + leash + role slot. The anchor is the
- * owner position quantized to a grid so a walking human does not drag the bots
- * around every frame; the leash has soft and hard radii; and the two bots
- * auction flanker/overwatch so they never stack on one firing line.
+ * Design: sector ownership + role auction.
+ *
+ *   SECTOR   Each bot is assigned half of the arena (split on the axis
+ *            perpendicular to the biggest enemy cluster), and it is
+ *            responsible for clearing its half. This is what makes two bots
+ *            cover ground instead of trailing a human.
+ *   ROLES    The pair auctions flanker/overwatch every 2 s so they never
+ *            stack on one firing line.
+ *   RETREAT  Self-preservation with a hard ceiling, because a bot that never
+ *            disengages is a bot the player has to babysit.
  *
  * Implements `CombatTarget`, so enemy AI scores it exactly like the player.
  */
@@ -83,9 +96,14 @@ class Bot implements Interceptor, CombatTarget {
   private role: BotRole = 'flanker';
   private retreating = false;
   private retreatT = 0;
-  private leashBroken = false;
-  private readonly anchor = new THREE.Vector2();
-  private hasAnchor = false;
+  /** Own objective: where this bot has decided the fight is. */
+  private readonly objective = new THREE.Vector2();
+  private objectiveTimer = 0;
+  private hasObjective = false;
+  /** Which half of the arena this bot owns. Set by the squad. */
+  private sectorSign = 1;
+  /** Sector axis: true means the split is along Z, false along X. */
+  private sectorAlongZ = false;
   private readonly lastPos = new THREE.Vector3();
   private hasLastPos = false;
   /** Current victim — re-scored on a timer, never per frame. */
@@ -266,6 +284,20 @@ class Bot implements Interceptor, CombatTarget {
     this.audio.slam();
   }
 
+  /**
+   * Bring the bot back in from its own sector edge.
+   *
+   * A respawn must not be a teleport to the player's shoulder: that would make
+   * the bot dependent again the moment it dies. It walks back in from the edge
+   * of the half it owns, which keeps it an independent unit for its whole life.
+   */
+  private redeploy(): void {
+    const edge = ROAM_LIMIT - RESPAWN_INSET;
+    const along = randRange(-edge * 0.6, edge * 0.6);
+    if (this.sectorAlongZ) this.deploy(new THREE.Vector3(along, 0, this.sectorSign * edge), this.idx);
+    else this.deploy(new THREE.Vector3(this.sectorSign * edge, 0, along), this.idx);
+  }
+
   public deploy(at: THREE.Vector3, idx: number): void {
     this.idx = idx;
     this.hp = MAX_HP;
@@ -282,8 +314,8 @@ class Bot implements Interceptor, CombatTarget {
     this.victimTimer = 0;
     this.retreating = false;
     this.retreatT = 0;
-    this.leashBroken = false;
-    this.hasAnchor = false;
+    this.hasObjective = false;
+    this.objectiveTimer = 0;
     this.hasLastPos = false;
     this.velocity.set(0, 0, 0);
     this.role = idx === 0 ? 'flanker' : 'overwatch';
@@ -291,9 +323,9 @@ class Bot implements Interceptor, CombatTarget {
     this.rifle.rotation.x = 0;
     const off = SPAWN_OFFSETS[idx % SPAWN_OFFSETS.length] ?? [-2.4, 1.8];
     this.group.position.set(
-      clamp(at.x + off[0] + randRange(-0.5, 0.5), -BOUNDS, BOUNDS),
+      clamp(at.x + off[0] + randRange(-0.5, 0.5), -ROAM_LIMIT, ROAM_LIMIT),
       0,
-      clamp(at.z + off[1] + randRange(-0.5, 0.5), -BOUNDS, BOUNDS),
+      clamp(at.z + off[1] + randRange(-0.5, 0.5), -ROAM_LIMIT, ROAM_LIMIT),
     );
     this.group.rotation.set(0, 0, 0);
     this.effects.ring(this.group.position.clone().setY(0.1), 0xff9f1c, 3, 0.5);
@@ -311,8 +343,11 @@ class Bot implements Interceptor, CombatTarget {
   }
 
   /**
-   * `ownerPos` is a PREFERENCE, not a leash: the bot anchors to it while idle
-   * but fights toward its own contact point once the squad is engaged.
+   * `ownerPos` is accepted only so the wrapper can pass it uniformly; the bot
+   * itself never reads it. The parameter is kept in the signature (and unused)
+   * on purpose: it documents that this bot is independent, and a lint-suppressed
+   * unused parameter is a stronger guarantee than a comment, because any future
+   * edit that reaches for the player has to change this signature to do it.
    */
   public update(
     dt: number,
@@ -321,9 +356,10 @@ class Bot implements Interceptor, CombatTarget {
     /** Sibling bot — used so the pair never doubles up on one victim. */
     sibling: Bot | null,
   ): void {
+    void ownerPos;
     if (!this.active) {
       this.respawnT -= dt;
-      if (this.respawnT <= 0) this.deploy(ownerPos, this.idx);
+      if (this.respawnT <= 0) this.redeploy();
       return;
     }
 
@@ -338,26 +374,89 @@ class Bot implements Interceptor, CombatTarget {
     this.lastPos.copy(this.group.position);
     this.hasLastPos = true;
 
-    this.updateAnchor(ownerPos);
+    this.updateObjective(dt, enemies);
     this.updateVictim(dt, enemies, sibling);
     this.updateRetreat(dt, enemies);
-    const intent = this.chooseMoveTarget(ownerPos, enemies);
+    const intent = this.chooseMoveTarget(enemies);
     const moved = this.moveToward(intent.x, intent.y, dt);
     this.updateGait(moved, dt);
-    this.faceTarget(ownerPos, dt);
+    this.faceTarget(dt);
     this.updateFire(dt, enemies);
   }
 
   /**
-   * Anchor = owner position quantized to a grid, so a walking human does not
-   * drag the bots around every frame. Refreshed only on real movement.
+   * Pick where this bot wants to be.
+   *
+   * The objective is the enemy cluster inside its own sector, NOT the player.
+   * A bot with no enemies in its sector falls back to the arena centre, which
+   * makes it a roamer that sweeps for contact instead of a pet that orbits a
+   * human. `ownerPos` is deliberately not a parameter: independence is
+   * enforced by the signature, so no later edit can quietly reintroduce a
+   * leash by reaching for the player's position.
    */
-  private updateAnchor(ownerPos: THREE.Vector3): void {
-    if (!this.hasAnchor
-      || Math.hypot(this.anchor.x - ownerPos.x, this.anchor.y - ownerPos.z) > ANCHOR_REFRESH_DISTANCE) {
-      this.anchor.set(ownerPos.x, ownerPos.z);
-      this.hasAnchor = true;
+  private updateObjective(dt: number, enemies: EnemyManager): void {
+    this.objectiveTimer -= dt;
+    if (this.hasObjective && this.objectiveTimer > 0) return;
+    this.objectiveTimer = OBJECTIVE_INTERVAL;
+
+    // Average the live enemies inside this bot's sector. Averaging rather than
+    // taking the nearest is what makes a bot walk toward the FIGHT and not
+    // toward whichever straggler happens to be closest.
+    let sumX = 0;
+    let sumZ = 0;
+    let count = 0;
+    // The global cluster is the fallback: a bot whose own half is empty should
+    // go help, not stand on a patrol point. Standing still while a firefight
+    // happens one sector over is the failure mode this avoids.
+    let allX = 0;
+    let allZ = 0;
+    let allCount = 0;
+    enemies.forEachLive((enemy) => {
+      const p = enemy.group.position;
+      allX += p.x;
+      allZ += p.z;
+      allCount += 1;
+      // The sector test: sign of the coordinate on the split axis.
+      const coord = this.sectorAlongZ ? p.z : p.x;
+      if (Math.sign(coord) !== this.sectorSign) return;
+      sumX += p.x;
+      sumZ += p.z;
+      count += 1;
+    });
+
+    if (count > 0) {
+      this.objective.set(sumX / count, sumZ / count);
+      this.hasObjective = true;
+      return;
     }
+    if (allCount > 0) {
+      // Own half is clear: reinforce. A small per-bot offset keeps the pair
+      // from stacking on the exact same point when both sectors are empty.
+      const spread = this.sectorSign * 4;
+      this.objective.set(allX / allCount + spread, allZ / allCount - spread);
+      this.hasObjective = true;
+      return;
+    }
+
+    // Nothing alive anywhere: sweep the sector's own centroid so the bot is
+    // still covering ground rather than standing still. The sector centroid is
+    // a fixed point of the arena, which makes the patrol deterministic.
+    const span = ROAM_LIMIT * 0.5;
+    if (this.sectorAlongZ) this.objective.set(0, this.sectorSign * span);
+    else this.objective.set(this.sectorSign * span, 0);
+    this.hasObjective = true;
+  }
+
+  /**
+   * The squad tells each bot which half of the arena it owns. Called by
+   * `Ally.update` after reading the enemy distribution, so the two bots always
+   * split on the axis where the fight actually is.
+   */
+  public assignSector(sign: number, alongZ: boolean): void {
+    this.sectorSign = sign >= 0 ? 1 : -1;
+    this.sectorAlongZ = alongZ;
+    // Force a re-pick: the old objective belonged to the old sector.
+    this.objectiveTimer = 0;
   }
 
   /**
@@ -407,21 +506,8 @@ class Bot implements Interceptor, CombatTarget {
     }
   }
 
-  private chooseMoveTarget(ownerPos: THREE.Vector3, enemies: EnemyManager): THREE.Vector2 {
+  private chooseMoveTarget(enemies: EnemyManager): THREE.Vector2 {
     const position = this.group.position;
-    const ownerDistance = Math.hypot(ownerPos.x - position.x, ownerPos.z - position.z);
-    this.leashBroken = ownerDistance > LEASH_HARD;
-
-    // Hard leash: too far from the squad — break off and sprint home.
-    if (this.leashBroken) {
-      const dx = ownerPos.x - position.x;
-      const dz = ownerPos.z - position.z;
-      const length = Math.hypot(dx, dz) || 1;
-      return this.moveTarget.set(
-        clamp(ownerPos.x - (dx / length) * SLOT_BACK, -BOUNDS, BOUNDS),
-        clamp(ownerPos.z - (dz / length) * SLOT_BACK, -BOUNDS, BOUNDS),
-      );
-    }
 
     if (this.retreating) {
       // Break contact: run away from the nearest enemy, staying inside bounds.
@@ -431,8 +517,8 @@ class Bot implements Interceptor, CombatTarget {
         const dz = position.z - threat.group.position.z;
         const length = Math.hypot(dx, dz) || 1;
         return this.moveTarget.set(
-          clamp(position.x + (dx / length) * 12, -BOUNDS, BOUNDS),
-          clamp(position.z + (dz / length) * 12, -BOUNDS, BOUNDS),
+          clamp(position.x + (dx / length) * 12, -ROAM_LIMIT, ROAM_LIMIT),
+          clamp(position.z + (dz / length) * 12, -ROAM_LIMIT, ROAM_LIMIT),
         );
       }
     }
@@ -450,34 +536,68 @@ class Bot implements Interceptor, CombatTarget {
         * (this.role === 'flanker' ? 1.6 : 0.8);
       // Radial standoff plus a tangential offset: flankers orbit, overwatch holds.
       return this.moveTarget.set(
-        clamp(enemy.x + (dx / length) * standoff - (dz / length) * strafe, -BOUNDS, BOUNDS),
-        clamp(enemy.z + (dz / length) * standoff + (dx / length) * strafe, -BOUNDS, BOUNDS),
+        clamp(enemy.x + (dx / length) * standoff - (dz / length) * strafe, -ROAM_LIMIT, ROAM_LIMIT),
+        clamp(enemy.z + (dz / length) * standoff + (dx / length) * strafe, -ROAM_LIMIT, ROAM_LIMIT),
       );
     }
 
-    // Idle: hold a rotated slot beside the anchor rather than standing on it.
-    const angle = this.idx * Math.PI * 0.5 + 0.6;
-    const slotX = this.anchor.x + Math.cos(angle) * SLOT_SIDE;
-    const slotZ = this.anchor.y + Math.sin(angle) * SLOT_SIDE + SLOT_BACK;
-    if (ownerDistance > LEASH_SOFT
-      || Math.hypot(slotX - position.x, slotZ - position.z) > 2.5) {
-      return this.moveTarget.set(clamp(slotX, -BOUNDS, BOUNDS), clamp(slotZ, -BOUNDS, BOUNDS));
-    }
-    return this.moveTarget.set(position.x, position.z);
+    // No victim: walk to the objective. This is the whole independence story:
+    // the bot goes where the FIGHT is, not where the player is.
+    const objective = this.hasObjective
+      ? this.objective
+      : { x: this.sectorSign * ROAM_LIMIT * 0.5, y: 0 };
+    return this.moveTarget.set(
+      clamp(objective.x, -ROAM_LIMIT, ROAM_LIMIT),
+      clamp(objective.y, -ROAM_LIMIT, ROAM_LIMIT),
+    );
   }
 
+  /**
+   * Walk toward a point, sliding along obstacles instead of stopping at them.
+   *
+   * The old version returned `false` the moment a ray hit anything within
+   * 1.4 m, which meant a bot that met a crate simply stood there forever: it
+   * had no way to know that stepping left would clear it. That is the bug the
+   * player sees as "the bot is stuck on a box".
+   *
+   * The fix is the standard two-probe slide: cast at the target, and if that is
+   * blocked, cast at the target rotated 55 degrees either way and take the
+   * first one that is clear. The bot walks around the obstacle and re-aims at
+   * the objective on the next tick, so no path memory is needed.
+   */
   private moveToward(x: number, z: number, dt: number): boolean {
     const position = this.group.position;
     const distance = Math.hypot(x - position.x, z - position.z);
     if (distance <= 0.15) return false;
-    const direction = this.tmpA.set(x - position.x, 0, z - position.z).normalize();
-    this.tmpRay.set(this.tmpB.set(position.x, position.y + 1, position.z), direction);
-    const hit = this.octree.rayIntersect(this.tmpRay);
-    if (hit && hit.distance <= 1.4) return false;
-    const sprinting = this.retreating || this.leashBroken || distance > 8;
+    const base = Math.atan2(z - position.z, x - position.x);
+
+    // Probe the direct line first, then the two detours. 55 degrees is wide
+    // enough to clear a 1.4 m crate from 1.4 m away and narrow enough that the
+    // bot still makes progress toward its objective rather than circling.
+    const DETOUR = (55 * Math.PI) / 180;
+    const CLEAR = 2.2;
+    let heading = base;
+    let found = false;
+    for (const offset of [0, DETOUR, -DETOUR]) {
+      const a = base + offset;
+      const dx = Math.cos(a);
+      const dz = Math.sin(a);
+      this.tmpRay.set(this.tmpB.set(position.x, position.y + 1, position.z), this.tmpC.set(dx, 0, dz));
+      const hit = this.octree.rayIntersect(this.tmpRay);
+      if (!hit || hit.distance > CLEAR) {
+        heading = a;
+        found = true;
+        break;
+      }
+    }
+    // Boxed in on all three probes: hold position rather than vibrate against
+    // the wall. The next tick re-probes, so this clears itself.
+    if (!found) return false;
+
+    const sprinting = this.retreating || distance > 8;
     const speed = sprinting ? SPEED * SPRINT_MULT : SPEED;
-    position.x += direction.x * speed * dt;
-    position.z += direction.z * speed * dt;
+    position.x += Math.cos(heading) * speed * dt;
+    position.z += Math.sin(heading) * speed * dt;
     return true;
   }
 
@@ -496,22 +616,24 @@ class Bot implements Interceptor, CombatTarget {
   }
 
   /**
-   * Face the victim when engaged, otherwise face the anchor. The owner's
-   * position is only a fallback for a bot with nothing else to look at.
+   * Face the victim when engaged, otherwise face the objective this bot chose
+   * for itself. There is no player fallback: a bot with nothing to shoot looks
+   * where it is GOING, which is what makes a patrolling escort read as a unit
+   * with its own agenda.
    */
-  private faceTarget(ownerPos: THREE.Vector3, dt: number): void {
+  private faceTarget(dt: number): void {
     const position = this.group.position;
     let faceX: number;
     let faceZ: number;
     if (this.victim) {
       faceX = this.victim.group.position.x;
       faceZ = this.victim.group.position.z;
-    } else if (this.hasAnchor) {
-      faceX = this.anchor.x;
-      faceZ = this.anchor.y;
+    } else if (this.hasObjective) {
+      faceX = this.objective.x;
+      faceZ = this.objective.y;
     } else {
-      faceX = ownerPos.x;
-      faceZ = ownerPos.z;
+      faceX = this.sectorSign * ROAM_LIMIT;
+      faceZ = 0;
     }
     const dx = faceX - position.x;
     const dz = faceZ - position.z;
@@ -633,6 +755,8 @@ export class Ally {
   /** Set by Game: world point → stereo pan, using the live listener frame. */
   public panProvider: ((p: THREE.Vector3) => number) | null = null;
   private roleTimer = ROLE_AUCTION_INTERVAL;
+  /** Sector split cadence. Slow: the shape of a fight does not flip fast. */
+  private sectorTimer = SECTOR_TICK;
 
   public get active(): boolean {
     return this.bots.some((b) => b.active);
@@ -665,6 +789,7 @@ export class Ally {
     damageScale = 1,
   ): void {
     this.auctionRoles(dt);
+    this.assignSectors(dt, enemies);
     const [first, second] = this.bots;
     for (let i = 0; i < this.bots.length; i++) {
       const bot = this.bots[i];
@@ -679,6 +804,41 @@ export class Ally {
       && first.roleLabel === second.roleLabel && first.roleLabel !== 'RETREAT') {
       second.assignRole(first.roleLabel === 'FLANKER' ? 'overwatch' : 'flanker');
     }
+  }
+
+  /**
+   * Split the arena between the bots.
+   *
+   * The split axis is whichever of X or Z the enemy cloud is more spread along,
+   * so the pair divides the fight where it actually is instead of dividing the
+   * map arbitrarily. Each bot owns a sign on that axis. This is the mechanism
+   * that makes two escorts cover ground: with no leash and a shared objective,
+   * both would simply walk to the same cluster.
+   */
+  private assignSectors(dt: number, enemies: EnemyManager): void {
+    this.sectorTimer -= dt;
+    if (this.sectorTimer > 0) return;
+    this.sectorTimer = SECTOR_TICK;
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    let count = 0;
+    enemies.forEachLive((enemy) => {
+      const p = enemy.group.position;
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+      count += 1;
+    });
+    if (count === 0) return;
+    // Split along the wider spread. A tie goes to X, which is arbitrary but
+    // deterministic, and a deterministic tie is better than a flipping one.
+    const alongZ = (maxZ - minZ) > (maxX - minX);
+    const [a, b] = this.bots;
+    if (a) a.assignSector(-1, alongZ);
+    if (b) b.assignSector(1, alongZ);
   }
 
   /**

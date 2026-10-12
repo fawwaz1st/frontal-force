@@ -278,14 +278,67 @@ carrier, and the number is the precision layer under it, never the whole read.
 
 **The One-Panel Rule.** A menu shows one thing at a time. If two panels are both visible, one of them is a distraction and the other is buried.
 
-**The Legibility-Over-Mood Rule.** A theme may be as dark as it likes, but only down to the point where a silhouette still reads against the floor. A night that hides the enemies is a bug wearing atmosphere as a disguise.
+**The Legibility-Over-Mood Rule.** A theme may be as dark as it likes, but only down to the point where a silhouette still reads against the floor. A night that hides the enemies is a bug wearing atmosphere as a disguise. The same rule applies in the other direction: a near-white floor under a bright key light washes the frame out and the silhouette stops reading too.
+
+**The Use-It-Or-Delete-It Rule.** Environment is either a mechanic or it is gone. Every fixed structure registers cover the AI can claim; anything that cannot be used is scenery, and scenery is what gets deleted.
 
 ### Touch Overlay
 - **Stick:** floating-origin, 2px cyan-soft ring with a cyan wash fill. Round, because a stick is round.
 - **Buttons:** seven round hit-rects with a steel border that flips to cyan on hold.
 - **Placement:** `Hud.layoutTouch()` writes positions from the input layer's own hit-rects, so what is drawn is exactly what is tappable, inset by the safe-area variables.
 
-## 8. Performance Rules
+## 8. Sound
+
+Sound is a readout. The system treats it that way: every cue answers a question the player is already asking.
+
+### The five primitives
+
+Every sound is layered from some of these, never just one:
+
+| Primitive | What it is | What it tells the player |
+| --- | --- | --- |
+| **Transient** | A 2 ms high crack | "That happened, now." |
+| **Body** | Filtered noise that sweeps dark | The size of the thing. |
+| **Thump** | A pitched sine dropping fast | How heavy it was. |
+| **Tail** | A low noise wash | How big the space is. |
+| **Room send** | A convolver send | Where it happened. |
+
+A gunshot built from only one of these reads as a blip. All ten weapons use all five and differ only in the numbers, which is what keeps them one family while each stays identifiable.
+
+### Named Rules
+
+**The No-Click Rule.** Every voice has a 2-8 ms attack. A waveform that jumps to full amplitude instantly produces a broadband transient, and the ear hears that as a tick rather than as a hit.
+
+**The No-Frozen-Sample Rule.** Every noise voice reads from a random offset in the buffer, and every shot jitters its pitch by ±6%. Without both, repeated fire phase-locks and sounds like one sample played forever, which is the strongest "cheap audio" tell there is.
+
+**The Room Rule.** There is always a room. A sound with no reverb sounds like it is in the player's head, not in an arena.
+
+**The Distance-Carries-The-Tail Rule.** A far sound is quieter AND loses its room tail. A distant shot that keeps its reverb sounds close but quiet, which is worse than either.
+
+**The Listener-Frame Rule.** Pan is resolved against the player's position and yaw, in one place. Every call site that computed its own pan got it wrong in the same way: it panned along the world X axis, which is only the player's right if they happen to be facing -Z. Turn around and a sound on your right arrives on your left.
+
+**The Near-Miss Rule.** A round passing close must whizz. It is how a player learns they are being shot at from a direction they are not looking, and it is the single highest-value cue in a shooter.
+
+### Signal path
+
+```
+voice -> [panner] -> dryBus ------------------+
+                 \-> roomSend -> convolver --+--> air low-pass --> saturation --> master --> compressor --> out
+```
+
+The saturation stage is a soft knee, so 24 enemies firing at once compress into each other instead of summing into a square wave.
+
+## 9. Squad tactics
+
+Three mechanisms, all cheap, all properties of the roster rather than per-agent pathfinding:
+
+- **Fire teams.** Three agents share ONE victim. The bonus is a 1.6x score multiplier, not a hard override, because forcing the team target makes a squad walk past a target standing in front of it.
+- **Bounding overwatch.** One member advances at a time; the rest hold a firing position and cover it. A hold gives up ONLY the approach: a holding agent still shoots, still strafes, still dodges. That distinction is the whole design, and it is regression-tested.
+- **Suppression.** Once an agent has held a position, it keeps firing on a shorter cadence even without a clean line, so breaking sight is a contested move rather than an off switch.
+
+Melee and support archetypes never hold: a rusher that stops to cover is just a slow rusher.
+
+## 10. Performance Rules
 
 - **Compositor-only animation.** Damage flash, low-health pulse, hitmarkers, pops and toasts animate opacity or transform.
 - **Cached DOM writes.** `setText`, `setStyle` and `setClass` compare against a cache and skip the write when nothing changed.
@@ -294,7 +347,7 @@ carrier, and the number is the precision layer under it, never the whole read.
 - **No filters on the canvas.** The radar's ring is CSS, because a filtered canvas is re-rasterised every frame it changes.
 - **Named-area grids with `contain`.** Panel layout and paint work stay local to the panel.
 
-## 9. Do's and Don'ts
+## 11. Do's and Don'ts
 
 ### Do:
 - **Do** keep cyan as the only interactive/current hue.

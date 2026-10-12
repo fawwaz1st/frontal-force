@@ -488,7 +488,8 @@ export class WeaponController {
     this.player.eyePosition(this.tmpOrigin);
     this.player.forward(this.tmpDir);
     this.player.addRecoil(weapon.def.recoil);
-    this.audio.shot(weapon.def.sound);
+    // The player's own gun is at distance 0: no attenuation, full room send.
+    this.audio.shot(weapon.def.sound, 0, 0);
     this.onFired?.(weapon);
 
     // The tracer/flash/ejection origin is the GUN, which is purely cosmetic.
@@ -555,7 +556,7 @@ export class WeaponController {
     this.effects.ring(point, def.tracerColor, blastRadius * 2.4, 0.4);
     this.effects.burst(point, def.tracerColor, 16, 2.2);
     this.effects.smoke(point);
-    this.audio.blast();
+    this.audio.blastAt(point.x, point.z);
     this.enemies.forEachLive((enemy) => {
       if (enemy === direct) return;
       const distance = enemy.group.position.distanceTo(point);

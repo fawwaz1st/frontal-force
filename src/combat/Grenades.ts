@@ -262,7 +262,7 @@ export class Grenades {
     g.mesh.visible = false;
     this.effects.ring(point, def.color, def.radius * 2.6, 0.5);
     this.effects.burst(point, def.color, kind === 'smoke' ? 8 : 22, kind === 'smoke' ? 0.8 : 2.6);
-    if (kind !== 'smoke') this.audio.blast();
+    if (kind !== 'smoke') this.audio.blastAt(point.x, point.z);
     if (def.damage > 0) damageEnemy(point.clone(), def.radius, def.damage, def.floor);
     if (kind === 'smoke') {
       this.effects.smokeBurst(point.clone(), def.radius);
