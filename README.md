@@ -102,7 +102,7 @@ The selection persists between sessions, shows a live payout readout in the menu
 | Exploder | Charges and detonates; killing it early is the counter-play. |
 | Healer | Fragile support healing 3 %/s to every enemy within 9 m, which changes target priority. |
 | Summoner | Spawns a grunt every 6 s and ignores the player to keep the pipeline running. |
-| Warden Prime | Boss on every fifth wave. 2200 HP, three phases, a glowing rear core that takes x2.5 until broken permanently. |
+| Warden Prime | Boss on every fifth wave. 2200 HP, three phases, a glowing rear core that takes x2.5 damage. Enough rear-core damage (18% of max health, post-multiplier) destroys the core permanently, so flanking it is a real objective rather than a temporary bonus. |
 
 ### Affixes
 
@@ -118,6 +118,18 @@ From wave 4, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloadi
 ## Arena hazards
 
 Explosive barrels (7 per arena, 60 HP, 4.5 m blast for 120 damage), tesla coils, and flame vents. Barrels can be shot to clear a crowd, and barrel kills count toward the run summary and a dedicated achievement.
+
+## Grenades
+
+Three kinds, cycled with `F` and thrown with `G` (hold to cook, release to commit).
+
+| Grenade | Effect |
+| --- | --- |
+| Frag | 130 damage at the centre, linear falloff to a 30% floor over 4.6 m. |
+| Smoke | A live cloud that blocks enemy line of sight, so it breaks pursuit and firing lanes. |
+| EMP | 25 damage and disables warden plates and the boss shield for the duration. |
+
+Enemies also carry affix riders that fire when they hit you: Blazing sets you burning for 4 damage per second, Glacial slows your movement, and Charged arcs a visible burst.
 
 ## Arsenal
 
