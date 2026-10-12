@@ -427,6 +427,23 @@ kbd {
   letter-spacing: 0.2em;
   color: var(--text-dim);
 }
+/* Chip meter: a 3px fill bar inside a chip, for values that grow toward a
+   known threshold (salvage toward the kiosk's top price). */
+.hud__chip-meter {
+  display: block;
+  width: 34px;
+  height: 3px;
+  background: rgba(150, 178, 198, 0.2);
+  overflow: hidden;
+}
+.hud__chip-meter::before {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--v, 0%);
+  background: var(--gold);
+  transition: width 0.2s ease-out;
+}
 .hud__chip--gold {
   border-left-color: var(--gold);
   color: var(--gold);
@@ -744,23 +761,39 @@ kbd {
 }
 .hud__ability-top {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--text-dim);
 }
+.hud__ability-ic { width: 13px; height: 13px; color: var(--text-dim); }
 .hud__ability-top b {
+  margin-left: auto;
   font-family: var(--font-data);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
 .hud__ability-tag { color: var(--text-dim); }
+
+/* Charge pips: the primary read on how many casts are banked. */
+.hud__ability-pips {
+  display: flex;
+  gap: 3px;
+  margin-top: 5px;
+}
+.hud__ability-pips i {
+  flex: 1;
+  height: 4px;
+  background: rgba(150, 178, 198, 0.18);
+}
+.hud__ability-pips i.on { background: var(--accent); }
+/* Cooking: the pips and bar both take the earned hue. */
+.hud__ability.cooking .hud__ability-pips i.on { background: var(--gold); }
 .hud__ability-bar {
   margin-top: 5px;
   height: 3px;
@@ -1072,29 +1105,46 @@ kbd {
   display: grid;
   gap: 4px;
   justify-self: center;
-  width: min(420px, 100%);
+  width: min(560px, 100%);
 }
 .hud__menu-records[hidden] { display: none; }
-.hud__menu-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+
+/* Lifetime records as stat tiles: an icon, a big number, a small label. The
+   grid wraps, so a save with five mode rows still lays out without a scroll. */
+.hud__stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 7px;
 }
-.hud__menu-stat i {
-  flex: 1;
-  border-bottom: 1px dotted var(--line);
-  transform: translateY(-3px);
+.hud__stat-tile {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 9px 8px 8px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--line-strong);
+  background: rgba(150, 178, 198, 0.045);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
-.hud__menu-stat b {
-  color: var(--text);
+.hud__stat-tile .ic { width: 17px; height: 17px; color: var(--text-dim); }
+.hud__stat-tile b {
   font-family: var(--font-data);
-  letter-spacing: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+.hud__stat-tile span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.hud__stat-tile--gold { border-top-color: var(--gold); }
+.hud__stat-tile--gold .ic { color: var(--gold); }
+.hud__stat-tile--gold b { color: var(--gold); }
 
 /* ---------- Mode selector ---------- */
 .hud__modes {
@@ -1213,6 +1263,9 @@ kbd {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
+  /* The seed row shares a grid row with the settings column, which is taller;
+     without this the row stretches and the input grows into a slab. */
+  align-self: start;
   align-items: stretch;
   justify-content: center;
   width: min(560px, 100%);
@@ -1264,6 +1317,7 @@ kbd {
   display: grid;
   gap: 10px;
   align-content: start;
+  align-self: start;
   justify-self: center;
 }
 .hud__settings label {
@@ -1357,20 +1411,66 @@ kbd {
   border-top: 1px solid var(--line);
   padding-top: 12px;
   justify-self: center;
-  width: min(560px, 100%);
+  width: min(620px, 100%);
 }
 .hud__ach[hidden] { display: none; }
+
+/* Summary: a progress ring plus the count. The ring is the fastest read in the
+   panel, which is why it replaces the old one-line text summary. */
 .hud__ach-summary {
-  font-family: var(--font-data);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--gold);
-  text-align: center;
-  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 10px;
 }
+.hud__ring {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.hud__ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.hud__ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+.hud__ring-track { stroke: rgba(150, 178, 198, 0.18); }
+.hud__ring-fill {
+  stroke: var(--gold);
+  stroke-linecap: butt;
+  /* r=15.5 in a 36-unit box: circumference is 2*pi*r. The dash offset is the
+     un-filled remainder, driven by --p (0..100). */
+  stroke-dasharray: 97.4;
+  stroke-dashoffset: calc(97.4 - (97.4 * var(--p, 0)) / 100);
+  transition: stroke-dashoffset 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.hud__ring b {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: -0.02em;
+}
+.hud__ach-count {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+.hud__ach-count i { font-style: normal; color: var(--text-dim); }
+
 .hud__ach-list {
-  max-height: 208px;
+  max-height: 232px;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -1378,67 +1478,276 @@ kbd {
   gap: 3px;
   padding-right: 4px;
 }
+/* Tier header: a medal in the tier hue, the name, and the tier's own count. */
 .hud__ach-tier {
-  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--text-dim);
   border-bottom: 1px solid var(--line);
-  padding-bottom: 3px;
+  padding-bottom: 4px;
 }
 .hud__ach-tier:first-child { margin-top: 0; }
+.hud__ach-tier .ic { width: 14px; height: 14px; }
+.hud__ach-tier b {
+  margin-left: auto;
+  font-family: var(--font-data);
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+.hud__ach-tier[data-tier='bronze'] .ic { color: #c98a5a; }
+.hud__ach-tier[data-tier='silver'] .ic { color: #b9c6d0; }
+.hud__ach-tier[data-tier='gold'] .ic { color: var(--gold); }
+
 .hud__ach-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--text-dim);
+  padding: 2px 0;
 }
-.hud__ach-name { flex: 1; min-width: 0; }
+/* Medal pip: dim while locked, tier-colored once earned. */
+.hud__ach-medal {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-faint);
+}
+.hud__ach-medal .ic { width: 15px; height: 15px; }
+.hud__ach-row[data-tier='bronze'] .hud__ach-medal { color: rgba(201, 138, 90, 0.5); }
+.hud__ach-row[data-tier='silver'] .hud__ach-medal { color: rgba(185, 198, 208, 0.5); }
+.hud__ach-row[data-tier='gold'] .hud__ach-medal { color: rgba(255, 215, 107, 0.5); }
+.hud__ach-row--done .hud__ach-medal { color: var(--gold); }
+
+.hud__ach-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.hud__ach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hud__ach-row--done .hud__ach-name { color: var(--gold); }
-.hud__ach-prog { font-family: var(--font-data); letter-spacing: 0; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.hud__ach-mark {
-  width: 70px;
-  text-align: right;
+
+/* Per-row meter: how close this achievement is, without reading the numbers. */
+.hud__ach-meter {
+  display: block;
+  height: 3px;
+  background: rgba(150, 178, 198, 0.14);
+  overflow: hidden;
+}
+.hud__ach-meter i {
+  display: block;
+  height: 100%;
+  width: var(--v, 0%);
+  background: var(--line-strong);
+  transition: width 0.35s ease-out;
+}
+.hud__ach-row[data-tier='bronze'] .hud__ach-meter i { background: rgba(201, 138, 90, 0.75); }
+.hud__ach-row[data-tier='silver'] .hud__ach-meter i { background: rgba(185, 198, 208, 0.75); }
+.hud__ach-row[data-tier='gold'] .hud__ach-meter i { background: rgba(255, 215, 107, 0.75); }
+.hud__ach-row--done .hud__ach-meter i { background: var(--gold); }
+
+.hud__ach-prog {
   font-family: var(--font-data);
   letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  min-width: 58px;
+  text-align: right;
 }
-.hud__ach-row--done .hud__ach-mark { color: var(--gold); }
+.hud__ach-row--done .hud__ach-prog { color: var(--gold); }
 
-/* ---------- Death card ---------- */
+/* ---------- Death card: debrief board ---------- */
 .hud__death-stats {
   grid-area: records;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  font-size: 14px;
+  gap: 14px;
+  color: var(--text-dim);
+  width: 100%;
+}
+
+/* Headline tiles: one oversized number per tile, read at a glance. */
+.hud__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 9px;
+}
+.hud__tile {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 11px 8px 9px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--line-strong);
+  background: rgba(150, 178, 198, 0.045);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+.hud__tile-ic { color: var(--text-dim); display: grid; place-items: center; }
+.hud__tile-ic .ic { width: 18px; height: 18px; }
+.hud__tile-value {
+  font-family: var(--font-data);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.hud__tile-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
   color: var(--text-dim);
 }
-.hud__death-block {
+.hud__tile--mode { border-top-color: var(--accent); }
+.hud__tile--mode .hud__tile-ic { color: var(--accent); }
+.hud__tile--mode .hud__tile-value { font-size: 18px; letter-spacing: 0.1em; }
+.hud__tile--gold { border-top-color: var(--gold); }
+.hud__tile--gold .hud__tile-ic { color: var(--gold); }
+.hud__tile--gold .hud__tile-value { color: var(--gold); }
+
+/* Performance meters: label, bar, value. The bar makes the run's shape
+   visible; the value keeps it honest. */
+.hud__meters {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 26px;
+  gap: 7px;
 }
-.hud__death-block > div {
-  display: flex;
+.hud__meter {
+  display: grid;
+  grid-template-columns: 16px minmax(96px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+.hud__meter-ic { color: var(--text-dim); display: grid; place-items: center; }
+.hud__meter-ic .ic { width: 15px; height: 15px; }
+.hud__meter-label { color: var(--text-dim); white-space: nowrap; }
+.hud__meter-track {
+  height: 6px;
+  background: rgba(150, 178, 198, 0.14);
+  border-left: 1px solid var(--line);
+  overflow: hidden;
+}
+.hud__meter-track i {
+  display: block;
+  height: 100%;
+  width: var(--v, 0%);
+  background: var(--accent);
+  transform-origin: left;
+}
+.hud__meter-value {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hud__meter--good .hud__meter-track i { background: var(--ok); }
+.hud__meter--good .hud__meter-value { color: var(--ok); }
+.hud__meter--weak .hud__meter-track i { background: var(--danger); }
+.hud__meter--weak .hud__meter-value { color: var(--danger); }
+
+/* Trophy strip: the countable feats of the run, as emblems. */
+.hud__emblems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
   justify-content: center;
 }
-.hud__death-block .ic { color: var(--text-dim); }
-.hud__death-block span:not(.sr-only) {
-  color: var(--text);
+.hud__emblem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  background: rgba(150, 178, 198, 0.05);
   font-family: var(--font-data);
+  font-size: 13px;
   font-weight: 700;
-  font-size: 16px;
-  letter-spacing: -0.01em;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+.hud__emblem .ic { width: 15px; height: 15px; color: var(--text-dim); }
+.hud__emblem--elite { border-left-color: #35f0c8; }
+.hud__emblem--elite .ic { color: #35f0c8; }
+.hud__emblem--gold { border-left-color: var(--gold); }
+.hud__emblem--gold .ic { color: var(--gold); }
+.hud__emblem--good { border-left-color: var(--ok); }
+.hud__emblem--good .ic { color: var(--ok); }
+
+/* Section tag: a small icon + label that opens a block. */
+.hud__section-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+.hud__section-tag .ic { width: 13px; height: 13px; }
+
+/* Loadout: the cards held, each with a rarity dot. */
+.hud__loadout {
+  display: grid;
+  gap: 7px;
+  justify-items: center;
+}
+.hud__loadout-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+}
+.hud__loadout-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--line);
+  background: rgba(150, 178, 198, 0.05);
+}
+.hud__loadout-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.hud__loadout-chip[data-rarity='rare'] .hud__loadout-dot { background: var(--accent); }
+.hud__loadout-chip[data-rarity='legendary'] .hud__loadout-dot { background: var(--gold); }
+.hud__loadout-chip[data-rarity='legendary'] { color: var(--gold); }
+
+/* Arena log: seed and mutations, the run's identity. */
+.hud__arena-log {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
 }
 .hud__death-seed {
   display: flex;
@@ -1598,6 +1907,7 @@ kbd {
   color: var(--text);
   border: 1px solid var(--line);
   border-top: 3px solid var(--rarity);
+  border-left: 2px solid var(--rarity);
   border-radius: 0;
   background: rgba(150, 178, 198, 0.045);
   cursor: pointer;
@@ -1629,13 +1939,41 @@ kbd {
 }
 .hud__draft-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
+/* Card head: rarity medal on the left, owned-stack pips on the right. */
+.hud__draft-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 .hud__draft-rarity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-data);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--rarity);
+}
+.hud__draft-rarity .ic { width: 14px; height: 14px; }
+/* Stack pips: one diamond per copy owned, up to the card's cap. */
+.hud__draft-pips {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.hud__draft-pips i {
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}
+.hud__draft-pips i.on {
+  background: var(--rarity);
+  border-color: var(--rarity);
 }
 .hud__draft-name {
   font-size: 19px;
@@ -1647,17 +1985,6 @@ kbd {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
-}
-.hud__draft-owned {
-  justify-self: start;
-  padding: 3px 8px;
-  font-family: var(--font-data);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-  border: 1px solid var(--line);
-  background: rgba(9, 13, 17, 0.9);
 }
 
 .hud__draft-actions {
@@ -1764,13 +2091,13 @@ kbd {
   display: grid;
   gap: 7px;
 }
-/* Each row is its own grid: text block | price, so prices align in a column. */
+/* Each row is its own grid: icon | text block | price, so prices align. */
 .hud__kiosk-row {
   pointer-events: auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
   padding: 11px 14px;
   font: inherit;
@@ -1782,6 +2109,23 @@ kbd {
   background: rgba(150, 178, 198, 0.045);
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+/* The glyph is the row's scan target: 30px plate, tinted with the row state. */
+.hud__kiosk-ic {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  background: rgba(150, 178, 198, 0.06);
+  color: var(--text-dim);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
+  transition: color 0.12s, border-color 0.12s;
+}
+.hud__kiosk-ic .ic { width: 19px; height: 19px; }
+.hud__kiosk-row:not(:disabled):hover .hud__kiosk-ic {
+  color: var(--accent);
+  border-color: var(--accent-soft);
 }
 .hud__kiosk-row:not(:disabled):hover {
   border-color: var(--line-strong);
@@ -1955,13 +2299,64 @@ kbd {
 /* ==========================================================================
    Responsive — every breakpoint reorders the named areas, never the internals.
    ========================================================================== */
-@media (max-height: 700px) {
-  .hud__menu-card { padding: 20px 28px 18px; gap: 10px 24px; margin: 12px 0; }
+@media (max-height: 860px) {
+  /* Side-by-side: the ledger (visual, tall) beside the keycap diagram (short),
+     which removes a whole stacked block and keeps DEPLOY above the fold. */
+  .hud__menu-card {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    grid-template-areas:
+      "title    title"
+      "best     best"
+      "records  records"
+      "modes    modes"
+      "wagers   wagers"
+      "ach      keys"
+      "seed     settings"
+      "deploy   deploy";
+    gap: 8px 24px;
+    padding: 16px 24px 14px;
+    margin: 10px 0;
+  }
   .hud__menu-title { font-size: 34px; }
-  .hud__menu-title::after { margin-top: 8px; }
-  .hud__keys { gap: 5px 14px; }
+  .hud__menu-title::after { margin-top: 8px; height: 6px; }
+  .hud__menu-best { font-size: 12px; }
+  .hud__stat-grid { gap: 6px; }
+  .hud__stat-tile { padding: 7px 6px 6px; }
+  .hud__stat-tile b { font-size: 17px; }
+  .hud__stat-tile .ic { width: 15px; height: 15px; }
+  .hud__modes { gap: 6px; }
+  .hud__mode-chip { padding: 6px 11px; font-size: 12px; }
+  .hud__challenges { padding-top: 8px; }
+  .hud__challenge { padding: 5px 9px; font-size: 11px; }
+  .hud__ach { width: 100%; border-top: none; padding-top: 0; }
+  .hud__ach-list { max-height: 172px; }
+  .hud__ring { width: 46px; height: 46px; }
+  .hud__keys { align-self: start; justify-self: stretch; gap: 5px 12px; }
   .hud__key { font-size: 12px; }
-  .hud__ach-list { max-height: 168px; }
+  .hud__settings { align-self: start; justify-self: stretch; gap: 8px; }
+  .hud__settings input[type='range'] { width: 100%; }
+  .hud__btn { padding: 11px 30px; font-size: 15px; }
+}
+
+@media (max-height: 700px) {
+  .hud__menu-card { padding: 12px 18px 10px; gap: 6px 18px; margin: 6px 0; }
+  .hud__menu-title { font-size: 26px; }
+  .hud__menu-title::after { margin-top: 5px; height: 5px; width: 140px; }
+  .hud__ach-list { max-height: 126px; }
+  .hud__ring { width: 38px; height: 38px; }
+  .hud__ring b { font-size: 10px; }
+  .hud__ach-count { font-size: 11px; }
+  .hud__ach-summary { gap: 10px; margin-bottom: 6px; }
+  .hud__keys { gap: 3px 10px; }
+  .hud__key { font-size: 11px; }
+  .hud__stat-tile b { font-size: 15px; }
+  .hud__stat-tile span { font-size: 9px; }
+  .hud__modes { gap: 5px; }
+  .hud__mode-chip { padding: 5px 9px; font-size: 11px; }
+  .hud__challenge { padding: 4px 8px; font-size: 10px; }
+  .hud__btn { padding: 9px 24px; font-size: 14px; }
+  .hud__btn--seed { font-size: 12px; padding: 9px 14px; }
+  .hud__seed-input { padding: 8px 10px; font-size: 13px; }
 }
 
 @media (max-height: 560px) {

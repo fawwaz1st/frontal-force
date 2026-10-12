@@ -9,6 +9,7 @@
  */
 import type { DraftOffer } from '../game/Run';
 import { rarityLabel } from '../game/Upgrades';
+import { icon } from './icons';
 
 export interface DraftResult {
   /** Chosen card id, or null when the player skipped. */
@@ -161,9 +162,31 @@ export class Draft {
     btn.dataset.rarity = card.rarity;
     btn.dataset.cardId = card.id;
 
+    // Header row: rarity medal + label on the left, stack pips on the right.
+    // The medal makes the tier readable by shape and hue before any text.
+    const head = document.createElement('span');
+    head.className = 'hud__draft-head';
+
     const rarity = document.createElement('span');
     rarity.className = 'hud__draft-rarity';
-    rarity.textContent = rarityLabel(card.rarity);
+    rarity.innerHTML = `${icon('medal')}<span>${rarityLabel(card.rarity)}</span>`;
+
+    head.append(rarity);
+
+    // Stack pips: one filled diamond per copy already owned, capped at the
+    // card's own stack cap so the row length means something.
+    const cap = card.maxStacks ?? 5;
+    if (offer.owned > 0) {
+      const pips = document.createElement('span');
+      pips.className = 'hud__draft-pips';
+      pips.title = `Owned ${offer.owned} of ${cap}`;
+      for (let i = 0; i < cap; i++) {
+        const pip = document.createElement('i');
+        if (i < offer.owned) pip.className = 'on';
+        pips.append(pip);
+      }
+      head.append(pips);
+    }
 
     const name = document.createElement('span');
     name.className = 'hud__draft-name';
@@ -173,14 +196,7 @@ export class Draft {
     desc.className = 'hud__draft-desc';
     desc.textContent = card.description;
 
-    btn.append(rarity, name, desc);
-
-    if (offer.owned > 0) {
-      const chip = document.createElement('span');
-      chip.className = 'hud__draft-owned';
-      chip.textContent = `OWNED ${offer.owned}`;
-      btn.append(chip);
-    }
+    btn.append(head, name, desc);
 
     btn.addEventListener('click', () => this.finish(card.id));
     return btn;

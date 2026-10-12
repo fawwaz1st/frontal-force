@@ -293,6 +293,9 @@ export class Game {
     this.hud.setChallengeSelection(this.challenges);
     this.hud.setMenuBest(this.save.bestScore, this.recordWave);
     this.hud.setMenuRecords(this.save);
+    // The ledger is a progress panel, so it belongs on the first paint too: an
+    // empty ring at 0% is a better invitation than an absent panel.
+    this.hud.setAchievements(this.unlocked, this.counters);
     this.input.touch.setSensitivity(this.save.touchSensitivity);
     // The HUD draws the touch buttons from the SAME rects the input hit-tests,
     // so a visible button is always a tappable button.

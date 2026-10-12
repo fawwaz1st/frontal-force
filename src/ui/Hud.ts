@@ -88,12 +88,6 @@ function formatClock(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/** Card name for an upgrade id; unknown ids fall back to the raw id. */
-function upgradeName(id: string): string {
-  const def: UpgradeCard | undefined = UPGRADES[id as UpgradeId];
-  return def ? def.name : id;
-}
-
 export interface RadarBlip {
   /** Right offset in radar units (-1..1) */
   x: number;
@@ -218,6 +212,9 @@ export interface SettingsPatch {
 const RADAR_SIZE = 144;
 /** Radar redraw period in seconds. 20 Hz reads as continuous motion. */
 const RADAR_INTERVAL = 0.05;
+/** Salvage meter scale: the kiosk's most expensive item is 120 salvage, so the
+ *  chip's fill bar completes there and holds at full beyond it. */
+const SALVAGE_METER_SCALE = 120;
 
 export class Hud {
   public readonly root: HTMLDivElement;
@@ -310,13 +307,18 @@ export class Hud {
   private readonly dashChip: HTMLElement;
   private readonly dashN: HTMLElement;
   private readonly dashBar: HTMLElement;
+  private readonly dashPips: HTMLElement;
+  private lastDashPipState = '';
   private readonly grenChip: HTMLElement;
   private readonly grenN: HTMLElement;
   private readonly grenKindEl: HTMLElement;
   private readonly grenBar: HTMLElement;
+  private readonly grenPips: HTMLElement;
+  private lastGrenPipState = '';
   /** Run chips (top row). */
   private readonly salvageChip: HTMLElement;
   private readonly salvageN: HTMLElement;
+  private readonly salvageMeter: HTMLElement;
   private readonly upgradeChip: HTMLElement;
   private readonly upgradeN: HTMLElement;
   private readonly mutationChip: HTMLElement;
@@ -470,6 +472,7 @@ export class Hud {
              hides when it has nothing to say, so a plain run stays a 4-chip row. -->
         <div class="hud__chip hud__chip--gold" data-salvage hidden>
           <span class="hud__chip-tag">SAL</span><b data-salvage-n>0</b>
+          <span class="hud__chip-meter" data-salvage-meter></span>
         </div>
         <div class="hud__chip" data-upgrades hidden>
           <span class="hud__chip-tag">MOD</span><b data-upgrades-n>0</b>
@@ -540,16 +543,26 @@ export class Hud {
             <div class="hud__ally-bar"><i data-ally-fill></i></div>
           </div>
         </div>
-        <!-- Ability chips: charges plus the recharge ramp, beside the ammo readout. -->
+        <!-- Ability chips: charge pips (visual) plus the recharge ramp. The
+             pip row is the primary read; the numeric count stays as a small
+             secondary so the exact value is still available. -->
         <div class="hud__abilities" data-abilities hidden>
           <div class="hud__ability" data-dash-chip>
-            <div class="hud__ability-top"><span class="hud__ability-tag">DASH</span><b data-dash-n>0/0</b></div>
+            <div class="hud__ability-top">
+              ${icon('sprint', 'hud__ability-ic')}
+              <span class="hud__ability-tag">DASH</span>
+              <b data-dash-n>0/0</b>
+            </div>
+            <div class="hud__ability-pips" data-dash-pips></div>
             <div class="hud__ability-bar"><i data-dash-fill></i></div>
           </div>
           <div class="hud__ability" data-gren-chip>
             <div class="hud__ability-top">
-              <span class="hud__ability-tag">GRENADE</span><b data-gren-kind>FRAG</b><b data-gren-n>0/0</b>
+              ${icon('crate', 'hud__ability-ic')}
+              <span class="hud__ability-tag" data-gren-kind>FRAG</span>
+              <b data-gren-n>0/0</b>
             </div>
+            <div class="hud__ability-pips" data-gren-pips></div>
             <div class="hud__ability-bar"><i data-gren-fill></i></div>
           </div>
         </div>
@@ -705,13 +718,16 @@ export class Hud {
     this.dashChip = q('[data-dash-chip]');
     this.dashN = q('[data-dash-n]');
     this.dashBar = q('[data-dash-fill]');
+    this.dashPips = q('[data-dash-pips]');
     this.grenChip = q('[data-gren-chip]');
     this.grenN = q('[data-gren-n]');
     this.grenKindEl = q('[data-gren-kind]');
     this.grenBar = q('[data-gren-fill]');
+    this.grenPips = q('[data-gren-pips]');
     // Run chips.
     this.salvageChip = q('[data-salvage]');
     this.salvageN = q('[data-salvage-n]');
+    this.salvageMeter = q('[data-salvage-meter]');
     this.upgradeChip = q('[data-upgrades]');
     this.upgradeN = q('[data-upgrades-n]');
     this.mutationChip = q('[data-mutation]');
@@ -1117,12 +1133,14 @@ export class Hud {
     // An empty chip dims: with zero charges there is nothing to press yet, and
     // the dim state is the tell that does not require reading the n/N.
     this.setClass('dashc', this.dashChip, 'depleted', !dashReady);
+    this.renderPips(this.dashPips, s.dashCharges, s.dashMax, 'dash');
 
     const cook = clamp01(s.grenadeCook);
     const cooking = cook > 0;
     const grenReady = s.grenadeCharges > 0;
     this.setText('grenn', this.grenN, `${s.grenadeCharges}/${s.grenadeMax}`);
     this.setText('grenk', this.grenKindEl, GRENADE_LABEL[s.grenadeKind]);
+    this.renderPips(this.grenPips, s.grenadeCharges, s.grenadeMax, 'gren');
     // A live cook owns the bar: it shows the cook, not the recharge.
     this.setStyle(
       'grenw',
@@ -1135,13 +1153,39 @@ export class Hud {
     this.setClass('grenk2', this.grenKindEl, 'cooking', cooking);
   }
 
+  /**
+   * Charge pips: one cell per charge, filled while banked.
+   *
+   * Rebuilt only when the counts change, because the row is a fixed set of
+   * cells and the update loop runs every frame. The key is the pair of
+   * numbers, so a charge spent and a recharge landing each rebuild once.
+   */
+  private renderPips(host: HTMLElement, charges: number, max: number, key: string): void {
+    const state = `${charges}/${max}`;
+    const last = key === 'dash' ? this.lastDashPipState : this.lastGrenPipState;
+    if (state === last) return;
+    if (key === 'dash') this.lastDashPipState = state;
+    else this.lastGrenPipState = state;
+    const cells: string[] = [];
+    for (let i = 0; i < max; i++) {
+      cells.push(`<i class="${i < charges ? 'on' : ''}"></i>`);
+    }
+    host.innerHTML = cells.join('');
+  }
+
   /** Salvage / upgrade / mutation / seed chips. Each hides when it is empty. */
   private updateRunChips(s: HudState): void {
     // Salvage and the mutation only exist inside a run; the menu snapshot keeps
     // whatever the last run left behind, so gate the whole row on inGame.
     const live = s.inGame;
     this.salvageChip.hidden = !live;
-    if (live) this.setText('salv', this.salvageN, String(Math.max(0, Math.floor(s.salvage))));
+    if (live) {
+      this.setText('salv', this.salvageN, String(Math.max(0, Math.floor(s.salvage))));
+      // The meter is a "can I afford the expensive thing yet" read: the kiosk's
+      // priciest item is 120, so the bar fills across that range and caps there.
+      const frac = Math.min(1, Math.max(0, s.salvage) / SALVAGE_METER_SCALE);
+      this.setStyle('salvm', this.salvageMeter, '--v', `${(frac * 100).toFixed(0)}%`);
+    }
 
     const hasUpgrades = s.upgrades > 0;
     this.upgradeChip.hidden = !live || !hasUpgrades;
@@ -1285,21 +1329,43 @@ export class Hud {
     }
     this.achSignature = signature;
 
-    this.achSummary.textContent =
-      `UNLOCKED ${summary.unlocked}/${summary.total} · ${summary.percent}%`;
+    // Headline: a progress ring plus the count, so the panel opens with a
+    // visual read of overall completion instead of a line of text.
+    this.achSummary.innerHTML =
+      `<span class="hud__ring" style="--p:${summary.percent}">` +
+      `<svg viewBox="0 0 36 36" aria-hidden="true">` +
+      `<circle class="hud__ring-track" cx="18" cy="18" r="15.5"/>` +
+      `<circle class="hud__ring-fill" cx="18" cy="18" r="15.5"/>` +
+      `</svg>` +
+      `<b>${summary.percent}%</b>` +
+      `</span>` +
+      `<span class="hud__ach-count">${summary.unlocked}<i>/${summary.total}</i> UNLOCKED</span>`;
 
     const tiers = this.achTracker.byTier();
     const rows: string[] = [];
     for (const tier of ACH_TIER_ORDER) {
-      rows.push(`<div class="hud__ach-tier">${tier}</div>`);
-      for (const def of tiers[tier]) {
+      const defs = tiers[tier];
+      const doneCount = defs.filter((d) => known.has(d.id)).length;
+      rows.push(
+        `<div class="hud__ach-tier" data-tier="${tier}">` +
+        `${icon('medal')}<span>${tier}</span>` +
+        `<b>${doneCount}/${defs.length}</b>` +
+        `</div>`,
+      );
+      for (const def of defs) {
         rows.push(this.achievementRow(def, known, metrics));
       }
     }
     this.achList.innerHTML = rows.join('');
   }
 
-  /** One ledger row: name, progress readout, lock state. */
+  /**
+   * One ledger row: a medal, the name, and a progress meter.
+   *
+   * The meter is the point. A number column made 35 rows read as a table; a
+   * thin bar under each name makes "how close am I" visible without reading,
+   * and the unlocked state flips the whole row to gold.
+   */
   private achievementRow(
     def: AchievementDef,
     unlocked: ReadonlySet<AchievementId>,
@@ -1307,14 +1373,16 @@ export class Hud {
   ): string {
     const done = unlocked.has(def.id);
     const value = counters[def.metric] ?? 0;
-    // The progress bar is not drawn in the list (32 rows of bars is noise), so
-    // the percentage is folded into the readout where it is legible, and the
-    // state column says lock/unlock in words rather than repeating the number.
+    const frac = def.target > 0 ? Math.max(0, Math.min(1, value / def.target)) : 0;
     return (
-      `<div class="hud__ach-row${done ? ' hud__ach-row--done' : ''}" title="${def.description}">` +
+      `<div class="hud__ach-row${done ? ' hud__ach-row--done' : ''}" data-tier="${def.tier}" ` +
+      `title="${def.description}">` +
+      `<span class="hud__ach-medal">${icon('medal')}</span>` +
+      `<span class="hud__ach-body">` +
       `<span class="hud__ach-name">${def.name}</span>` +
+      `<span class="hud__ach-meter"><i style="--v:${(frac * 100).toFixed(1)}%"></i></span>` +
+      `</span>` +
       `<span class="hud__ach-prog">${formatProgress(value, def.target)}</span>` +
-      `<span class="hud__ach-mark">${done ? 'UNLOCKED' : 'LOCKED'}</span>` +
       `<span class="sr-only">${def.description}</span>` +
       `</div>`
     );
@@ -1504,71 +1572,138 @@ export class Hud {
   }
 
   private renderDeath(stats: DeathStats): void {
-    const row = (ic: IconName, label: string, value: number | string): string =>
-      `<div title="${label}">${icon(ic)}<span>${value}</span>` +
-      `<span class="sr-only">${label}</span></div>`;
     const meta = MODE_META[stats.mode];
-    let html =
-      `<div class="hud__death-block">` +
-      (meta ? row(meta.icon, 'Mode', meta.label) : '') +
-      row('flag', 'Wave reached', stats.wave) +
-      row('skull', 'Kills', stats.kills) +
-      row('score', 'Score', stats.score) +
-      row('trophy', 'Best', stats.bestScore) +
+    // ---- Headline tiles: one big number each, read at a glance. ----
+    const tile = (ic: IconName, label: string, value: number | string, tone = ''): string =>
+      `<div class="hud__tile${tone ? ` ${tone}` : ''}" title="${label}">` +
+      `<span class="hud__tile-ic">${icon(ic)}</span>` +
+      `<b class="hud__tile-value">${value}</b>` +
+      `<span class="hud__tile-label">${label}</span>` +
       `</div>`;
 
-    // Block 2: extended stats. Every field is optional, so each row is added
-    // only when its value arrived; a legacy call renders no second block.
-    const extra: string[] = [];
+    let html = `<div class="hud__tiles">`;
+    if (meta) html += tile(meta.icon, meta.label, stats.wave, 'hud__tile--mode');
+    else html += tile('flag', 'WAVE', stats.wave);
+    html += tile('skull', 'KILLS', stats.kills);
+    html += tile('score', 'SCORE', stats.score);
+    html += tile('trophy', 'BEST', stats.bestScore, stats.isNewRecord ? 'hud__tile--gold' : '');
+    html += `</div>`;
+
+    // ---- Performance meters: each stat becomes a bar against its own scale. ----
+    // A bar needs a denominator the player can reason about, so each meter
+    // carries a stated scale rather than an invented percentage.
+    const meters: string[] = [];
+    const meter = (
+      ic: IconName,
+      label: string,
+      value: number,
+      scale: number,
+      display: string,
+      tone = '',
+    ): void => {
+      const pct = scale > 0 ? Math.max(0, Math.min(100, (value / scale) * 100)) : 0;
+      meters.push(
+        `<div class="hud__meter${tone ? ` ${tone}` : ''}">` +
+        `<span class="hud__meter-ic">${icon(ic)}</span>` +
+        `<span class="hud__meter-label">${label}</span>` +
+        `<span class="hud__meter-track"><i style="--v:${pct.toFixed(1)}%"></i></span>` +
+        `<b class="hud__meter-value">${display}</b>` +
+        `</div>`,
+      );
+    };
+
     if (stats.accuracy !== undefined) {
-      extra.push(row('target', 'Accuracy', `${(stats.accuracy * 100).toFixed(1)}%`));
+      const acc = Math.max(0, Math.min(1, stats.accuracy));
+      meter('target', 'ACCURACY', acc, 1, `${(acc * 100).toFixed(1)}%`,
+        acc >= 0.5 ? 'hud__meter--good' : acc >= 0.25 ? '' : 'hud__meter--weak');
     }
-    if (stats.headshots !== undefined) extra.push(row('crosshair', 'Headshots', stats.headshots));
+    if (stats.headshots !== undefined && stats.kills !== undefined) {
+      // Headshot rate is the interesting read, not the raw count: 40 headshots
+      // out of 400 kills is a different player from 40 out of 50.
+      const rate = stats.kills > 0 ? Math.min(1, stats.headshots / stats.kills) : 0;
+      meter('crosshair', 'HEADSHOT RATE', rate, 1, `${(rate * 100).toFixed(0)}%  ·  ${stats.headshots}`,
+        rate >= 0.4 ? 'hud__meter--good' : '');
+    }
     if (stats.timeSurvived !== undefined) {
-      extra.push(row('clock', 'Time survived', formatClock(stats.timeSurvived)));
+      // Scale: 10 minutes is a strong run, so the bar fills over that.
+      meter('clock', 'SURVIVED', stats.timeSurvived, 600, formatClock(stats.timeSurvived));
     }
-    if (stats.damageDealt !== undefined) extra.push(row('bullet', 'Damage dealt', stats.damageDealt));
-    if (stats.damageTaken !== undefined) extra.push(row('shield', 'Damage taken', stats.damageTaken));
-    if (stats.longestCombo !== undefined) extra.push(row('score', 'Longest combo', stats.longestCombo));
-    if (stats.elitesKilled !== undefined) extra.push(row('skull', 'Elites', stats.elitesKilled));
-    if (stats.bossesKilled !== undefined) extra.push(row('trophy', 'Bosses', stats.bossesKilled));
-    if (stats.salvageEarned !== undefined) {
-      extra.push(row('crate', 'Salvage earned', stats.salvageEarned));
+    if (stats.damageDealt !== undefined && stats.damageTaken !== undefined) {
+      // Damage ratio: the clearest single read on how the run traded.
+      const ratio = stats.damageDealt / Math.max(1, stats.damageTaken);
+      const scale = 20; // 20:1 dealt:taken is a dominant run
+      meter('bullet', 'DAMAGE TRADE', Math.min(scale, ratio), scale,
+        `${stats.damageDealt} : ${stats.damageTaken}`,
+        ratio >= 8 ? 'hud__meter--good' : ratio < 2 ? 'hud__meter--weak' : '');
     }
-    if (stats.noHitWaves !== undefined) extra.push(row('check', 'No-hit waves', stats.noHitWaves));
-    if (extra.length > 0) html += `<div class="hud__death-block">${extra.join('')}</div>`;
-
-    // Block 3: seed + copy. The button carries the same copy path as the chip.
-    const seed = stats.seedCode ?? '';
-    if (seed !== '') {
-      html +=
-        `<div class="hud__death-seed">` +
-        `<span class="hud__death-seed-tag">SEED</span>` +
-        `<b class="hud__death-seed-code">${seed}</b>` +
-        (stats.isDaily ? `<span class="hud__death-seed-tag">DAILY</span>` : '') +
-        `<button type="button" class="hud__btn hud__btn--tiny" data-death-copy>COPY</button>` +
-        `</div>`;
+    if (stats.longestCombo !== undefined) {
+      meter('spark', 'BEST COMBO', stats.longestCombo, 16, `x${stats.longestCombo}`,
+        stats.longestCombo >= 8 ? 'hud__meter--good' : '');
+    }
+    if (meters.length > 0) {
+      html += `<div class="hud__meters">${meters.join('')}</div>`;
     }
 
-    // Block 4: the cards held this run, as chips.
+    // ---- Trophy strip: the countable achievements of the run, as emblems. ----
+    const emblems: string[] = [];
+    const emblem = (ic: IconName, label: string, value: number, tone = ''): void => {
+      if (value <= 0) return;
+      emblems.push(
+        `<span class="hud__emblem${tone ? ` ${tone}` : ''}" title="${label}: ${value}">` +
+        `${icon(ic)}<b>${value}</b></span>`,
+      );
+    };
+    emblem('skull', 'Elites killed', stats.elitesKilled ?? 0, 'hud__emblem--elite');
+    emblem('trophy', 'Bosses killed', stats.bossesKilled ?? 0, 'hud__emblem--gold');
+    emblem('coins', 'Salvage earned', stats.salvageEarned ?? 0, 'hud__emblem--gold');
+    emblem('shield', 'No-hit waves', stats.noHitWaves ?? 0, 'hud__emblem--good');
+    if (emblems.length > 0) {
+      html += `<div class="hud__emblems">${emblems.join('')}</div>`;
+    }
+
+    // ---- Loadout: the cards held, as visual chips with rarity rails. ----
     const upgrades = stats.upgrades ?? [];
     if (upgrades.length > 0) {
-      const chips = upgrades.map((id) => `<span class="hud__death-chip">${upgradeName(id)}</span>`);
-      html += `<div class="hud__death-upgrades">${chips.join('')}</div>`;
+      const chips = upgrades.map((id) => {
+        const card: UpgradeCard | undefined = UPGRADES[id as UpgradeId];
+        const rarity = card?.rarity ?? 'common';
+        const name = card ? card.name : id;
+        return `<span class="hud__loadout-chip" data-rarity="${rarity}" title="${name}">` +
+          `<i class="hud__loadout-dot"></i>${name}</span>`;
+      });
+      html +=
+        `<div class="hud__loadout">` +
+        `<span class="hud__section-tag">${icon('crate')}LOADOUT ${upgrades.length}</span>` +
+        `<div class="hud__loadout-row">${chips.join('')}</div>` +
+        `</div>`;
     }
 
-    // Mutations seen get their own line: they are the reason two runs on the
-    // same seed still read differently, so they belong in the summary.
+    // ---- Arena log: seed + mutations, the identity of this run. ----
+    const seed = stats.seedCode ?? '';
     const mutations = stats.mutationsSeen ?? [];
-    if (mutations.length > 0) {
-      const chips = mutations.map((m) => `<span class="hud__death-chip">${m}</span>`);
-      html +=
-        `<div class="hud__death-upgrades">` +
-        `<span class="hud__death-seed-tag">MUTATIONS</span>${chips.join('')}` +
-        `</div>`;
+    if (seed !== '' || mutations.length > 0) {
+      html += `<div class="hud__arena-log">`;
+      if (seed !== '') {
+        html +=
+          `<div class="hud__death-seed">` +
+          `<span class="hud__death-seed-tag">SEED</span>` +
+          `<b class="hud__death-seed-code">${seed}</b>` +
+          (stats.isDaily ? `<span class="hud__death-seed-tag">DAILY</span>` : '') +
+          `<button type="button" class="hud__btn hud__btn--tiny" data-death-copy>COPY</button>` +
+          `</div>`;
+      }
+      if (mutations.length > 0) {
+        const chips = mutations.map((m) => `<span class="hud__death-chip">${m}</span>`);
+        html +=
+          `<div class="hud__death-upgrades">` +
+          `<span class="hud__death-seed-tag">MUTATIONS</span>${chips.join('')}` +
+          `</div>`;
+      }
+      html += `</div>`;
     }
 
     this.deathStats.innerHTML = html;
+    this.animateDeathMeters();
 
     // The copy button only exists when a seed did, and the seed it copies is
     // the one on this card, not the live run's (the run may already be gone).
@@ -1583,6 +1718,25 @@ export class Hud {
         };
         void doCopy();
       });
+    }
+  }
+
+  /**
+   * Grow the death-card meters from zero. The bars are painted at their final
+   * width immediately (so a screenshot or a reduced-motion run is correct) and
+   * the animation only re-scales them, which keeps the value honest.
+   */
+  private animateDeathMeters(): void {
+    const bars = this.deathStats.querySelectorAll<HTMLElement>('.hud__meter-track i');
+    if (bars.length === 0) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    for (const bar of bars) {
+      const target = bar.style.getPropertyValue('--v');
+      bar.animate(
+        [{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }],
+        { duration: 520, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'none' },
+      );
+      void target;
     }
   }
 
@@ -1605,24 +1759,28 @@ export class Hud {
         : `${icon('trophy')}<span>NO RECORD</span>`;
   }
 
-  /** Lifetime records under the menu best line — stencil rows, no cards. */
+  /** Lifetime records under the menu best line, as visual stat tiles. */
   public setMenuRecords(save: SaveData): void {
     if (save.totalRuns <= 0) {
       this.menuRecords.hidden = true;
       return;
     }
-    const row = (label: string, value: number): string =>
-      `<div class="hud__menu-stat"><span>${label}</span><i></i><b>${value}</b></div>`;
-    const rows = [
-      row('KILLS', save.totalKills),
-      row('RUNS', save.totalRuns),
-      row('WAVES CLEARED', save.totalWavesCleared),
+    const tile = (ic: IconName, label: string, value: number, tone = ''): string =>
+      `<div class="hud__stat-tile${tone ? ` ${tone}` : ''}" title="${label}">` +
+      `${icon(ic)}<b>${formatCount(value)}</b><span>${label}</span></div>`;
+    const tiles = [
+      tile('skull', 'KILLS', save.totalKills),
+      tile('flag', 'RUNS', save.totalRuns),
+      // Best wave, not waves cleared: a lifetime cleared-count starts at zero
+      // and reads as an error next to a real kill count, while the best wave
+      // is the number a player actually tracks.
+      tile('trophy', 'BEST WAVE', save.bestWave, 'hud__stat-tile--gold'),
     ];
     for (const mode of GAME_MODES) {
       const n = save.killsPerMode[mode];
-      if (n) rows.push(row(MODE_META[mode].label, n));
+      if (n) tiles.push(tile(MODE_META[mode].icon, MODE_META[mode].label, n));
     }
-    this.menuRecords.innerHTML = rows.join('');
+    this.menuRecords.innerHTML = `<div class="hud__stat-grid">${tiles.join('')}</div>`;
     this.menuRecords.hidden = false;
   }
 

@@ -9,7 +9,8 @@ export type IconName =
   | 'target' | 'speaker' | 'mouse' | 'move' | 'jump' | 'sprint'
   | 'crouch' | 'swap' | 'pause' | 'crate' | 'crosshair' | 'infinity' | 'bot'
   | 'rifle' | 'smg' | 'shotgun' | 'railgun'
-  | 'dmr' | 'lmg' | 'pistol' | 'launcher' | 'beam' | 'burst';
+  | 'dmr' | 'lmg' | 'pistol' | 'launcher' | 'beam' | 'burst'
+  | 'medal' | 'spark' | 'heart' | 'coins';
 
 const ICON_PATHS: Record<IconName, string> = {
   // Score: concentric target
@@ -84,6 +85,18 @@ const ICON_PATHS: Record<IconName, string> = {
   // Three-tube cluster: the burst count is literally in the silhouette.
   burst:
     '<path d="M3.4 9.2h8.2v3.6H6.8l-.6 3H3.8l.5-3H3.4V9.2Z"/><path d="M11.6 10h4.2M11.6 12.6h4.2M11.6 15.2h4.2"/><path d="M15.8 8.6v8"/><path d="M18.6 8.6h3v8h-3z"/><path d="M6.8 12.8v4.8M5.2 17.6h3.2"/>',
+  // Award medal: ribbon plus a stamped disc. Tier color comes from CSS.
+  medal:
+    '<path d="M7 3.2 9.6 9M17 3.2 14.4 9"/><circle cx="12" cy="15" r="5.2"/><path d="m12 12.6.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3.9-1.9Z"/>',
+  // Four-point impact spark: the visual shorthand for "this hit hard".
+  spark:
+    '<path d="M12 2.5v6M12 15.5v6M2.5 12h6M15.5 12h6"/><path d="m5.6 5.6 3.4 3.4M15 15l3.4 3.4M18.4 5.6 15 9M9 15l-3.4 3.4"/>',
+  // Heart: health pickups and the survivability read.
+  heart:
+    '<path d="M12 20.5S3.5 15 3.5 9.3A4.8 4.8 0 0 1 12 6.6a4.8 4.8 0 0 1 8.5 2.7c0 5.7-8.5 11.2-8.5 11.2Z"/>',
+  // Stacked coins: salvage and the kiosk economy.
+  coins:
+    '<ellipse cx="12" cy="6.5" rx="7.5" ry="3"/><path d="M4.5 6.5v5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-5"/><path d="M4.5 11.5v5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-5"/>',
 };
 
 /** Inline SVG markup helper. Size/color come from CSS classes. */

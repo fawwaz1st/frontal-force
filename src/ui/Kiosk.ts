@@ -7,6 +7,7 @@
  * whether the purchase landed. Rows are never rebuilt on a purchase, because a
  * rebuild would destroy the row that is mid-flash.
  */
+import { icon, type IconName } from './icons';
 
 export interface KioskItem {
   id: string;
@@ -26,6 +27,22 @@ export interface KioskItem {
 export interface KioskResult {
   itemId: string;
   cost: number;
+}
+
+/**
+ * Row glyph. The kiosk does not know what it sells (the caller owns that), so
+ * the icon is chosen from the id the caller minted: sell rows are prefixed
+ * `sell:`, and the four purchase ids are stable contract values.
+ */
+function kioskIconFor(item: KioskItem): IconName {
+  if (item.sell) return 'swap';
+  switch (item.id) {
+    case 'repair': return 'heart';
+    case 'armory': return 'bullet';
+    case 'reroll': return 'swap';
+    case 'shield': return 'shield';
+    default: return 'crate';
+  }
 }
 
 /** Success flash: readable in peripheral vision without holding the player. */
@@ -148,6 +165,13 @@ export class Kiosk {
     // first click must be allowed through (a pre-set '1' would dead-lock it).
     row.dataset.owned = '0';
 
+    // Icon: every row carries one so the list is scannable by shape. The id
+    // prefix decides it, which keeps the kiosk free of any knowledge about
+    // what the caller actually sells.
+    const glyph = document.createElement('span');
+    glyph.className = 'hud__kiosk-ic';
+    glyph.innerHTML = icon(kioskIconFor(item));
+
     const text = document.createElement('span');
     text.className = 'hud__kiosk-text';
 
@@ -164,7 +188,7 @@ export class Kiosk {
     const cost = document.createElement('span');
     cost.className = 'hud__kiosk-cost';
 
-    row.append(text, cost);
+    row.append(glyph, text, cost);
 
     row.addEventListener('click', () => {
       // Only ids the kiosk is CURRENTLY offering may be bought. Checking the
