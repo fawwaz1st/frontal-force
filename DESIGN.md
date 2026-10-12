@@ -1,22 +1,23 @@
 ---
 name: Frontal Force
-description: Stencil-crate HUD system for a gritty, dark, military browser FPS.
+description: Fire-control instrument HUD for a cold, fast browser FPS.
 colors:
-  accent: "#ff9f1c"
-  accent-soft: "#ff9f1c66"
-  danger: "#ff5040"
-  success: "#b6e04a"
-  amber: "#ffd98a"
+  accent: "#7ce7ff"
+  accent-soft: "#7ce7ff61"
+  accent-wash: "#7ce7ff1a"
+  danger: "#ff4d5e"
+  success: "#7ddb8a"
   gold: "#ffd76b"
-  base: "#0a0b08"
-  panel: "#10110cf0"
-  line: "#ded2aa47"
-  text: "#ece7d8"
-  text-dim: "#ded2aa99"
+  base: "#0b0e11"
+  panel: "#10151af0"
+  line: "#96b2c638"
+  line-strong: "#96b2c66b"
+  text: "#dde7ee"
+  text-dim: "#b0c6d69e"
 typography:
   display:
     fontFamily: "Barlow Condensed, 'Arial Narrow', system-ui, sans-serif"
-    fontSize: "46px"
+    fontSize: "44px"
     fontWeight: 700
     letterSpacing: "0.3em"
   headline:
@@ -25,10 +26,10 @@ typography:
     fontWeight: 700
     letterSpacing: "0.28em"
   data:
-    fontFamily: "Barlow Condensed, 'Arial Narrow', system-ui, sans-serif"
-    fontSize: "34px"
+    fontFamily: "ui-monospace, 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace"
+    fontSize: "32px"
     fontWeight: 700
-    lineHeight: 1.1
+    letterSpacing: "-0.02em"
   body:
     fontFamily: "Barlow Condensed, 'Arial Narrow', system-ui, sans-serif"
     fontSize: "14px"
@@ -49,184 +50,213 @@ spacing:
   sm: "10px"
   md: "16px"
   lg: "24px"
-  xl: "42px"
+  xl: "40px"
 components:
   button-primary:
-    backgroundColor: "#ff9f1c"
-    textColor: "#17120a"
+    backgroundColor: "#7ce7ff"
+    textColor: "#06131a"
     typography: "{typography.label}"
     rounded: "{rounded.lg}"
-    padding: "13px 44px"
+    padding: "13px 38px"
   button-ghost:
-    backgroundColor: "#ece7d80d"
+    backgroundColor: "#96b2c60d"
     textColor: "{colors.text-dim}"
     typography: "{typography.label}"
     rounded: "{rounded.lg}"
-    padding: "13px 24px"
+    padding: "13px 20px"
   chip:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text}"
     typography: "{typography.label}"
     rounded: "{rounded.md}"
-    padding: "6px 16px"
-  menu-card:
+    padding: "5px 11px"
+  card:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text}"
     rounded: "{rounded.panel}"
-    padding: "42px 56px"
+    padding: "26px 40px"
 ---
 
 # Design System: Frontal Force
 
 ## 1. Overview
 
-**Creative North Star: "The Stencil Crate"**
+**Creative North Star: "Fire Control"**
 
-This system behaves like markings sprayed onto a military supply crate: condensed stencil type, bone-white ink on olive-black, chamfered plate corners instead of soft rounds, and hazard hatching reserved for the one action that commits you (DEPLOY). Warm amber signal sits over the cold blue arena — deliberate complementary contrast, so the HUD always separates from the world instead of dissolving into it.
+The HUD is the fire-control panel of a weapon system, not a web page laid over a game. Three things carry that idea:
 
-Everything is flat. No backdrop blur, no glassmorphism, no glow bloom: depth comes from a solid panel over a darkened scene, a khaki hairline, a chamfered `clip-path` corner, and a double-frame outline on the menu card. Color stays rationed — amber is the only "this is live" color, crimson is only loss, lime is only recovery, gold is only achievement.
+1. **Corner brackets, not rounded cards.** Every plate has at least one cut corner (a `clip-path` notch) and the arena itself is marked by four L-shaped brackets. Nothing is rounded except things that are physically round: radar, pips, the touch stick, the thumb buttons.
+2. **Ruler ticks where a number lives.** Titles, banners and the boss bar carry tick marks with a hairline baseline, so a heading reads like a scale on an instrument instead of a decorative underline.
+3. **Monospaced data, condensed labels.** Anything the player compares numerically (ammo, health, score, cost, salvage, coordinates) is monospace with tabular figures; anything that names a thing is condensed uppercase with wide tracking.
 
-This system explicitly rejects the AI-template look listed in PRODUCT.md (default palettes, glassmorphism, gradient text, hero-metric cards, eyebrows) AND the retired navy-neon "gamer HUD": no blue-on-blue glow, no rounded glass cards, no scanlines, no bounce.
+The palette is cold gunmetal with a single live hue. Instrument cyan means "interactive or current". Crimson means harm. Lime means recovery. Gold means earned. Nothing else is colored.
+
+This replaces the earlier warm olive "Stencil Crate" system (amber signal, khaki, chamfered corners). The concept changed from "markings sprayed on a supply crate" to "readout on a fire-control panel", which is why the hues went cool, the corners became brackets, and the type gained a monospace data voice.
 
 **Key Characteristics:**
-- Condensed stencil type, wide-tracked uppercase labels, oversized data numerals
-- Chamfered corners (`clip-path`) everywhere instead of border-radius; flat panels, zero blur
-- Hazard hatch stripes mark the primary/commit action and the active mode
-- Signal color rationing: accent, danger, success, gold each own one meaning
-- Motion as feedback only (hit, damage direction, reload, low health, screen shake, landing impact) with reduced-motion parity
-- One HUD for both input schemes: the same panels reposition under `--safe-*` insets and `100dvh`, and the touch overlay borrows the accent signal rather than inventing a second palette
+- Cold gunmetal field, instrument cyan as the only interactive hue
+- Corner brackets and cut corners; zero border-radius on plates
+- Ruler ticks with a hairline baseline under titles and banners
+- Monospace tabular data numerals, condensed tracked labels
+- Named-area CSS grids for the shell, the menu card, the bottom bar, the draft and the kiosk
+- Custom scrollbars styled as instrument sliders (track, thumb, hover, active)
+- Compositor-only motion (opacity and transform); no animated box-shadow
 
 ## 2. Colors
 
-A warm signal palette on an olive-black field: amber for interaction, crimson for harm, lime for recovery, gold for achievement — nothing colored that doesn't mean something. The arena behind stays cold blue; the HUD never competes with it hue-for-hue.
+A cold instrument palette: gunmetal plates, cyan signal, and three rationed status hues.
 
 ### Primary
-- **Signal Amber** (#ff9f1c): primary accent — hazard buttons, active weapon slot, wave chip, reload fill, focus-visible outlines, ally drone, radar sweep, crosshair dot. The only color allowed to say "this is interactive or current."
-- **Amber Halo** (#ff9f1c66): the soft form — hover halos, small text-shadow bloom. Always paired with the solid accent.
+- **Instrument Cyan** (`#7ce7ff`): the only "interactive or current" hue. Active mode chip, active weapon slot, ready ability bar, current weapon, focus rings, crosshair dot, radar sweep, shield segment, sell rows, seed code. Also the primary button fill.
+- **Cyan Wash** (`#7ce7ff1a`): the soft fill form, always paired with the solid hue as a border or text color.
+- **Cyan Soft** (`#7ce7ff61`): halos, hover borders, the banner title glow.
 
 ### Secondary
-- **Crimson Alert** (#ff5040): damage vignette, low-health fill, kill hitmarker, K.I.A. title, empty-mag ammo. Appears only when the player is losing something.
+- **Crimson Alert** (`#ff4d5e`): damage flash, low-health fill, kill hitmarker, K.I.A. title, empty magazine, active wager chips, boss bar top edge. Appears only when the player is losing something or has signed up for risk.
 
 ### Tertiary
-- **Olive Lime** (#b6e04a): healthy integrity fill (gradient `#7fb238 → #b6e04a`) and health pickups.
-- **Caution Amber** (#ffd98a): reserved secondary warm tone — touch notice, quiet caution text.
-- **Record Gold** (#ffd76b): NEW RECORD badge and headshot hitmarker — rare by design; earned, never decorative.
+- **Olive Lime** (`#7ddb8a`): healthy integrity fill (gradient `#4e9c63` to `#7ddb8a`), health pickups, the area-clear check.
+- **Record Gold** (`#ffd76b`): NEW RECORD badge, headshot hitmarker, achievement toasts and unlocked ledger rows, salvage and kiosk prices, the boss core-break edge. Earned, never decorative.
 
 ### Neutral
-- **Olive Black** (#0a0b08): page background and vignette floor (the 3D scene keeps its own cold `#060a14` fog — contrast is intentional).
-- **Crate Panel** (#10110cf0): near-opaque flat surface for chips, cards, slots — no blur behind it.
-- **Khaki Hairline** (#ded2aa47): every 1px border — chips, bars, cards, slots.
-- **Bone** (#ece7d8): primary text and data numerals.
-- **Khaki Dim** (#ded2aa99): labels, secondary text, inactive slots.
+- **Gunmetal Black** (`#0b0e11`): page background. The 3D arena keeps its own cold fog, so the HUD and the world share a temperature instead of fighting.
+- **Panel** (`#10151af0`): near-opaque plate for chips, cards and slots. No blur behind it.
+- **Panel Solid** (`#10151a`): the opaque card body, used where a large surface sits over the scene.
+- **Hairline** (`#96b2c638`): every 1px container edge.
+- **Hairline Strong** (`#96b2c66b`): the load-bearing edges: chip left rails, ability bottoms, kiosk row left rails, panel outer border.
+- **Bone** (`#dde7ee`): primary text and data numerals.
+- **Steel Dim** (`#b0c6d69e`): labels, secondary text, inactive slots.
 
-### Enemy Kind Hues (scene)
-
-The four enemy kinds own one hue each, shared by the model and its radar blip so the threat reads at a glance: grunt `#d95cff`, rusher `#ff5c5c`, gunner `#ffb03a`, warden `#35f0c8` (teal). These are scene/radar hues — not part of the HUD signal vocabulary.
+### Enemy Kind Hues (scene and radar)
+Grunt `#d95cff`, rusher `#ff5c5c`, gunner `#ffb03a`, warden `#35f0c8`. These are scene hues, not HUD signal hues, and the blocked-shot hitmarker borrows the warden teal on purpose.
 
 ### Named Rules
-**The Signal-Only Rule.** A hue may only appear when it carries gameplay or interaction meaning: amber = interactive/current, crimson = harm, lime = recovery, gold = achievement. If a new element doesn't have a meaning, it stays khaki/bone.
+**The One Live Hue Rule.** Cyan is the only color allowed to mean "interactive or current". If a new element needs to say "you can press this" or "this is active", it is cyan. Nothing else.
 
-**The Hairline Rule.** Every container edge is a 1px `{colors.line}` border — never a thick colored stripe, never `border-left` used as an accent.
+**The Rationing Rule.** Crimson is harm, lime is recovery, gold is earned. A hue that carries no meaning stays bone or steel.
 
-**The Chamfer Rule.** Plates never round: corners are cut with `clip-path` (8–18px). Border-radius above 0 is reserved for genuinely round things (blips, dots, the touch stick and its thumb buttons).
+**The Hairline Rule.** Container edges are 1px. Direction is expressed with a 2px *left* rail (chips, ability chips, kiosk rows) or a 2px top edge (boss bar, ability bottom), never with a thick stripe on all sides.
 
 ## 3. Typography
 
-**Display Font:** Barlow Condensed (fallback: 'Arial Narrow', system-ui, sans-serif)
-**Body Font:** Barlow Condensed (fallback: 'Arial Narrow', system-ui, sans-serif)
+**Display Font:** Barlow Condensed (fallback `'Arial Narrow', system-ui, sans-serif`)
+**Data Font:** `ui-monospace, 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace`
 
-**Character:** One family, three weights (400/600/700). Condensed grotesque skeleton = military signage and crate stenciling; wide letter-spacing on short uppercase tokens turns labels into sprayed equipment markings. No display/body pairing — product register, one voice.
+**Character:** Two voices, one job each. Condensed grotesque carries names, labels and prose; monospace carries every number the player compares. That split is what makes the panel read as an instrument: the eye can find a value without reading the words around it.
 
 ### Hierarchy
-- **Display** (700, 46px, +0.3em): menu titles (FRONTAL FORCE, PAUSED, K.I.A.) with a hazard-dash rule underneath.
-- **Headline** (700, 42px, +0.28em): in-game wave banners (WAVE 1, WAVE CLEAR).
-- **Data** (700, 34px, line-height 1.1): ammo readout; health numeral at 28px. Data beats prose mid-combat.
-- **Body** (400, 14–15px, line-height 1.5): death stats, hint text.
-- **Label** (600, 11–13px, +0.08em…+0.22em, uppercase): chips, mode chips, button text.
+- **Display** (condensed 700, 44px, +0.3em): overlay titles (FRONTAL FORCE, K.I.A.) with a ruler rule underneath.
+- **Headline** (condensed 700, 42px, +0.28em): in-combat banners (WAVE 1, WAVE CLEAR).
+- **Data** (mono 700, 32px): ammo readout. Health numeral 26px, salvage 30px, death-card values 16px.
+- **Body** (condensed 400, 13-14px, line-height 1.5): descriptions, hints, death stats.
+- **Label** (condensed 600, 10-13px, +0.1em to +0.24em, uppercase): chips, buttons, mode chips, kiosk names.
 
 ### Named Rules
-**The Stencil Rule.** Uppercase + tracking ≥0.08em is reserved for labels, chips, and buttons — short tokens only. Anything longer than a line of instruction stays sentence case (hints, key list values).
+**The Data Rule.** Any value the player compares numerically uses the monospace face with `font-variant-numeric: tabular-nums`. A number that changes while the player watches must never reflow its neighbours.
+
+**The Stencil Rule.** Condensed uppercase with tracking at or above 0.08em is for short tokens only. Anything longer than a line of instruction stays sentence case.
 
 ## 4. Elevation
 
-This system is flat-not-float: surfaces are opaque plates over a darkened scene. Elevation is expressed by border, chamfer, and hatch — never by blur and rarely by glow. Backdrop blur is gone entirely (retired with the navy-glass look); the menu overlay dims the scene with a flat tint instead.
+Flat plates over a darkened scene. Depth comes from the border, the cut corner, the bracket, and the double frame, never from blur.
 
 ### Depth Vocabulary
-- **Chamfer** (`clip-path` cut corners, 7–18px): chips, slots, hints, cards — the plate silhouette.
-- **Double frame** (1px card border + offset 1px outline at 5px): menu/pause/death card only.
-- **Hazard hatch** (`repeating-linear-gradient(-45deg, …)`): primary button fill, active mode chip, title rule. Marks commitment and current selection.
-- **Panel lift** (`box-shadow: 0 24px 80px rgba(0,0,0,0.6)`): menu card only.
-- **State halo** (`box-shadow: 0 0 18px #ff9f1c66`): primary button hover, crosshair dot — small, rare.
+- **Cut corner** (`clip-path` single notch, 6-12px): chips, slots, hints, ability plates.
+- **Corner brackets** (four L marks, 16px arms, drawn as eight gradients on one element): the arena frame, and the menu card's four corners.
+- **Double frame** (1px panel border plus a 1px outline at 4px offset): overlay cards only.
+- **Panel lift** (`box-shadow: 0 24px 70px rgba(0,0,0,0.62)`): overlay cards only.
+- **Ruler rule** (repeating 1px ticks over a 1px baseline): titles, banners, draft titles, kiosk titles.
 
 ### Named Rules
-**The Flat-Not-Float Rule.** No `backdrop-filter`, no panel glow bloom, no drop shadows on HUD chips. Interactive states change border/background color (amber fill or amber outline); they may nudge ≤1px but never bounce.
+**The Flat-Not-Float Rule.** No `backdrop-filter`, no glow bloom on plates, no drop shadows on HUD chips. Interactive state changes border and background color; hover may lift 1-2px and never bounces.
 
-**The Safe-Area Rule.** The HUD is laid out inside `env(safe-area-inset-*)`, exposed as `--safe-t/r/b/l` custom properties — one source of truth shared by CSS and `TouchControls.layout()`. The stage is `100dvh` (`vh` as the fallback), and `touch-action: none` sits on every element that receives pointer events, because the browser otherwise steals pan/pinch mid-drag.
+**The Compositor Rule.** Motion animates `opacity` and `transform` only. The damage flash and the low-health pulse are static gradient layers whose opacity animates, because animating `box-shadow` repainted the entire viewport every frame.
 
-## 5. Components
+**The Contain Rule.** Every full-screen overlay and every card carries `contain: layout paint style`, so panel work stays off the rest of the page.
 
-Supply-crate stenciling: khaki hairlines, chamfered plates, hazard hatch on commit actions, oversized numerals.
+## 5. Layout
+
+The shell is a three-row grid (`header / arena / footer`), and every panel inside it is a grid with **named areas**, so a breakpoint reorders regions by name instead of rewriting their internals.
+
+| Surface | Areas |
+| --- | --- |
+| HUD shell | `header`, `arena`, `footer` |
+| Bottom bar | `integrity`, `abilities`, `weapon` |
+| Menu card | `title`, `best`, `records`, `ach`, `modes`, `wagers`, `seed`, `keys`, `settings`, `deploy` |
+| Pause card | `title`, `records`, `settings`, `deploy` |
+| Death card | `title`, `best`, `records`, `keys`, `settings`, `deploy` |
+| Draft panel | `title`, `sub`, `cards`, `actions` |
+| Kiosk panel | `title`, `sub`, `salvage`, `list`, `actions` |
+
+### Breakpoints
+- `max-height: 700px`: card padding and gaps tighten, ledger shortens.
+- `max-height: 560px`: radar to 104px, footer insets tighten, keys go three columns.
+- `max-width: 820px`: the menu card collapses to one column.
+- `max-width: 640px`: the bottom bar becomes two rows (`abilities` above `integrity | weapon`), the seed row stacks, the draft goes one card per row.
+- `pointer: coarse`: larger tap targets and hover styles neutralised.
+- `max-height: 430px` landscape: keys and ledger drop, settings flow horizontally.
+
+### Named Rules
+**The Named-Area Rule.** A responsive change reorders named areas. It never rewrites the internal layout of a region, because that is what produces inconsistent panels across breakpoints.
+
+## 6. Components
 
 ### Buttons
-- **Shape:** radius 0, square plate.
-- **Primary:** solid `#ff9f1c` fill with dark diagonal hazard stripes over it, ink `#17120a`, 700/17px, +0.22em tracking, padding 13px 40px, `1px solid #ff9f1c`.
-- **Hover / Focus:** hover = brightness 1.1 + translateY(-1px) + soft `0 0 18px #ff9f1c66`; active = brightness 0.94; `:focus-visible` = `2px solid #ff9f1c` outline, offset 3.
-- **Ghost:** hairline khaki border, `#ece7d80d` fill, dim text — ABANDON RUN / MAIN MENU. Hover lifts text to bone with a faint fill, no glow.
+- **Primary:** cyan fill with dark diagonal hazard stripes, ink `#06131a`, 700/16px, +0.22em tracking, padding 13px 38px. Hover brightens 8% and lifts 1px with a soft cyan halo; active presses back down.
+- **Ghost:** hairline border, faint fill, dim text. Hover lifts the text to bone with a faint fill and no glow.
+- **Tiny:** 11px, used for the death card's COPY button.
+- **Focus:** `2px solid` cyan outline at 3px offset on every interactive element. Where `clip-path` would eat the outline, an inset ring is used instead.
 
-### Chips
-- **Style:** crate-panel background, khaki hairline, radius 0, chamfered 9px corners, label type 15px/600, padding 6px 14px. **No blur.**
-- **State:** the WAVE chip is the accent variant (amber text, amber border, `rgba(255,159,28,0.1)` fill); score/kills stay neutral. The **kill-combo chip** reuses that amber variant for the `×N` multiplier in the HUD top row — hidden at ×1, so it only shows once a streak is worth reading.
+### Chips (header rail)
+Crate plate with a cut top-right corner, a 2px left rail and a 1px hairline border. The rail carries the state color: neutral steel for score and kills, cyan for the wave and combo, gold for salvage, amber for mutations, crimson for wagers.
 
-### Cards / Containers
-- **Corner Style:** radius 0, chamfered 18px (`clip-path`).
-- **Background:** near-opaque `{colors.panel}` — no backdrop blur anywhere.
-- **Frame:** 1px `{colors.line}` border + offset double outline (5px) for the menu card.
-- **Shadow Strategy:** panel lift (see Elevation) for the menu card only.
-- **Internal Padding:** 42px 56px.
+### Readouts (footer rail)
+- **Integrity:** 12px track with quarter ticks, lime gradient fill, crimson under 30%. The shield rides on the bar as a second cyan segment so health and plating read as one pool.
+- **Abilities:** two compact plates with a 3px recharge bar. A banked charge makes the bar cyan; a depleted chip dims; a cooking grenade turns the plate gold and the bar tracks the cook.
+- **Weapon:** name plus `n/10` index, a three-slot window (previous / current / next) where the current slot is the cyan variant, and a 32px monospace ammo readout that swaps to a spinning glyph while reloading.
 
-### Records Ledger (menu)
-- **Rows:** lifetime stat rows under the menu best line — dim uppercase label, 1px dotted khaki leader, bone tabular-nums value; 13px/600, +0.14em tracking, 6px row gap.
-- **Behavior:** the ledger stays hidden until the first recorded run; per-mode kill rows appear only for modes with kills.
+### Draft cards
+Grid rows: rarity / name / description / owned. The rarity is a 3px top edge in the tier hue (steel, cyan, gold) plus a monospace rarity label. Legendary trades the solid edge for hazard hatch. Hover lifts the card 2px and tints the border with its tier hue.
 
-### Inputs / Fields
-- **Style:** native range inputs, `accent-color: #ff9f1c`, width 200px, no custom chrome; icon-led labels (crosshair/speaker).
-- **Focus:** `:focus-visible` outline 2px accent, offset 3 (shared with buttons).
-- **Fields:** sensitivity, touch look, volume, and a graphics-quality select (AUTO / LOW / MEDIUM / HIGH) — the quality field is the only native `<select>`, kept unstyled for reliable mobile pickers. Touch look and quality are separate settings because a phone's feel and a phone's frame budget are different problems.
-
-### Touch Overlay
-- **Stick:** floating-origin movement stick drawn at the touch point — 2px `{colors.accent-soft}` ring, `rgba(255,159,28,0.06)` fill, round (a stick is a round thing; the Chamfer Rule allows it), 62px radius, 0.18 radial dead zone.
-- **Buttons:** seven round hit-rects (FIRE / AIM / JUMP / SPRINT / CROUCH / RELOAD / CYCLE) — 2px khaki hairline, `rgba(16,17,12,0.42)` fill, dim icon; held state flips to accent border + accent icon + `rgba(255,159,28,0.18)` fill, the same "this is live" signal as the rest of the HUD.
-- **Placement:** `Hud.layoutTouch()` writes each element's position from the input layer's own hit-rects, so what is drawn is exactly what is tappable; the cluster is inset by `--safe-*` so FIRE never sits under the home indicator.
-- **Touch mode also gives the thumbs their corners:** the bottom bar lifts by 22px and the radar moves in, while the slot chips and index hide (the CYCLE button replaces them).
-- **Rationale:** buttons are circles because a thumb has no corners; everything else in the system stays a chamfered plate.
-
-### HUD Readouts (in-game)
-- **Integrity bar:** 10px track (olive-black + khaki hairline), fill gradient lime `#7fb238 → #b6e04a`, crimson below 30% (`#ff5040 → #ff8a5e`), width transition 0.15s ease-out; numeral 28px/700; shield icon tints with state.
-- **Ally bar:** drone icon + 120×5 amber micro-bar under the health bar; hidden when the drone is down.
-- **Ammo block:** right-aligned 34px/700 numeral; reserve after in dim 17px; empty mag = crimson + blink; reloading swaps digits for a spinning amber reload glyph (no layout shift, no innerHTML).
-- **Weapon selector:** ten weapons will not fit as an icon wall, so the block names the equipped weapon (12px/600, +0.16em, bone) beside an `n/10` index (dim, tabular-nums) and shows a three-slot window — previous / current / next. The current slot is the accent variant (amber border, amber icon, `rgba(255,159,28,0.1)` fill); the prev/next slots sit back at 0.55 opacity with a smaller icon so the active one reads first. Same 34×26 chamfered plate, 1px khaki hairline, no blur.
+### Kiosk rows
+A two-column grid per row (text block, price) so prices align in a column. Purchase rows carry a steel left rail that turns cyan on hover; sell rows are cyan by default because they pay out instead of charging. Refused and successful states color the rail lime or crimson.
 
 ### Signature: Crosshair
-- Four bone-white 2px ticks + 3px **amber center dot**, `0 0 4px` amber micro-glow, gap driven by `--ch-gap` (4px idle → 18px moving/firing), transition 0.08s ease-out; dims to 25% opacity when pointer lock is lost. Damage arcs are radial-gradient wedges that rotate to the attacker and fade over 0.8s.
+Four corner brackets around a 4px cyan dot. The brackets translate outward with `--ch-gap`, which is the real weapon cone projected to pixels, so the reticle is the spread readout. It dims to 28% when pointer lock is lost.
 
-## 6. Do's and Don'ts
+### Signature: Scrollbars
+Track is a recessed dark rail with a 1px steel divider; the thumb is a slim steel bar inset 3px inside the track via `background-clip: content-box`. Hover turns the thumb cyan-soft, active turns it full cyan. Firefox gets the equivalent through `scrollbar-width: thin` and `scrollbar-color`.
+
+### Touch Overlay
+- **Stick:** floating-origin, 2px cyan-soft ring with a cyan wash fill. Round, because a stick is round.
+- **Buttons:** seven round hit-rects with a steel border that flips to cyan on hold.
+- **Placement:** `Hud.layoutTouch()` writes positions from the input layer's own hit-rects, so what is drawn is exactly what is tappable, inset by the safe-area variables.
+
+## 7. Performance Rules
+
+- **Compositor-only animation.** Damage flash, low-health pulse, hitmarkers, pops and toasts animate opacity or transform.
+- **Cached DOM writes.** `setText`, `setStyle` and `setClass` compare against a cache and skip the write when nothing changed.
+- **Cached markup.** The three-slot weapon window rebuilds its `innerHTML` only when the window index changes, not 60 times a second.
+- **Throttled canvas.** The radar redraws at 20 Hz; the sweep and blips read as continuous motion at that rate and the rasterisation cost drops to a third.
+- **No filters on the canvas.** The radar's ring is CSS, because a filtered canvas is re-rasterised every frame it changes.
+- **Named-area grids with `contain`.** Panel layout and paint work stay local to the panel.
+
+## 8. Do's and Don'ts
 
 ### Do:
-- **Do** keep the Signal-Only Rule: color only where gameplay meaning exists; everything else khaki/bone.
-- **Do** chamfer plate corners with `clip-path`; keep border-radius at 0 on containers.
-- **Do** use 1px `#ded2aa47` hairlines for every container edge.
-- **Do** use hazard hatch ONLY for the primary commit button, the active mode chip, and title rules — scarcity keeps it loud.
-- **Do** uppercase + ≥0.08em tracking for labels/buttons/chips; sentence case for anything longer.
-- **Do** keep `:focus-visible` outlines (`2px solid #ff9f1c`, offset 3) on every interactive element — clip-path elements must not rely on clipped outlines.
-- **Do** honor `prefers-reduced-motion: reduce`: feedback keyframes collapse to opacity-only, screen shake is silenced in code, infinite pulses become static.
-- **Do** hide gameplay HUD (chips, radar, bars) under full-screen overlays via `hud--overlay`.
-- **Do** inset every anchored HUD cluster by `--safe-*`, and keep touch targets ≥30px radius-scaled circles.
+- **Do** keep cyan as the only interactive/current hue.
+- **Do** cut a corner or draw a bracket on every plate; keep border-radius at 0.
+- **Do** use the monospace face with tabular figures for every comparable number.
+- **Do** use ruler ticks where a heading or a scale needs a rule.
+- **Do** express direction with a 2px left rail or a 2px top edge, not a full thick border.
+- **Do** keep focus rings visible on every interactive element, using an inset ring where `clip-path` clips an outline.
+- **Do** honor `prefers-reduced-motion: reduce`: keyframes collapse to opacity-only, and transform-based hovers are removed.
+- **Do** inset every anchored cluster by the safe-area variables, and keep touch targets at least 60px across.
 
 ### Don't:
-- **Don't** ship AI-template UI per PRODUCT.md: default palettes, hero-metric cards, section eyebrows, numbered `01/02` scaffolding.
-- **Don't** resurrect the retired navy-neon look: no `#5f8cff`-family blues on HUD, no blue-on-blue glow, no backdrop-filter blur, no rounded glass cards.
-- **Don't** use gradient text (`background-clip: text`) or side-stripe borders (`border-left >1px` as accent).
-- **Don't** look playful or casual-arcade: no bounce/elastic easing, no cartoon colors, no exclamation-marked copy.
-- **Don't** add over-decorated "gamer" chrome: no scanline overlays, no glow on non-interactive elements.
-- **Don't** put display tracking (+0.28em…) on prose or body copy.
-- **Don't** animate `<img>`/scene elements decoratively; motion must report state.
+- **Don't** reintroduce the retired warm stencil look (amber signal, khaki hairlines, chamfered corners) or the earlier navy-glass look (backdrop blur, rounded glass cards, blue-on-blue glow).
+- **Don't** animate `box-shadow`, `filter` or `width` on a full-screen layer.
+- **Don't** put display tracking on prose, or monospace on prose.
+- **Don't** use gradient text or side-stripe borders thicker than 2px.
+- **Don't** ship playful or casual-arcade styling: no bounce easing, no cartoon hues, no exclamation-marked copy.
+- **Don't** add decorative chrome: no scanline overlays, no glow on non-interactive elements, no animated background textures.
