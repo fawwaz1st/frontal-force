@@ -2,26 +2,24 @@ import * as THREE from 'three';
 import { Octree } from 'three/addons/math/Octree.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { CoverSpotData } from '../ai/Tactics';
+import { MAPS, mapForSeed, type MapTheme } from './Maps';
 
 const ARENA_HALF = 47;
 export const ARENA_LIMIT = ARENA_HALF - 2;
 const REDUCE_MOTION =
   typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-const BASE_SUN_INTENSITY = 1.75;
-const BASE_AMBIENT_INTENSITY = 1.05;
 
 /** Deterministic per-run layout RNG (mulberry32). */
-function makeSkyTexture(): THREE.CanvasTexture {
+function makeSkyTexture(theme: MapTheme): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 32;
   canvas.height = 512;
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   const gradient = ctx.createLinearGradient(0, 0, 0, 512);
-  gradient.addColorStop(0, '#485760');
-  gradient.addColorStop(0.5, '#788084');
-  gradient.addColorStop(0.68, '#b0a58e');
-  gradient.addColorStop(0.76, '#8d8978');
-  gradient.addColorStop(1, '#363b35');
+  const stops = theme.sky;
+  for (let i = 0; i < stops.length; i++) {
+    gradient.addColorStop(i / (stops.length - 1), stops[i] as string);
+  }
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 32, 512);
   const texture = new THREE.CanvasTexture(canvas);
@@ -40,11 +38,12 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function makeFloorTexture(): THREE.CanvasTexture {
+function makeFloorTexture(theme: MapTheme): THREE.CanvasTexture {
+  const { base, light, dark, line, grit, repeat } = theme.floor;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 512;
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
-  ctx.fillStyle = '#55564f';
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, 512, 512);
 
   for (let i = 0; i < 90; i++) {
@@ -53,19 +52,19 @@ function makeFloorTexture(): THREE.CanvasTexture {
     const r = 20 + Math.random() * 80;
     const wet = Math.random() < 0.28;
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
-    gradient.addColorStop(0, wet ? 'rgba(24,30,30,0.34)' : 'rgba(151,145,124,0.12)');
-    gradient.addColorStop(1, wet ? 'rgba(24,30,30,0)' : 'rgba(151,145,124,0)');
+    gradient.addColorStop(0, wet ? dark : light);
+    gradient.addColorStop(1, wet ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0)');
     ctx.fillStyle = gradient;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
   for (let i = 0; i < 5200; i++) {
-    const value = 70 + Math.random() * 110;
+    const value = grit + Math.random() * 110;
     ctx.fillStyle = `rgba(${value},${value},${value - 8},${0.05 + Math.random() * 0.16})`;
     const size = Math.random() < 0.08 ? 2 : 1;
     ctx.fillRect(Math.random() * 512, Math.random() * 512, size, size);
   }
 
-  ctx.strokeStyle = 'rgba(20,22,20,0.42)';
+  ctx.strokeStyle = line;
   ctx.lineWidth = 2;
   for (let i = 0; i <= 4; i++) {
     const p = i * 128;
@@ -92,7 +91,7 @@ function makeFloorTexture(): THREE.CanvasTexture {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(14, 14);
+  texture.repeat.set(repeat, repeat);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   return texture;
@@ -125,6 +124,87 @@ export class World {
   /** Base fog density, captured at build so a mutation is always relative. */
   private baseFogDensity = 0.005;
 
+  // ---------------------------------------------------------------------
+  // Arena theme. Every run rebuilds the same GEOMETRY (so the octree, the AI
+  // and the cover claims all stay valid) but re-skins it: palette, sky, fog,
+  // light colour and cover density. That is what makes a new seed a new map
+  // instead of the same yard with the crates moved.
+  // ---------------------------------------------------------------------
+  private theme: MapTheme = MAPS[0] as MapTheme;
+  private themeIndex = -1;
+  private floorMaterial: THREE.MeshStandardMaterial | null = null;
+  private wallMaterial: THREE.MeshStandardMaterial | null = null;
+  private capMaterial: THREE.MeshStandardMaterial | null = null;
+  private skyMaterial: THREE.MeshBasicMaterial | null = null;
+  private sunDiscMaterial: THREE.MeshBasicMaterial | null = null;
+  private cloudMaterial: THREE.MeshBasicMaterial | null = null;
+  private dustMaterial: THREE.PointsMaterial | null = null;
+  private readonly rangeMaterials: THREE.MeshStandardMaterial[] = [];
+  private readonly rangeLamps: THREE.PointLight[] = [];
+
+  /** Short theme name for the HUD and the debrief board. */
+  public get themeName(): string {
+    return this.theme.name;
+  }
+
+  /** One-line place description, shown under the theme name. */
+  public get themeTagline(): string {
+    return this.theme.tagline;
+  }
+
+  /**
+   * Re-skin the arena for `theme`. Everything here is a material or light
+   * property: no geometry is touched, so the collision octree built for this
+   * run stays exactly as valid as it was.
+   *
+   * `regenerateTextures` is separate from the colour pass because the canvas
+   * textures cost a few milliseconds each. The colour pass must run on every
+   * rebuild (the scene's fog is created by the owner AFTER build(), so a
+   * same-theme rebuild still has to re-assert it), while the textures only
+   * need rebuilding when the theme actually changes.
+   */
+  private applyTheme(theme: MapTheme, regenerateTextures: boolean): void {
+    if (regenerateTextures && this.floorMaterial) {
+      this.floorMaterial.map?.dispose();
+      this.floorMaterial.map = makeFloorTexture(theme);
+      this.floorMaterial.needsUpdate = true;
+    }
+    if (this.floorMaterial) this.floorMaterial.color.setHex(theme.floor.color);
+    this.wallMaterial?.color.setHex(theme.wall.body);
+    this.capMaterial?.color.setHex(theme.wall.cap);
+    if (regenerateTextures && this.skyMaterial) {
+      this.skyMaterial.map?.dispose();
+      this.skyMaterial.map = makeSkyTexture(theme);
+      this.skyMaterial.needsUpdate = true;
+    }
+    this.sunDiscMaterial?.color.setHex(theme.light.sun);
+    this.cloudMaterial?.color.setHex(theme.fog.color);
+    this.dustMaterial?.color.setHex(theme.dust);
+    // Range furniture picks up the theme's masonry and fabric tones so the
+    // bunker and the berms do not stay limestone-brown on a night map.
+    const [stone, concrete, steel, tarp, ochre, dark] = this.rangeMaterials;
+    stone?.color.setHex(theme.wall.body);
+    concrete?.color.setHex(theme.wall.cap);
+    steel?.color.setHex(theme.cover.dark);
+    tarp?.color.setHex(theme.cover.crate);
+    ochre?.color.setHex(theme.cover.glow);
+    dark?.color.setHex(theme.cover.dark);
+    for (const lamp of this.rangeLamps) lamp.color.setHex(theme.cover.glow);
+    // Fog and key light are the two strongest cues that the place changed.
+    if (this.scene?.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.setHex(theme.fog.color);
+      this.baseFogDensity = theme.fog.density;
+      this.scene.fog.density = this.baseFogDensity * this.fogMul;
+    }
+    if (this.scene) this.scene.background = new THREE.Color(theme.fog.color);
+    if (this.skyLight) {
+      this.skyLight.color.setHex(theme.light.sky);
+      this.skyLight.groundColor.setHex(theme.light.ground);
+    }
+    if (this.sunLight) this.sunLight.color.setHex(theme.light.sun);
+    this.applyMutation(this.fogMul, this.sunMul, this.ambientMul);
+  }
+
   /**
    * Apply an arena mutation. Only light intensity and fog density change: the
    * geometry, the octree and the AI never do, so a mutation cannot invalidate
@@ -134,8 +214,8 @@ export class World {
     this.fogMul = Math.max(0.2, fogMul);
     this.sunMul = Math.max(0.05, sunMul);
     this.ambientMul = Math.max(0.05, ambientMul);
-    if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul;
-    if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul;
+    if (this.sunLight) this.sunLight.intensity = this.theme.light.sunIntensity * this.sunMul;
+    if (this.skyLight) this.skyLight.intensity = this.theme.light.ambientIntensity * this.ambientMul;
     if (this.scene?.fog instanceof THREE.FogExp2) {
       this.scene.fog.density = this.baseFogDensity * this.fogMul;
     }
@@ -157,6 +237,21 @@ export class World {
 
   /** Fresh cover layout + spawn/pickup points + collision per run. */
   public rebuild(seed: number): void {
+    // The theme is part of the seed, so a shared seed code reproduces both the
+    // layout AND the place. Consecutive seeds are spread across themes by
+    // `mapForSeed`'s avalanche, so the rotation never looks like "next".
+    const nextIndex = mapForSeed(seed);
+    const changed = nextIndex !== this.themeIndex;
+    if (changed) {
+      this.themeIndex = nextIndex;
+      // Fall back to the first theme rather than trusting the index: a bad
+      // lookup must degrade to a different-looking arena, never to no arena.
+      this.theme = MAPS[nextIndex] ?? (MAPS[0] as MapTheme);
+    }
+    // The colour pass runs on EVERY rebuild: the scene's fog and background
+    // are owned by Game and created after build(), so this is the only place
+    // that can guarantee they match the theme.
+    this.applyTheme(this.theme, changed);
     const rnd = mulberry32(seed);
     this.generateCover(rnd);
     this.markPoints(rnd);
@@ -199,12 +294,16 @@ export class World {
       material.opacity = flash;
       this.lightningBolt.visible = flash > 0;
     }
-    if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul + flash * 2.4;
-    if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul + flash * 1.5;
+    if (this.skyLight) {
+      this.skyLight.intensity = this.theme.light.ambientIntensity * this.ambientMul + flash * 2.4;
+    }
+    if (this.sunLight) {
+      this.sunLight.intensity = this.theme.light.sunIntensity * this.sunMul + flash * 1.5;
+    }
     if (t > 0.38) {
       this.lightningTime = -1;
-      if (this.skyLight) this.skyLight.intensity = BASE_AMBIENT_INTENSITY * this.ambientMul;
-      if (this.sunLight) this.sunLight.intensity = BASE_SUN_INTENSITY * this.sunMul;
+      if (this.skyLight) this.skyLight.intensity = this.theme.light.ambientIntensity * this.ambientMul;
+      if (this.sunLight) this.sunLight.intensity = this.theme.light.sunIntensity * this.sunMul;
     }
   }
 
@@ -270,12 +369,13 @@ export class World {
   }
 
 private buildRangeDetails(): void {
-    const limestone = new THREE.MeshStandardMaterial({ color: 0x9b927a, roughness: 0.96, metalness: 0.01 });
-    const concrete = new THREE.MeshStandardMaterial({ color: 0x62645b, roughness: 0.9, metalness: 0.03 });
-    const steel = new THREE.MeshStandardMaterial({ color: 0x3c443e, roughness: 0.58, metalness: 0.72 });
-    const tarp = new THREE.MeshStandardMaterial({ color: 0x3d4933, roughness: 0.98, metalness: 0.01 });
-    const ochre = new THREE.MeshStandardMaterial({ color: 0x9b5d2f, roughness: 0.82, metalness: 0.05 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x252820, roughness: 0.86, metalness: 0.08 });
+    const limestone = new THREE.MeshStandardMaterial({ color: this.theme.wall.body, roughness: 0.96, metalness: 0.01 });
+    const concrete = new THREE.MeshStandardMaterial({ color: this.theme.wall.cap, roughness: 0.9, metalness: 0.03 });
+    const steel = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.58, metalness: 0.72 });
+    const tarp = new THREE.MeshStandardMaterial({ color: this.theme.cover.crate, roughness: 0.98, metalness: 0.01 });
+    const ochre = new THREE.MeshStandardMaterial({ color: this.theme.cover.glow, roughness: 0.82, metalness: 0.05 });
+    const dark = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.86, metalness: 0.08 });
+    this.rangeMaterials.push(limestone, concrete, steel, tarp, ochre, dark);
 
     const bermGeometry = new THREE.ConeGeometry(1, 1, 4);
     const bermMaterial = limestone;
@@ -331,11 +431,12 @@ private buildRangeDetails(): void {
 
   private buildFloor(): void {
   const material = new THREE.MeshStandardMaterial({
-    map: makeFloorTexture(),
-    color: 0xbfb8a3,
+    map: makeFloorTexture(this.theme),
+    color: this.theme.floor.color,
     roughness: 0.48,
     metalness: 0.08,
   });
+  this.floorMaterial = material;
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(ARENA_HALF * 2, 1, ARENA_HALF * 2),
     material,
@@ -347,15 +448,17 @@ private buildRangeDetails(): void {
 
   private buildWalls(): void {
   const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0x817967,
+    color: this.theme.wall.body,
     roughness: 0.88,
     metalness: 0.02,
   });
   const capMaterial = new THREE.MeshStandardMaterial({
-    color: 0x494a42,
+    color: this.theme.wall.cap,
     roughness: 0.72,
     metalness: 0.16,
   });
+  this.wallMaterial = wallMaterial;
+  this.capMaterial = capMaterial;
   const wallGeometry = new THREE.BoxGeometry(ARENA_HALF * 2, 4.8, 1.25);
   const capGeometry = new THREE.BoxGeometry(ARENA_HALF * 2, 0.42, 1.55);
   const buttressGeometry = new THREE.BoxGeometry(0.55, 3.8, 1.8);
@@ -379,35 +482,39 @@ private buildRangeDetails(): void {
 
   /** Star dome above the walls — fog-free so it survives FogExp2. */
   private buildSky(scene: THREE.Scene): void {
+  const skyMaterial = new THREE.MeshBasicMaterial({
+    map: makeSkyTexture(this.theme),
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+  this.skyMaterial = skyMaterial;
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(150, 32, 18),
-    new THREE.MeshBasicMaterial({
-      map: makeSkyTexture(),
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-    }),
+    skyMaterial,
   );
   sky.renderOrder = -100;
   scene.add(sky);
 
-  const sun = new THREE.Mesh(
-    new THREE.CircleGeometry(4.8, 32),
-    new THREE.MeshBasicMaterial({ color: 0xffd7a0, fog: false, transparent: true, opacity: 0.9 }),
-  );
+  const sunMaterial = new THREE.MeshBasicMaterial({
+    color: this.theme.light.sun, fog: false, transparent: true, opacity: 0.9,
+  });
+  this.sunDiscMaterial = sunMaterial;
+  const sun = new THREE.Mesh(new THREE.CircleGeometry(4.8, 32), sunMaterial);
   sun.position.set(-72, 25, -104);
   sun.lookAt(0, 0, 0);
   sun.renderOrder = -99;
   scene.add(sun);
 
   const cloudMaterial = new THREE.MeshBasicMaterial({
-    color: 0x5e6260,
+    color: this.theme.fog.color,
     transparent: true,
     opacity: 0.16,
     depthWrite: false,
     fog: false,
     side: THREE.DoubleSide,
   });
+  this.cloudMaterial = cloudMaterial;
   for (const [x, y, z, scaleX, scaleY] of [
     [-60, 65, -85, 42, 8],
     [48, 74, -70, 55, 10],
@@ -458,11 +565,11 @@ private buildRangeDetails(): void {
     this.footprints.length = 0;
     this.coverSpots.length = 0;
 
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0x24304c, roughness: 0.6, metalness: 0.35 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x141c2e, roughness: 0.55, metalness: 0.4 });
+    const crateMat = new THREE.MeshStandardMaterial({ color: this.theme.cover.crate, roughness: 0.6, metalness: 0.35 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.55, metalness: 0.4 });
     const glowMat = new THREE.MeshStandardMaterial({
       color: 0x0a0f1c,
-      emissive: 0xff7a33,
+      emissive: this.theme.cover.glow,
       emissiveIntensity: 1.6,
       roughness: 0.4,
     });
@@ -530,8 +637,11 @@ private buildRangeDetails(): void {
       mark(x, z, 1.4);
     }
 
-    // Scattered clusters (12–17), each rejected until it clears every footprint
-    const clusters = 12 + Math.floor(rnd() * 6);
+    // Scattered clusters (12–17), each rejected until it clears every footprint.
+    // The theme's density multiplier scales the count: FROST LINE is sparse
+    // (long sight lines, little free cover) and RUST WORKS is crowded, which
+    // changes how a wave plays without changing how the AI works.
+    const clusters = Math.max(6, Math.round((12 + Math.floor(rnd() * 6)) * this.theme.density));
     for (let i = 0; i < clusters; i++) {
       let x = 0;
       let z = 0;
@@ -606,10 +716,12 @@ private buildRangeDetails(): void {
   }
 
   private buildLights(scene: THREE.Scene): void {
-    this.skyLight = new THREE.HemisphereLight(0xa8b0ad, 0x24261f, BASE_AMBIENT_INTENSITY);
+    this.skyLight = new THREE.HemisphereLight(
+      this.theme.light.sky, this.theme.light.ground, this.theme.light.ambientIntensity,
+    );
     scene.add(this.skyLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffe0b0, BASE_SUN_INTENSITY);
+    this.sunLight = new THREE.DirectionalLight(this.theme.light.sun, this.theme.light.sunIntensity);
     this.sunLight.position.set(-30, 42, -24);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(1536, 1536);
@@ -628,8 +740,9 @@ private buildRangeDetails(): void {
     scene.add(this.sunLight, this.sunLight.target);
 
     for (const [x, y, z] of [[-18, 4, -14], [18, 4, 5], [0, 4.5, 28]] as Array<[number, number, number]>) {
-      const light = new THREE.PointLight(0xffb35a, 22, 24, 2);
+      const light = new THREE.PointLight(this.theme.cover.glow, 22, 24, 2);
       light.position.set(x, y, z);
+      this.rangeLamps.push(light);
       scene.add(light);
     }
   }
@@ -645,13 +758,14 @@ private buildRangeDetails(): void {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial({
-      color: 0xc5b18a,
+      color: this.theme.dust,
       size: 0.045,
       transparent: true,
       opacity: 0.28,
       depthWrite: false,
       fog: true,
     });
+    this.dustMaterial = material;
     this.dust = new THREE.Points(geometry, material);
     this.group.add(this.dust);
   }

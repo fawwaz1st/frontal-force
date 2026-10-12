@@ -1,14 +1,22 @@
+﻿# Dependencies and build output
 node_modules/
 dist/
+
+# Logs
 *.log
+
+# OS junk
 .DS_Store
+Thumbs.db
+
+# Editor / tool caches (not part of the game)
 .serena/
 .freebuff/
-.impeccable/live/sessions/
-.gitstate.txt
+.impeccable/
+.idea/
+
+# Local scratch files
+*.tmp
+*.bak
 rawstate.txt
 tracked.txt
-fb.txt
-gitcfg.txt
-wheregit.txt
-log.txt

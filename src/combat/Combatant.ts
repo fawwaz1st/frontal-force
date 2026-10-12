@@ -28,8 +28,9 @@ export interface CombatTarget {
   readonly targetable: boolean;
   /** 0..1 how squarely this target is aiming back at `from` (0 = facing away). */
   aimPressureAt(from: THREE.Vector3): number;
-  /** Called when an enemy attack lands on this target. */
-  receiveDamage(amount: number, from: THREE.Vector3): void;
+  /** Called when an enemy attack lands on this target. `source` is a short
+   *  player-facing label so the HUD can say WHERE the damage came from. */
+  receiveDamage(amount: number, from: THREE.Vector3, source?: string): void;
 }
 
 /**

@@ -30,6 +30,12 @@ export interface SaveData {
   /** Selected challenge wagers — persisted so a wager is not re-picked every
    *  session. Validated against the allowlist on load. */
   challenges: ChallengeId[];
+  /**
+   * Equipped weapon ids, in slot order. Stored as plain strings and repaired
+   * by `sanitizeLoadout` on load, so a renamed or removed weapon degrades to
+   * the default kit instead of leaving the player unarmed.
+   */
+  loadout: string[];
 }
 
 export const DEFAULT_SAVE: SaveData = {
@@ -47,6 +53,7 @@ export const DEFAULT_SAVE: SaveData = {
   volume: 0.42,
   mode: 'standard',
   challenges: [],
+  loadout: [],
 };
 
 const finite = (v: unknown, def: number): number =>
@@ -90,6 +97,12 @@ export function loadSave(): SaveData {
     const rawChallenges = Array.isArray(p.challenges) ? p.challenges : [];
     const chosen = new Set(rawChallenges.filter(isChallengeId));
     out.challenges = CHALLENGE_IDS.filter((id) => chosen.has(id));
+    // Loadout: stored as raw strings and repaired by the caller, which owns
+    // the weapon table. Keeping the repair there means this layer never has to
+    // import the combat module just to validate a save field.
+    out.loadout = Array.isArray(p.loadout)
+      ? p.loadout.filter((v): v is string => typeof v === 'string').slice(0, 8)
+      : [];
     // Additive lifetime counters: hydrate with defaults so legacy saves (and
     // tampered payloads) can never inject NaN/unknown keys into the UI.
     out.version = 1;

@@ -6,6 +6,31 @@ Built with Three.js, TypeScript, and Vite. Every visual is procedural and every 
 
 **Play it:** https://fawwaz1st.github.io/frontal-force/
 
+![Combat on Frost Line](docs/screenshots/map-frost.png)
+
+---
+
+## Four arenas, chosen by your seed
+
+The map is part of the seed code, so a shared seed reproduces both the layout and the place. Each theme changes the palette, sky, fog, light colour, and cover density. Consecutive seeds are spread by an avalanche hash, so the rotation never looks like "next".
+
+| Dawn Range | Night Yard | Rust Works | Frost Line |
+| --- | --- | --- | --- |
+| ![Dawn Range](docs/screenshots/map-dawn.png) | ![Night Yard](docs/screenshots/map-night.png) | ![Rust Works](docs/screenshots/map-rust.png) | ![Frost Line](docs/screenshots/map-frost.png) |
+| Cold light, long shadows, normal cover. | Dark and tight, lit by work lamps. Denser cover. | Hot haze over dead machinery. Densest cover. | White ground, blue air, sparse cover and long sight lines. |
+
+## Scope, charge, and ricochet
+
+Every weapon has a real aimed FOV, and two carry a magnified optic with a scope overlay. The rail also charges for a bigger hit and ricochets twice off cover.
+
+![Scoped on the Lance Rail](docs/screenshots/scope.png)
+
+## A four-slot loadout, chosen once
+
+Ten weapons exist; you carry four. The loadout screen is where the arsenal lives, so mid-fight you are deciding when to swap, not scrolling a list.
+
+![The loadout screen](docs/screenshots/loadout.png)
+
 ## Run locally
 
 ```bash
@@ -14,7 +39,7 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 54 logic regression tests, no browser needed
+npm run check:self  # 99 logic regression tests, no browser needed
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -38,12 +63,12 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | WASD | Move |
 | Mouse | Aim |
 | LMB | Fire |
-| RMB | Aim down sights |
+| RMB | Aim down sights (scopes the magnified optics) |
 | Space | Jump |
 | Shift | Sprint |
-| C / Ctrl | Crouch, slide while sprinting |
+| C / Ctrl | Crouch. Press while sprinting to **slide** |
 | R | Reload |
-| 1-9 / wheel | Switch weapon (10 slots) |
+| 1-4 / wheel | Switch weapon (your four slots) |
 | Shift+W / double-tap W | Dash (2 charges, 0.12 s invulnerability) |
 | G (hold to cook, release to throw) | Grenade: frag, smoke, or EMP |
 | F | Cycle grenade kind |
@@ -51,6 +76,14 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | Esc / P | Pause |
 
 **Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and on-screen buttons cover fire, jump, reload, crouch, dash, grenade, and melee. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.
+
+## Reading the screen
+
+![HUD](docs/screenshots/combat.png)
+
+- **World markers.** Every enemy and ally carries a marker: a dot filled to its health, coloured by enemy kind (the same hues the radar uses), with a glyph for the ones that change how you fight (`X` sniper, `+` healer, `S` summoner, `!` exploder, `E` elite, `B` boss, `A` ally). Off-screen markers clamp to the edge and hollow out.
+- **Named damage.** Every source that can hurt you names itself: the arc shows *where* the hit came from, the label under the crosshair shows *what* did it (`▲ EXPLODER`, `▲ TESLA COIL`, `▲ BARREL BLAST`, `▲ AFFIX BURN`, `▲ YOUR OWN BLAST`, or the shooter's kind for a bolt).
+- **Radar** for the wider picture, at 20 Hz so it costs a third of a 60 Hz redraw.
 
 ## The run loop
 
@@ -93,16 +126,18 @@ The selection persists between sessions, shows a live payout readout in the menu
 
 | Enemy | Behavior |
 | --- | --- |
-| Grunt | Baseline rifleman. |
-| Rusher | Fast melee flanker that commits to a charge. |
-| Gunner | Slow, long-range cannon with heavy bolts. |
-| Warden | 180 HP mid-range shooter behind a riot shield. Frontal shots inside a +/-60 deg cone land at 50 % and charge a 6-block guard meter that breaks for 1.2 s; flank shots deal x1.5. The shield also drops during its 0.45 s wind-up, so trading the telegraph is the counter-play. |
-| Sniper | Long-range one-shot threat: a laser telegraph, then a fast hard-hitting bolt. |
-| Flyer | Drone that ignores cover and orbits at head height. |
-| Exploder | Charges and detonates; killing it early is the counter-play. |
-| Healer | Fragile support healing 3 %/s to every enemy within 9 m, which changes target priority. |
-| Summoner | Spawns a grunt every 6 s and ignores the player to keep the pipeline running. |
-| Warden Prime | Boss on every fifth wave. 2200 HP, three phases, a glowing rear core that takes x2.5 damage. Enough rear-core damage (18% of max health, post-multiplier) destroys the core permanently, so flanking it is a real objective rather than a temporary bonus. |
+| Grunt | Baseline rifleman. Matte scavenged plates. |
+| Rusher | Fast melee flanker that commits to a charge, and slides the last few metres. Bare frame, almost no plate. |
+| Gunner | Slow, long-range cannon with heavy bolts. Wide, thick industrial plating. |
+| Warden | 180 HP mid-range shooter behind a riot shield. Frontal shots inside a +/-60 deg cone land at 50 % and charge a 6-block guard meter that breaks for 1.2 s; flank shots deal x1.5. The shield also drops during its 0.45 s wind-up, so trading the telegraph is the counter-play. Polished ceramic plate. |
+| Sniper | Long-range one-shot threat: a laser telegraph, then a fast hard-hitting bolt. Narrow, small-headed, almost matte black. |
+| Flyer | Drone that ignores cover and orbits at head height. Thin glossy composites. |
+| Exploder | Charges and detonates; killing it early is the counter-play. The glowing charge tank is the threat, readable from the silhouette. |
+| Healer | Fragile support healing 3 %/s to every enemy within 9 m, which changes target priority. The only bright white body on the field. |
+| Summoner | Spawns a grunt every 6 s and ignores the player to keep the pipeline running. Deep violet lacquer, tall and thin. |
+| Warden Prime | Boss on every fifth wave. 2200 HP, three phases, a glowing rear core that takes x2.5 damage. Enough rear-core damage (18% of max health, post-multiplier) destroys the core permanently, so flanking it is a real objective rather than a temporary bonus. Gold-plated and self-lit. |
+
+Every kind carries its own **armour look**: plate tint, roughness, metalness, body glow, and plate glow (`ARMOR_LOOK`), plus its own **proportions** (`PROPORTION`: shoulder width, pad size, head scale). Ten archetypes sharing one gunmetal frame with a coloured strip was why the roster read as the same model ten times.
 
 ### Affixes
 
@@ -112,6 +147,7 @@ From wave 4, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloadi
 
 - **Threat table.** The player and both escorts implement `CombatTarget` (`src/combat/Combatant.ts`). Enemies score every visible candidate with a weighted utility function (proximity 0.30, role 0.20, aggression/grudge 0.20, fragility 0.15, aimPressure 0.15) and commit to the best one.
 - **Stickiness.** 0.25 s staggered re-score, 1.25x switch hysteresis, 1.5 s minimum commitment, two perception radii to stop boundary flicker, 6 s alerted memory, and a squad alert that propagates on damage in O(n).
+- **Agility.** Three short committed bursts punctuate the walk cycle instead of replacing it: a **dodge** (0.32 s, x2.35 speed) fired reactively the moment an agent takes fire, aimed to whichever side of the shot line it already occupies so it never runs into the stream; a **juke** (0.26 s, x2.1) that breaks a straight approach on a staggered 1.4-3.6 s cadence; and a **slide** (0.55 s, x2.9) used only by rushers and exploders, only inside a 9 m commit window. A burst owns movement outright for its duration and the body drops and pitches through it, so a dodge reads as a dodge and not as a slightly faster strafe. Staggered agents and flyers never burst.
 - **Projectile ownership.** A bolt carries the id of the friendly it was aimed at, so a stray round never hits a bystander.
 - **Escorts are autonomous.** Anchor + leash + role slot: the owner position is quantized to a 3 m grid and used only as an idle anchor. Soft leash 18 m, hard leash 26 m, squad role auction every 2 s (flanker <=12 m, overwatch 10-20 m, opposite orbit signs), and self-preservation that retreats under 30 % HP and re-engages at 55 %.
 
@@ -133,22 +169,29 @@ Enemies also carry affix riders that fire when they hit you: Blazing sets you bu
 
 ## Arsenal
 
-Ten weapons (`WEAPON_ORDER` in `src/combat/weapons.ts`), each with a full stat block.
+Ten weapons (`src/combat/weapons.ts`), four equipped at a time. Each one has a full stat block plus an aimed FOV, a scope flag, a movement weight, and a role line that the loadout screen shows.
 
 | Weapon | Role |
 | --- | --- |
 | Vanguard AR | Baseline auto rifle. |
-| Hornet SMG | Fast, close, wide spread. |
+| Hornet SMG | Fast, close, wide spread, and the lightest feet (+8% move). |
 | Breaker SG | 9-pellet burst, 40 m ceiling. |
-| Lance Rail | 130-damage precision single shot. |
-| Harrier DMR | Three-taps a warden while still one-shotting a grunt. |
-| Bastion LMG | 100-round lane holder, 3.3x the AR's base spread. |
-| Sidewinder | 105-round pool and the fastest reload. |
-| Siegebreaker | 4 m splash with linear falloff to a 35 % floor, plus a separate 3.2 m self-damage radius capped at 35. |
+| Lance Rail | 130-damage precision single shot. **Scoped** (18 deg), **charges** 0.6 s for x1.35, **ricochets twice** off cover. |
+| Harrier DMR | Three-taps a warden while still one-shotting a grunt. **Scoped** (26 deg). |
+| Bastion LMG | 100-round lane holder, 3.3x the AR's base spread, heaviest gun (-18% move). |
+| Sidewinder | 105-round pool, fastest reload, lightest of all (+12% move). |
+| Siegebreaker | 4 m splash with linear falloff to a 35 % floor, plus a separate 3.2 m self-damage radius capped at 35. **Charges** 0.4 s for x1.2. |
 | Helios Beam | 0.012 moving spread: the only weapon that does not degrade while strafing. |
 | Trident Burst | Three sequential rounds (~288 rpm); ten trigger pulls per 1.8 s reload. |
 
-The HUD names the equipped weapon and shows a three-slot window (previous / current / next) plus an `n/10` index.
+The HUD shows all four equipped slots at once, plus the `n/4` index, and a charge ring for the weapons that charge.
+
+### Loadout rules
+
+- Four slots (`LOADOUT_SLOTS`), persisted in the save.
+- Choosing a weapon already in another slot **swaps** the two positions rather than duplicating it.
+- `sanitizeLoadout` drops unknown and duplicate ids and pads from the default kit, so a save from an older build can never leave you unarmed.
+- Movement weight applies to every ground speed including the slide, so the loadout has a real cost and the choice cannot collapse to "most damage".
 
 ## Precision model
 
@@ -175,12 +218,12 @@ Accuracy is treated as a system, not a stat:
 src/
   core/     loop.ts (fixed timestep + spiral guard) · math.ts · storage.ts (save schema v1) · quality.ts (tier detect + frame governor) · rng.ts (seeded, deterministic)
   input/    Input.ts (keyboard/mouse/pointer-lock + touch fallback) · TouchControls.ts (pointerId map, stick, buttons)
-  player/   Player.ts (capsule movement, look, recoil, dash, shield)
-  combat/   weapons.ts (10 defs) · WeaponController.ts (fire/reload/switch/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
+  player/   Player.ts (capsule movement, look, recoil, crouch/slide, dash, shield)
+  combat/   weapons.ts (10 defs + 4-slot loadout rules) · WeaponController.ts (fire/reload/switch/charge/ricochet/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
   ai/       Enemies.ts (AI, affix hooks, projectiles, boss phases, radar feed) · Affixes.ts (14 elite modifiers) · Ally.ts (escort bots) · Tactics.ts (cover claims)
   game/     Game.ts (orchestrator) · Run.ts (seeded run state + stats) · Waves.ts (modes, mutations, boss cadence) · Challenges.ts (6 difficulty wagers) · Upgrades.ts (40 cards) · Achievements.ts · AchievementCounters.ts
   ui/       Hud.ts (HUD, menu, death card, ledger) · Draft.ts (card picker) · Kiosk.ts (salvage shop) · icons.ts (inline SVG set)
-  world/    World.ts (arena, octree, cover) · Hazards.ts (barrels/tesla/vents) · Pickups.ts
+  world/    World.ts (arena, octree, cover) · Maps.ts (4 arena themes) · Hazards.ts (barrels/tesla/vents) · Pickups.ts
   render/   Effects.ts (pooled particles, tracers, decals) · Viewmodel.ts (first-person weapon)
   audio/    Audio.ts (synthesized WebAudio: weapons, impacts, music)
 ```
@@ -190,9 +233,12 @@ Data flows one way: `Input -> Game -> simulation modules -> HudState -> Hud (DOM
 ### Design rules the code follows
 
 - **Fixed timestep simulation, interpolated rendering.** The sim runs at a fixed rate with a spiral guard; the camera interpolates between ticks, so aim stays smooth on high-refresh displays and shots resolve against the tick that fired them.
-- **Everything random is seeded.** The arena layout, spawn order, card offers, and affix rolls all come from the run seed, which is why a seed code reproduces a run.
+- **Everything random is seeded.** The arena layout, the arena THEME, spawn order, card offers, and affix rolls all come from the run seed, which is why a seed code reproduces a run.
+- **A theme may change looks, never the rules.** `applyTheme` only writes material and light properties. Geometry, the collision octree, and cover claims are identical across themes, so a new map can never invalidate what a player learned about cover.
+- **Every health point is attributable.** Anything that can damage the player passes a source label, and the HUD prints it. "I lost health and I do not know why" is a bug, not a difficulty.
+- **A dark map still has to be playable.** A test asserts a luminance floor for every theme, because a night that hides the enemies is a bug wearing atmosphere as a disguise.
 - **Zero external assets.** Geometry, materials, icons, and audio are generated in code.
-- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering) and runs in CI before every deploy.
+- **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, slide gating, stand-up probe ordering, theme index range, theme luminance floor, loadout sanitising, charge gating, ricochet bounds) and runs in CI before every deploy.
 
 ## Performance
 

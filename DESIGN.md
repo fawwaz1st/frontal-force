@@ -213,7 +213,7 @@ Crate plate with a cut top-right corner, a 2px left rail and a 1px hairline bord
 ### Readouts (footer rail)
 - **Integrity:** 12px track with quarter ticks, lime gradient fill, crimson under 30%. The shield rides on the bar as a second cyan segment so health and plating read as one pool.
 - **Abilities:** two compact plates with a 3px recharge bar. A banked charge makes the bar cyan; a depleted chip dims; a cooking grenade turns the plate gold and the bar tracks the cook.
-- **Weapon:** name plus `n/10` index, a three-slot window (previous / current / next) where the current slot is the cyan variant, and a 32px monospace ammo readout that swaps to a spinning glyph while reloading.
+- **Weapon:** name plus `n/4` index and ALL FOUR equipped slots (the current slot is the cyan variant). A three-slot window was a workaround for ten weapons; with a four-slot loadout the whole kit fits, so nothing is one scroll away. A charge ring sits on the plate's top-right corner for the weapons that charge, and turns gold at full.
 
 ### Draft cards
 Grid rows: rarity / name / description / owned. The rarity is a 3px top edge in the tier hue (steel, cyan, gold) plus a monospace rarity label. Legendary trades the solid edge for hazard hatch. Hover lifts the card 2px and tints the border with its tier hue.
@@ -223,6 +223,27 @@ A two-column grid per row (text block, price) so prices align in a column. Purch
 
 ### Signature: Crosshair
 Four corner brackets around a 4px cyan dot. The brackets translate outward with `--ch-gap`, which is the real weapon cone projected to pixels, so the reticle is the spread readout. It dims to 28% when pointer lock is lost.
+
+### Signature: World markers
+A world-space indicator over every enemy and ally, projected by `Game` and placed by the HUD. Structure: a dot whose inner bar height is `--hp` (health without a second element), a glyph, and a range number.
+
+- **Colour is the KIND**, set inline from the same cached hue the radar uses, so a new enemy kind is legible the day it ships with no CSS change.
+- **Shape and size are the ROLE** (`--enemy` / `--elite` / `--boss` / `--ally`), so a threat is never just another dot.
+- **Glyphs** mark the kinds that change how you fight: `X` sniper, `+` healer, `S` summoner, `!` exploder, `E` elite, `B` boss, `A` ally.
+- **Off-screen markers clamp to the edge** and hollow out (transparent fill, 1.5px border, 60% opacity), so a flanking enemy cannot arrive unannounced and a marker never points the wrong way.
+
+### Signature: Named damage
+Two layers, because they answer different questions. The arc around the crosshair says **where** the hit came from; the label under it says **what** did it.
+
+The label is monospace, 11px, crimson, on a cut-corner plate with a `▲` prefix. It fades over 2.4 s from full to 25% opacity so it never competes with the next hit. Every source that can damage the player passes a label: enemy kinds use their own name, hazards use `TESLA COIL` / `STEAM VENT` / `BARREL BLAST`, damage over time uses `AFFIX BURN`, and self-inflicted blast uses `YOUR OWN BLAST`.
+
+### Signature: Scope
+Only rendered for the magnified optics, and it fades in with the aim so the transition is never a hard cut. A radial mask punches the sight picture out of a near-black field; two hairline cyan crossbars with a centre gap keep the target uncovered; a repeating-gradient tick ladder runs down the vertical.
+
+### Signature: Menu tabs
+Four tabs (`PLAY`, `LOADOUT`, `RECORDS`, `SETTINGS`) with exactly one panel visible. The menu card's named-area grid is replaced by a single column so no block rule has to change. `DEPLOY` stays outside the panel and is visible on every tab, because the primary action must not require a tab switch. The panel is the only scroll region, so a long ledger scrolls inside a fixed frame instead of pushing DEPLOY off screen.
+
+The menu opens on `PLAY` every time: the panel you came back for is the one that starts a run, not whatever you were last fiddling with.
 
 ### Signature: Scrollbars
 Track is a recessed dark rail with a 1px steel divider; the thumb is a slim steel bar inset 3px inside the track via `background-clip: content-box`. Hover turns the thumb cyan-soft, active turns it full cyan. Firefox gets the equivalent through `scrollbar-width: thin` and `scrollbar-color`.
@@ -242,6 +263,9 @@ carrier, and the number is the precision layer under it, never the whole read.
 | **Progress ring** | Achievement completion | SVG stroke driven by a `--p` percentage. The count sits beside it. |
 | **Chip meter** | Salvage toward the kiosk's top price | Scaled to a real threshold in the game (120 salvage), so "can I afford it" is a glance. |
 | **Icon plate** | Kiosk rows | A 34px glyph per row, chosen from the item id, so a list is scannable by shape. |
+| **World marker** | Every enemy and ally | Kind hue for colour, role class for shape, `--hp` fill for health, a glyph only for the kinds that change how you fight, and a range number. |
+| **Named-damage label** | Every hit the player takes | Names the source. A damage-over-time or a hazard with no visible attacker is the most confusing way to lose health, so it must name itself. |
+| **Charge ring** | Charge-up weapons | An SVG stroke driven by real charge progress. Turns gold and pulses at full: the "release now" tell. |
 
 ### Named Rules
 **The Carrier Rule.** A readout that only shows a number is unfinished. Give it a meter, a pip row, a ring or a medal; keep the number as the precision under it.
@@ -249,6 +273,12 @@ carrier, and the number is the precision layer under it, never the whole read.
 **The Stated Scale Rule.** Every meter names what full means (a 10-minute survival bar, a 20:1 damage trade, a x16 combo). A bar without a stated scale is decoration.
 
 **The Zero Hides Rule.** Emblems and secondary readouts do not render at zero. A trophy strip shows what the run earned, not what it lacked.
+
+**The Name-It Rule.** Anything that can take a point of health off the player must say what it was. An unattributed hit is a bug regardless of how it was tuned.
+
+**The One-Panel Rule.** A menu shows one thing at a time. If two panels are both visible, one of them is a distraction and the other is buried.
+
+**The Legibility-Over-Mood Rule.** A theme may be as dark as it likes, but only down to the point where a silhouette still reads against the floor. A night that hides the enemies is a bug wearing atmosphere as a disguise.
 
 ### Touch Overlay
 - **Stick:** floating-origin, 2px cyan-soft ring with a cyan wash fill. Round, because a stick is round.

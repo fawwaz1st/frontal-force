@@ -1,0 +1,342 @@
+/* ==========================================================================
+   Scope, charge ring, and the loadout screen.
+   These three are one feature set: the loadout is where you choose an optic,
+   the scope is what that optic looks like when you use it, and the charge ring
+   is the tell for the heavy weapons that trade rate for a single big hit.
+   ========================================================================== */
+
+/* ---------- Scope overlay ---------- */
+/* Only present for magnified optics. The mask is a radial hole punched in a
+   black field, which is cheaper and smoother than an SVG clip path and needs
+   no per-frame geometry. */
+.hud__scope {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  /* The scope reads as an instrument, so it is drawn in the data face. */
+  font-family: var(--font-data);
+  transition: opacity 90ms linear;
+}
+.hud__scope[hidden] { display: none; }
+.hud__scope-mask {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(0, 0, 0, 0) 0,
+      rgba(0, 0, 0, 0) calc(min(38vh, 38vw) - 2px),
+      rgba(4, 6, 9, 0.96) calc(min(38vh, 38vw) + 1px),
+      rgba(4, 6, 9, 0.99) 100%
+    );
+}
+/* Hairline reticle: two full-length lines with a gap at the centre, so the
+   target is never covered by the cross itself. */
+.hud__scope-cross {
+  position: relative;
+  width: min(76vh, 76vw);
+  height: min(76vh, 76vw);
+}
+.hud__scope-cross i {
+  position: absolute;
+  background: rgba(124, 231, 255, 0.75);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud__scope-cross i:first-child {
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  transform: translateX(-50%);
+  clip-path: polygon(0 0, 100% 0, 100% 44%, 0 44%, 0 56%, 100% 56%, 100% 100%, 0 100%);
+}
+.hud__scope-cross i:last-child {
+  top: 50%;
+  left: 0;
+  height: 1px;
+  width: 100%;
+  transform: translateY(-50%);
+  clip-path: polygon(0 0, 44% 0, 44% 100%, 0 100%, 56% 100%, 56% 0, 100% 0, 100% 100%);
+}
+/* Ruler ticks along the vertical hairline: a real mildot-ish read that also
+   matches the Fire Control language used everywhere else in the HUD. */
+.hud__scope-ticks {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: min(52vh, 52vw);
+  transform: translate(-50%, -50%);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(124, 231, 255, 0.5) 0 1px,
+    transparent 1px 22px
+  );
+  background-size: 9px 100%;
+  background-repeat: repeat-y;
+  background-position: center;
+}
+.hud__scope-ticks::before,
+.hud__scope-ticks::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 9px;
+  height: 1px;
+  transform: translateX(-50%);
+  background: rgba(124, 231, 255, 0.5);
+}
+.hud__scope-ticks::before { top: 12%; }
+.hud__scope-ticks::after { bottom: 12%; }
+
+/* ---------- Charge ring ---------- */
+.hud__charge {
+  position: absolute;
+  right: -14px;
+  top: -14px;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+}
+.hud__charge[hidden] { display: none; }
+.hud__charge svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+.hud__charge circle {
+  fill: none;
+  stroke-width: 3;
+}
+.hud__charge-track { stroke: rgba(124, 231, 255, 0.16); }
+.hud__charge-fill {
+  stroke: var(--accent);
+  stroke-linecap: butt;
+  /* Full circumference for r=17; the dash offset is written per frame. */
+  stroke-dasharray: 106.81;
+  stroke-dashoffset: 106.81;
+  filter: drop-shadow(0 0 5px rgba(124, 231, 255, 0.7));
+}
+/* Charged: the ring goes solid and pulses, which is the "release now" tell. */
+.hud__charge.is-ready .hud__charge-fill {
+  stroke: var(--gold);
+  filter: drop-shadow(0 0 8px rgba(255, 215, 107, 0.85));
+  animation: chargready 0.5s ease-in-out infinite alternate;
+}
+@keyframes chargready {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+
+/* ---------- Menu tabs ---------- */
+/*
+ * The menu card is a grid with a named area per block, which is what let ten
+ * blocks share one screen. The tab layout overrides that grid with a single
+ * column and hides every panel except the active one, so the card shows one
+ * thing at a time without any of the block rules needing to change.
+ */
+.hud__menu .hud__menu-card {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "title"
+    "best"
+    "tabs"
+    "panel"
+    "deploy";
+  gap: 14px;
+  width: min(880px, calc(100vw - 40px));
+}
+.hud__tabs {
+  grid-area: tabs;
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.hud__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.hud__tab .ic { width: 15px; height: 15px; }
+.hud__tab:hover { color: var(--text); border-color: var(--line); }
+.hud__tab.active {
+  color: var(--accent);
+  border-color: rgba(124, 231, 255, 0.5);
+  background: rgba(124, 231, 255, 0.09);
+}
+.hud__tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The panel is the one scroll region: a long ledger or a long key list scrolls
+   inside a fixed frame instead of pushing DEPLOY off the bottom of the screen. */
+.hud__panel {
+  grid-area: panel;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-height: 0;
+  max-height: min(58vh, 520px);
+  overflow: hidden auto;
+  padding-right: 4px;
+}
+.hud__panel.hidden { display: none; }
+/* Inside a panel the old named areas no longer apply: each block is simply the
+   next row of the panel grid. */
+.hud__panel > * { grid-area: auto; }
+/* DEPLOY is always visible, whatever tab is open: the primary action must not
+   require a tab switch. */
+.hud__btn--deploy {
+  grid-area: deploy;
+  justify-self: center;
+  min-width: 220px;
+  margin-top: 4px;
+}
+
+/* The pause card reuses .hud__menu-card but has no tabs, so it keeps the
+   single-column stack. */
+.hud__pause .hud__menu-card {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "title" "records" "settings" "deploy";
+}
+
+/* ---------- Loadout tab ---------- */
+.hud__loadout-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.hud__menu-title--sub { font-size: 15px; letter-spacing: 0.34em; }
+.hud__loadout-hint {
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.hud__loadout-slots {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.hud__lo-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(12, 16, 22, 0.7);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.hud__lo-slot:hover { border-color: var(--accent); }
+/* The armed slot is the one the next pool click fills. */
+.hud__lo-slot.active {
+  border-color: var(--accent);
+  background: rgba(124, 231, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(124, 231, 255, 0.35);
+}
+.hud__lo-slot-n {
+  position: absolute;
+  left: 7px;
+  top: 5px;
+  font-family: var(--font-data);
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.hud__lo-slot b {
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  line-height: 1.25;
+}
+.hud__lo-weapon-ic {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+.hud__lo-weapon-ic svg { width: 22px; height: 22px; }
+.hud__loadout-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 8px;
+  /* The pool is the one scroller in the tab; the slots stay pinned above it. */
+  max-height: min(40vh, 340px);
+  overflow: hidden auto;
+  padding-right: 4px;
+}
+.hud__lo-weapon {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 9px 11px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: rgba(12, 16, 22, 0.55);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.hud__lo-weapon:hover { border-color: var(--accent); background: rgba(124, 231, 255, 0.07); }
+/* Equipped weapons are marked in gold: gold means "earned/held" here, and it
+   is the same meaning it carries on the run chips. */
+.hud__lo-weapon.equipped {
+  border-color: var(--gold);
+  background: rgba(255, 215, 107, 0.08);
+}
+.hud__lo-weapon-body { display: grid; gap: 3px; min-width: 0; }
+.hud__lo-weapon-name {
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.hud__lo-weapon-role {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.hud__lo-weapon-stats {
+  display: flex;
+  gap: 8px;
+  font-family: var(--font-data);
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.hud__lo-weapon-stats i {
+  font-style: normal;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+}
+.hud__lo-weapon-stats i.is-scope {
+  color: var(--accent);
+  border-color: rgba(124, 231, 255, 0.45);
+}
+
+/* Narrow screens: the slot row stacks to two columns so the names stay legible
+   instead of shrinking to unreadable stubs. */
+@media (max-width: 640px) {
+  .hud__loadout-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hud__loadout-pool { grid-template-columns: minmax(0, 1fr); max-height: 34vh; }
+  .hud__panel { max-height: min(52vh, 420px); }
+}

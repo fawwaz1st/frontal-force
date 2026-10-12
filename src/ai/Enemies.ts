@@ -59,30 +59,32 @@ interface EnemyDef {
   attackCooldown: number;
   damage: number;
   score: number;
+  /** Short player-facing name, used by the HUD when this kind hurts you. */
+  label: string;
 }
 
 const DEFS: Record<EnemyKind, EnemyDef> = {
-  grunt: { health: 60, speed: 3.4, radius: 0.42, height: 1.7, color: 0xd95cff, attackRange: 26, attackCooldown: 1.6, damage: 8, score: 100 },
-  rusher: { health: 40, speed: 6.2, radius: 0.38, height: 1.4, color: 0xff5c5c, attackRange: 1.7, attackCooldown: 0.9, damage: 14, score: 150 },
-  gunner: { health: 110, speed: 2.2, radius: 0.5, height: 1.9, color: 0xffb03a, attackRange: 30, attackCooldown: 2.4, damage: 12, score: 250 },
-  warden: { health: 180, speed: 2.6, radius: 0.55, height: 2.0, color: 0x35f0c8, attackRange: 22, attackCooldown: 2.4, damage: 16, score: 400 },
+  grunt: { health: 60, speed: 3.4, radius: 0.42, height: 1.7, color: 0xd95cff, attackRange: 26, attackCooldown: 1.6, damage: 8, score: 100, label: 'GRUNT' },
+  rusher: { health: 40, speed: 6.2, radius: 0.38, height: 1.4, color: 0xff5c5c, attackRange: 1.7, attackCooldown: 0.9, damage: 14, score: 150, label: 'RUSHER' },
+  gunner: { health: 110, speed: 2.2, radius: 0.5, height: 1.9, color: 0xffb03a, attackRange: 30, attackCooldown: 2.4, damage: 12, score: 250, label: 'GUNNER' },
+  warden: { health: 180, speed: 2.6, radius: 0.55, height: 2.0, color: 0x35f0c8, attackRange: 22, attackCooldown: 2.4, damage: 16, score: 400, label: 'WARDEN' },
   // Sniper: the longest telegraph in the game (1.1 s) buys the biggest single
   // hit. Its 44 m range means it must be found and killed, not out-ranged.
-  sniper: { health: 70, speed: 2.4, radius: 0.4, height: 1.75, color: 0xff4d6d, attackRange: 44, attackCooldown: 3.4, damage: 34, score: 450 },
+  sniper: { health: 70, speed: 2.4, radius: 0.4, height: 1.75, color: 0xff4d6d, attackRange: 44, attackCooldown: 3.4, damage: 34, score: 450, label: 'SNIPER' },
   // Flyer: ignores cover entirely, so it punishes pure corner-camping. Low HP
   // and a slow bob make it a priority but not a threat spike.
-  flyer: { health: 55, speed: 4.4, radius: 0.42, height: 1.5, color: 0x7dd8ff, attackRange: 18, attackCooldown: 1.5, damage: 9, score: 220 },
+  flyer: { health: 55, speed: 4.4, radius: 0.42, height: 1.5, color: 0x7dd8ff, attackRange: 18, attackCooldown: 1.5, damage: 9, score: 220, label: 'FLYER' },
   // Exploder: fast, fragile, and its damage is on DEATH. Killing it at range
   // is the whole counter-play, which teaches spacing without a tutorial.
-  exploder: { health: 45, speed: 5.0, radius: 0.44, height: 1.55, color: 0xff9f1c, attackRange: 2.6, attackCooldown: 2.0, damage: 34, score: 200 },
+  exploder: { health: 45, speed: 5.0, radius: 0.44, height: 1.55, color: 0xff9f1c, attackRange: 2.6, attackCooldown: 2.0, damage: 34, score: 200, label: 'EXPLODER' },
   // Healer: 3%/s to every enemy within 9 m. Killing it first is the lesson.
-  healer: { health: 90, speed: 2.8, radius: 0.42, height: 1.7, color: 0x7fe08a, attackRange: 14, attackCooldown: 2.8, damage: 6, score: 350 },
+  healer: { health: 90, speed: 2.8, radius: 0.42, height: 1.7, color: 0x7fe08a, attackRange: 14, attackCooldown: 2.8, damage: 6, score: 350, label: 'HEALER' },
   // Summoner: spawns a grunt every 6 s. Ignores the player, so it must be
   // hunted rather than waited out.
-  summoner: { health: 150, speed: 2.0, radius: 0.5, height: 1.85, color: 0xc98aff, attackRange: 20, attackCooldown: 6.0, damage: 10, score: 500 },
+  summoner: { health: 150, speed: 2.0, radius: 0.5, height: 1.85, color: 0xc98aff, attackRange: 20, attackCooldown: 6.0, damage: 10, score: 500, label: 'SUMMONER' },
   // Warden Prime: the every-fifth-wave boss. 2200 base health, three phases,
   // a rear weak point at 2.5x, and an enrage timer.
-  wardenPrime: { health: 2200, speed: 2.2, radius: 0.85, height: 3.1, color: 0xffd76b, attackRange: 30, attackCooldown: 1.5, damage: 20, score: 5000 },
+  wardenPrime: { health: 2200, speed: 2.2, radius: 0.85, height: 3.1, color: 0xffd76b, attackRange: 30, attackCooldown: 1.5, damage: 20, score: 5000, label: 'WARDEN PRIME' },
 };
 
 export interface Enemy {
@@ -164,6 +166,21 @@ export interface Enemy {
   burst: number;
   dead: boolean;
   deadT: number;
+  /** Seconds left on a committed slide: a low, fast, straight-line burst. */
+  slideT: number;
+  /** Committed slide direction (XZ, normalised). */
+  slideDirX: number;
+  slideDirZ: number;
+  /** Seconds left on a dodge: a hard lateral burst away from incoming fire. */
+  dodgeT: number;
+  /** Side of the current dodge (+1 / -1) and its cooldown. */
+  dodgeSide: number;
+  dodgeCd: number;
+  /** Seconds left on a juke: a short repositioning burst along `jukeSide`. */
+  jukeT: number;
+  jukeSide: number;
+  /** Countdown to the next juke; staggered so a squad never jukes in unison. */
+  jukeCd: number;
 }
 
 export interface Projectile {
@@ -175,6 +192,9 @@ export interface Projectile {
   /** Identity of the target this bolt was aimed at — bolts only hurt their
    *  intended victim's team, so a stray round never hits a bystander. */
   targetId: number;
+  /** Short player-facing name of the shooter, so the HUD can name the source
+   *  of an incoming hit instead of leaving the player guessing. */
+  sourceLabel: string;
 }
 
 /** Anything that can intercept a bolt before it reaches the player. */
@@ -230,6 +250,102 @@ const AFFIX_BURN_TIME = 3;
 const AFFIX_SLOW_MUL = 0.65;
 const AFFIX_SLOW_TIME = 2;
 
+// ---------------------------------------------------------------------------
+// Agility. The old AI only walked and strafed on a sine, which is why it read
+// as inert. Three short, committed bursts give it readable intent:
+//   dodge  — reactive lateral burst the moment it takes fire
+//   juke   — proactive lateral burst that breaks a straight approach line
+//   slide  — low, fast, straight commit used to close the last few metres
+// All three are short (under 0.7 s) so they punctuate the walk cycle instead
+// of replacing it, and all three keep the agent's aim on its victim.
+// ---------------------------------------------------------------------------
+/** Length of a reactive dodge burst. */
+const AGILITY_DODGE_TIME = 0.32;
+/** Speed multiplier while dodging. */
+const AGILITY_DODGE_MUL = 2.35;
+/** Length of a proactive juke burst. */
+const AGILITY_JUKE_TIME = 0.26;
+/** Speed multiplier while juking. */
+const AGILITY_JUKE_MUL = 2.1;
+/** Length of an AI slide. */
+const AGILITY_SLIDE_TIME = 0.55;
+/** Speed multiplier while sliding (rushers and exploders only). */
+const AGILITY_SLIDE_MUL = 2.9;
+/** Distance window in which a melee agent commits to a slide. */
+const AGILITY_SLIDE_RANGE = 9;
+/** Dodge cooldown bounds, in seconds. */
+const AGILITY_DODGE_CD_MIN = 0.7;
+const AGILITY_DODGE_CD_MAX = 1.9;
+
+/**
+ * Per-kind armor look. Ten archetypes sharing one gunmetal frame with a
+ * coloured strip is why the roster read as "the same model, ten times".
+ *
+ * Each entry changes three things at once, because one is never enough:
+ *   tint      how far the plate leans toward the kind's own hue (0 = neutral)
+ *   roughness how matte the plate is (fabric-ish support vs polished heavy)
+ *   metalness how much it catches the arena lights (glass vs iron)
+ *   glow      emissive multiplier on the body material
+ *   plateGlow emissive on the armor plates themselves, for the powered kinds
+ */
+interface ArmorLook {
+  tint: number;
+  roughness: number;
+  metalness: number;
+  glow: number;
+  plateGlow: number;
+}
+
+/**
+ * Per-kind proportions. Width, head size and limb thickness, so two kinds with
+ * the same height still read as different bodies: a sniper is narrow with a
+ * small head, a gunner is wide and thick, a summoner is tall and thin.
+ */
+interface Proportion {
+  /** Shoulder separation multiplier. */
+  shoulder: number;
+  /** Shoulder pad size multiplier. */
+  pad: number;
+  /** Head scale multiplier. */
+  head: number;
+}
+
+const PROPORTION: Record<EnemyKind, Proportion> = {
+  grunt: { shoulder: 1, pad: 1, head: 1 },
+  rusher: { shoulder: 0.88, pad: 0.8, head: 0.92 },
+  gunner: { shoulder: 1.2, pad: 1.25, head: 1.05 },
+  warden: { shoulder: 1.12, pad: 1.35, head: 0.95 },
+  sniper: { shoulder: 0.86, pad: 0.75, head: 0.85 },
+  flyer: { shoulder: 0.9, pad: 0.7, head: 0.9 },
+  exploder: { shoulder: 1.05, pad: 0.9, head: 0.95 },
+  healer: { shoulder: 0.94, pad: 0.85, head: 1.1 },
+  summoner: { shoulder: 1.05, pad: 1.1, head: 1.15 },
+  wardenPrime: { shoulder: 1.35, pad: 1.6, head: 1.2 },
+};
+
+const ARMOR_LOOK: Record<EnemyKind, ArmorLook> = {
+  // Scavenged plates: matte, dirty, barely tinted. The baseline human.
+  grunt: { tint: 0.34, roughness: 0.82, metalness: 0.12, glow: 0.85, plateGlow: 0.05 },
+  // Bare frame, almost no plate: it survives on speed, not armor.
+  rusher: { tint: 0.5, roughness: 0.72, metalness: 0.2, glow: 1.1, plateGlow: 0.12 },
+  // Heavy industrial plating, scuffed but solid, with a lit ammo pack.
+  gunner: { tint: 0.36, roughness: 0.55, metalness: 0.55, glow: 0.8, plateGlow: 0.1 },
+  // Polished ceramic riot plate: the shield IS the character.
+  warden: { tint: 0.42, roughness: 0.28, metalness: 0.35, glow: 1.0, plateGlow: 0.18 },
+  // Matte black with a single cold lens: it should almost vanish at range.
+  sniper: { tint: 0.2, roughness: 0.9, metalness: 0.1, glow: 0.6, plateGlow: 0.02 },
+  // Light composites: thin, glossy, built to fly.
+  flyer: { tint: 0.46, roughness: 0.3, metalness: 0.45, glow: 1.15, plateGlow: 0.2 },
+  // Exposed hazard shell with the charge tank glowing through it.
+  exploder: { tint: 0.62, roughness: 0.6, metalness: 0.25, glow: 1.45, plateGlow: 0.5 },
+  // Clean white support chassis: the only bright body on the field.
+  healer: { tint: 0.3, roughness: 0.42, metalness: 0.15, glow: 1.2, plateGlow: 0.35 },
+  // Deep violet lacquer with the emitter lit: ceremonial, alien, expensive.
+  summoner: { tint: 0.55, roughness: 0.24, metalness: 0.6, glow: 1.25, plateGlow: 0.45 },
+  // Boss: gold-plated and self-lit, with the rear core burning through.
+  wardenPrime: { tint: 0.6, roughness: 0.18, metalness: 0.85, glow: 1.5, plateGlow: 0.6 },
+};
+
 export class EnemyManager {
   private readonly group = new THREE.Group();
   public onEnemyKilled: ((enemy: Enemy, byPlayer: boolean) => void) | null = null;
@@ -257,9 +373,6 @@ export class EnemyManager {
   private readonly lastPlayerPos = new THREE.Vector3();
   private hasPlayerPos = false;
   private readonly bodyMats = new Map<EnemyKind, THREE.MeshStandardMaterial>();
-  private readonly frameMat = new THREE.MeshStandardMaterial({
-    color: 0x1a2130, roughness: 0.55, metalness: 0.7,
-  });
   private readonly eyeMat = new THREE.MeshStandardMaterial({
     color: 0x111111, emissive: 0xffffff, emissiveIntensity: 3,
   });
@@ -287,6 +400,7 @@ export class EnemyManager {
   private readonly projMats = new Map<EnemyKind, THREE.MeshBasicMaterial>();
   private readonly projGlowMats = new Map<EnemyKind, THREE.MeshBasicMaterial>();
   private readonly stripMats = new Map<EnemyKind, THREE.MeshStandardMaterial>();
+  private readonly armorMats = new Map<EnemyKind, THREE.MeshStandardMaterial>();
   /** Gravity for ballistic bolts (m/s²) — flat-fire low-arc solution. */
   private static readonly BOLT_G = 1.6;
   private readonly tmp = new THREE.Vector3();
@@ -330,7 +444,8 @@ export class EnemyManager {
       bolt.visible = false;
       this.group.add(bolt);
       this.projectiles.push({
-        mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false, targetId: -1,
+        mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false,
+        targetId: -1, sourceLabel: '',
       });
     }
   }
@@ -633,6 +748,15 @@ export class EnemyManager {
       memory: 0,
       decisionTimer: randRange(0.1, 0.8),
       burst: 1 + Math.floor(Math.random() * 3),
+      slideT: 0,
+      slideDirX: 0,
+      slideDirZ: 0,
+      dodgeT: 0,
+      dodgeSide: Math.random() < 0.5 ? -1 : 1,
+      dodgeCd: 0,
+      jukeT: 0,
+      jukeSide: Math.random() < 0.5 ? -1 : 1,
+      jukeCd: randRange(1.2, 3.4),
       telegraphed: false,
       animAim: 0,
       flashT: 0,
@@ -744,6 +868,27 @@ export class EnemyManager {
     const dealt = Math.max(0, Math.min(damage, enemy.health));
     enemy.health -= damage;
     enemy.flashT = 0.14;
+    // Getting shot makes an agent MOVE. A lateral dodge away from the shot
+    // line is the single biggest readability win for "the AI is alive": the
+    // player sees the reaction to their own trigger pull. Never dodges while
+    // already sliding, staggered, or on cooldown, so it reads as a reaction
+    // rather than as random jitter.
+    if (!blocked && dealt > 0 && !enemy.ccImmune && enemy.slideT <= 0) {
+      if (enemy.dodgeT <= 0 && enemy.staggerT <= 0 && enemy.dodgeCd <= 0) {
+        // Dodge to whichever side of the shot line the agent already occupies:
+        // crossing the line would read as running INTO the fire.
+        const shotX = force ? force.x : point.x - enemy.group.position.x;
+        const shotZ = force ? force.z : point.z - enemy.group.position.z;
+        const ownX = enemy.group.position.x - point.x;
+        const ownZ = enemy.group.position.z - point.z;
+        enemy.dodgeSide = -shotZ * ownX + shotX * ownZ >= 0 ? 1 : -1;
+        enemy.dodgeT = AGILITY_DODGE_TIME;
+        enemy.dodgeCd = randRange(AGILITY_DODGE_CD_MIN, AGILITY_DODGE_CD_MAX)
+          * (enemy.kind === 'wardenPrime' ? 2.6 : 1);
+        // A dodge cancels a claim: the agent is no longer holding cover.
+        enemy.state = 'advance';
+      }
+    }
     this.effects.impact(point, this.tmp.copy(point).sub(enemy.group.position).normalize());
     // Physics kickback: heavier hits shove the body along the shot line
     // (resolved against walls by the normal octree pass next frame).
@@ -1213,6 +1358,7 @@ export class EnemyManager {
     // so the roster keeps fighting instead of going passive.
     const anyVictim = this.targets.some((t) => t.targetable);
     if (anyVictim) {
+      this.updateAgility(enemy, dt);
       this.moveEnemy(enemy, dt, toTarget, targetDistance, objective);
       // Ballistic lead must use the VICTIM's velocity, not the player's —
       // leading with the wrong vector makes bolts aimed at an escort miss.
@@ -1302,6 +1448,20 @@ export class EnemyManager {
   ): void {
     const move = this.tmp3.set(0, 0, 0);
     const speed = enemy.def.speed;
+    // A committed burst owns movement outright for its duration. The normal
+    // steering is skipped, which is what makes a dodge read as a dodge rather
+    // than as a slightly faster strafe.
+    const burst = this.isBursting(enemy) ? this.burstMove(enemy, toTarget) : null;
+    if (burst) {
+      const mul = enemy.slideT > 0
+        ? AGILITY_SLIDE_MUL
+        : enemy.dodgeT > 0 ? AGILITY_DODGE_MUL : AGILITY_JUKE_MUL;
+      this.applyEnemyMove(enemy, burst, speed * mul, dt, playerPos);
+      return;
+    }
+    // No burst running: see whether one should start before falling through to
+    // the normal per-kind steering below.
+    this.trySlide(enemy, toTarget, distance);
     if (enemy.kind === 'rusher' && distance < 4.5 && enemy.attackTimer < ATTACK_WINDUP) {
       // Rusher commits only during its visible windup; there is no hidden melee hit.
       this.tmp4.copy(toTarget).multiplyScalar(1.7);
@@ -1387,10 +1547,25 @@ export class EnemyManager {
     }
 
     if (move.lengthSq() > 0.001) move.normalize();
+    this.applyEnemyMove(enemy, move, speed, dt, playerPos);
+  }
+
+  /**
+   * Shared translation + collision + floor snap for one agent. Extracted so
+   * the agility bursts and the normal steering cannot drift apart: both must
+   * resolve against the octree and both must keep the agent on the floor.
+   */
+  private applyEnemyMove(
+    enemy: Enemy,
+    move: THREE.Vector3,
+    speed: number,
+    dt: number,
+    playerPos: THREE.Vector3,
+  ): void {
     // The Glacial affix's slow applies to movement, and it must not be able to
     // push a slow below zero.
     const slowK = enemy.slowT > 0 ? AFFIX_SLOW_MUL : 1;
-    enemy.collider.translate(move.multiplyScalar(speed * slowK * dt));
+    enemy.collider.translate(this.tmp4.copy(move).multiplyScalar(speed * slowK * dt));
     const hit = this.octree.capsuleIntersect(enemy.collider);
     if (hit) {
       enemy.collider.translate(this.tmp4.copy(hit.normal).multiplyScalar(hit.depth));
@@ -1445,6 +1620,83 @@ export class EnemyManager {
         }
       }
     }
+  }
+
+  /**
+   * Advance the three agility timers and start new bursts. Called once per
+   * agent per step, before movement, so `moveEnemy` can simply read the state.
+   *
+   * Starting conditions are deliberately narrow. A dodge needs incoming fire,
+   * a juke needs a live victim and an advancing state, and a slide needs a
+   * melee archetype inside its commit range. Broadening any of these turns the
+   * roster into noise, which is the failure mode this replaces.
+   */
+  private updateAgility(enemy: Enemy, dt: number): void {
+    enemy.dodgeT = Math.max(0, enemy.dodgeT - dt);
+    enemy.jukeT = Math.max(0, enemy.jukeT - dt);
+    enemy.slideT = Math.max(0, enemy.slideT - dt);
+    enemy.dodgeCd = Math.max(0, enemy.dodgeCd - dt);
+    enemy.jukeCd = Math.max(0, enemy.jukeCd - dt);
+
+    // Staggered agents do not dodge: the hit already landed and the stagger is
+    // the reward. Flyers orbit, so a lateral burst fights their own bob.
+    if (enemy.staggerT > 0 || enemy.kind === 'flyer') return;
+    // Already committed to a burst: nothing else may start.
+    if (enemy.dodgeT > 0 || enemy.jukeT > 0 || enemy.slideT > 0) return;
+
+    // Proactive juke. Only while actually advancing (not while holding cover,
+    // which is a deliberate choice the AI should honour) and only with a live
+    // victim, so a blind search does not wander sideways.
+    if (enemy.jukeCd <= 0 && enemy.visible && enemy.state !== 'cover' && enemy.state !== 'peek') {
+      enemy.jukeCd = randRange(1.4, 3.6);
+      // Alternate sides so a squad does not all break the same way.
+      enemy.jukeSide = -enemy.jukeSide;
+      enemy.jukeT = AGILITY_JUKE_TIME;
+    }
+  }
+
+  /**
+   * True while the agent is in any agility burst. Callers use it to skip the
+   * normal steering: a burst is committed, so it must not be blended away.
+   */
+  private isBursting(enemy: Enemy): boolean {
+    return enemy.dodgeT > 0 || enemy.jukeT > 0 || enemy.slideT > 0;
+  }
+
+  /**
+   * Committed-burst movement. Returns the unit direction the agent should move
+   * along this step, or null when it should use its normal steering.
+   *
+   * A slide aims at the victim (a commit), while a dodge and a juke are pure
+   * lateral offsets. That difference is the whole tell: a slide says "I am
+   * coming for you", a dodge says "I am getting out of your line".
+   */
+  private burstMove(enemy: Enemy, toTarget: THREE.Vector3): THREE.Vector3 | null {
+    if (enemy.slideT > 0) {
+      const dir = this.tmp2.set(enemy.slideDirX, 0, enemy.slideDirZ);
+      if (dir.lengthSq() < 1e-6) return null;
+      return dir.normalize();
+    }
+    if (enemy.dodgeT > 0 || enemy.jukeT > 0) {
+      const side = this.tmp2.set(-toTarget.z, 0, toTarget.x);
+      if (side.lengthSq() < 1e-6) return null;
+      return side.normalize().multiplyScalar(enemy.dodgeT > 0 ? enemy.dodgeSide : enemy.jukeSide);
+    }
+    return null;
+  }
+
+  /**
+   * Start a slide when a melee archetype is closing. Gated on a distance
+   * window so the player still gets a reaction: sliding in from across the map
+   * would remove the counter-play that makes these two kinds fair.
+   */
+  private trySlide(enemy: Enemy, toTarget: THREE.Vector3, distance: number): void {
+    if (enemy.kind !== 'rusher' && enemy.kind !== 'exploder') return;
+    if (!enemy.visible || enemy.attackTimer < ATTACK_WINDUP) return;
+    if (distance > AGILITY_SLIDE_RANGE || distance < 1.2) return;
+    enemy.slideT = AGILITY_SLIDE_TIME;
+    enemy.slideDirX = toTarget.x;
+    enemy.slideDirZ = toTarget.z;
   }
 
   /** Nearest live ally below 90 % health, for the Healer's movement goal. */
@@ -1550,7 +1802,7 @@ export class EnemyManager {
     }
     if (enemy.kind === 'rusher') {
       if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;
-      victim.receiveDamage(def.damage, enemy.group.position);
+      victim.receiveDamage(def.damage, enemy.group.position, def.label);
       this.audio.melee(this.panToward(enemy.group.position, victimPos));
     } else if (enemy.kind === 'exploder') {
       // The Exploder's attack IS the detonation: it dies doing it, so the
@@ -1561,7 +1813,7 @@ export class EnemyManager {
       this.effects.burst(at, 0xff9f1c, 26, 3);
       this.audio.blast();
       this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
-      victim.receiveDamage(def.damage, enemy.group.position);
+      victim.receiveDamage(def.damage, enemy.group.position, def.label);
       this.killEnemy(enemy, false);
       return;
     } else if (enemy.kind === 'summoner') {
@@ -1623,10 +1875,23 @@ export class EnemyManager {
           ? -2.4 - aim * 0.4
           : swing * 0.75 * (1 - aim) + 1.4 * aim;
 
-    enemy.body.rotation.x = damp(enemy.body.rotation.x, moving ? -0.07 : 0, 6, dt);
-    enemy.body.position.y = 1.25 * (enemy.def.height / 1.7)
-      + (moving ? Math.abs(Math.sin(enemy.walkPhase * 2)) * 0.035 : 0);
-    enemy.group.rotation.z = moving ? Math.sin(enemy.walkPhase * 2) * 0.045 : 0;
+    // Burst poses. These are deliberately large: a slide the player cannot SEE
+    // is indistinguishable from a speed bug, so the body drops and pitches.
+    const sliding = enemy.slideT > 0;
+    const dodging = enemy.dodgeT > 0 || enemy.jukeT > 0;
+    enemy.body.rotation.x = damp(enemy.body.rotation.x, sliding ? 0.34 : moving ? -0.07 : 0, 12, dt);
+    enemy.body.position.y = (sliding ? 0.72 : 1.25) * (enemy.def.height / 1.7)
+      + (moving && !sliding ? Math.abs(Math.sin(enemy.walkPhase * 2)) * 0.035 : 0);
+    enemy.group.rotation.z = sliding
+      ? damp(enemy.group.rotation.z, enemy.dodgeSide * 0.42, 10, dt)
+      : dodging
+        ? damp(enemy.group.rotation.z, (enemy.dodgeT > 0 ? enemy.dodgeSide : enemy.jukeSide) * 0.24, 10, dt)
+        : moving ? Math.sin(enemy.walkPhase * 2) * 0.045 : 0;
+    if (sliding) {
+      // Legs tuck under the body: the silhouette reads as a slide, not a run.
+      enemy.legL.rotation.x = -1.15;
+      enemy.legR.rotation.x = -1.15;
+    }
   }
 
   /** Assemble a per-kind humanoid robot: torso, head+visor, jointed limbs. */
@@ -1651,11 +1916,18 @@ export class EnemyManager {
     // Per-agent clones so corpse-fade and pulse never bleed across agents
     const bodyMat = this.getBodyMat(kind).clone();
     const eyeMat = this.eyeMat.clone();
-    const dark = this.frameMat;
+    // Frame parts use the kind's own armor plate instead of one shared gunmetal
+    // material. This is what makes the roster read as ten designs rather than
+    // one design in ten colours.
+    const dark = this.getArmorMat(kind);
 
     const torso = new THREE.Mesh(g.torso, bodyMat);
     const torsoY = 1.25 * scaleK;
     s(torso, 0, torsoY);
+    // Proportion per kind. Scaling the torso is not enough on its own: the
+    // shoulder width, the limb thickness and the head size all have to move
+    // together or every kind reads as "the same robot, resized".
+    const look = PROPORTION[kind];
     if (kind === 'gunner') torso.scale.set(1.18, 1.05, 1.15);
     if (kind === 'rusher') torso.scale.set(0.9, 0.95, 0.9);
     if (kind === 'warden') torso.scale.set(1.1, 1.06, 1.06);
@@ -1667,12 +1939,15 @@ export class EnemyManager {
     if (kind === 'wardenPrime') torso.scale.set(1.55, 1.3, 1.4);
     // Pelvis + shoulder pads ride on the torso
     s(new THREE.Mesh(g.pelvis, dark), 0, -0.36 * scaleK, 0, torso);
+    const shoulderK = scaleK * look.shoulder;
     const padL = new THREE.Mesh(g.shoulder, dark);
-    padL.position.set(-0.4 * scaleK, 0.18 * scaleK, 0);
+    padL.position.set(-0.4 * shoulderK, 0.18 * scaleK, 0);
+    padL.scale.setScalar(look.pad);
     padL.castShadow = true;
     torso.add(padL);
     const padR = new THREE.Mesh(g.shoulder, dark);
-    padR.position.set(0.4 * scaleK, 0.18 * scaleK, 0);
+    padR.position.set(0.4 * shoulderK, 0.18 * scaleK, 0);
+    padR.scale.setScalar(look.pad);
     padR.castShadow = true;
     torso.add(padR);
     // Glowing chest strip — the kind's identification light
@@ -1758,6 +2033,7 @@ export class EnemyManager {
     }
 
     const head = new THREE.Mesh(g.head, dark);
+    head.scale.setScalar(look.head);
     s(head, 0, 0.38 * scaleK, 0, torso);
     const eye = new THREE.Mesh(g.visor, eyeMat);
     // Head geo is unscaled (fixed 0.15 half-depth) — don't scale this offset or
@@ -1771,7 +2047,7 @@ export class EnemyManager {
     const makeArm = (side: -1 | 1): THREE.Group => {
       const pivot = new THREE.Group();
       // Shoulder height in root space (torso center 1.25 + shoulder offset 0.18)
-      pivot.position.set(side * 0.4 * scaleK, (1.25 + 0.18) * scaleK, 0);
+      pivot.position.set(side * 0.4 * shoulderK, (1.25 + 0.18) * scaleK, 0);
       root.add(pivot);
       const upper = new THREE.Mesh(g.upperArm, dark);
       upper.position.y = -0.15 * scaleK;
@@ -1860,6 +2136,7 @@ export class EnemyManager {
   private fireProjectile(enemy: Enemy, victim: CombatTarget, victimVel?: THREE.Vector3): void {
     const proj = this.projectiles.find((p) => !p.active);
     if (!proj) return;
+    proj.sourceLabel = enemy.def.label;
     const victimPos = victim.position;
     const from = this.tmp.set(
       enemy.group.position.x,
@@ -1951,7 +2228,7 @@ export class EnemyManager {
         const center = this.tmp.set(victim.position.x, victim.position.y + 1.0, victim.position.z);
         if (this.segmentSphereHit(prev, proj.mesh.position, center, 0.75 + boltRadius)) {
           this.markAggressorForTarget(proj.targetId, proj.mesh.position);
-          victim.receiveDamage(proj.damage, proj.mesh.position);
+          victim.receiveDamage(proj.damage, proj.mesh.position, proj.sourceLabel);
           proj.active = false;
           proj.mesh.visible = false;
           continue;
@@ -2140,15 +2417,45 @@ export class EnemyManager {
   private getBodyMat(kind: EnemyKind): THREE.MeshStandardMaterial {
     let mat = this.bodyMats.get(kind);
     if (!mat) {
+      const color = DEFS[kind].color;
       mat = new THREE.MeshStandardMaterial({
-        color: DEFS[kind].color,
-        roughness: 0.5,
-        metalness: 0.2,
-        emissive: DEFS[kind].color,
+        color,
+        roughness: ARMOR_LOOK[kind].roughness,
+        metalness: ARMOR_LOOK[kind].metalness,
+        emissive: color,
         // Lifted from 0.12 so the silhouette still reads against the dark arena
-        emissiveIntensity: BODY_EMISSIVE,
+        emissiveIntensity: BODY_EMISSIVE * ARMOR_LOOK[kind].glow,
       });
       this.bodyMats.set(kind, mat);
+    }
+    return mat;
+  }
+
+  /**
+   * Armor plate material for a kind. The plate is the kind's own hue darkened
+   * and desaturated, so the whole robot carries the archetype's colour instead
+   * of sharing one gunmetal frame with a coloured strip on the chest.
+   *
+   * This is the difference between "ten enemies that look identical" and ten
+   * silhouettes you can name from across the arena at a glance, which is the
+   * only identification channel that survives a dark map at range.
+   */
+  private getArmorMat(kind: EnemyKind): THREE.MeshStandardMaterial {
+    let mat = this.armorMats.get(kind);
+    if (!mat) {
+      const look = ARMOR_LOOK[kind];
+      const tint = new THREE.Color(DEFS[kind].color);
+      // Mix toward a dark neutral rather than scaling, so a bright hue does not
+      // stay bright when it is supposed to read as painted metal.
+      const plate = new THREE.Color(0x11151a).lerp(tint, look.tint);
+      mat = new THREE.MeshStandardMaterial({
+        color: plate,
+        roughness: look.roughness,
+        metalness: look.metalness,
+        emissive: tint,
+        emissiveIntensity: look.plateGlow,
+      });
+      this.armorMats.set(kind, mat);
     }
     return mat;
   }

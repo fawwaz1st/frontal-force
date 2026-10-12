@@ -11,7 +11,9 @@ const JUMP_SPEED = 6.1;
 const WALK_SPEED = 4.5;
 const SPRINT_MULT = 1.7;
 const CROUCH_MULT = 0.5;
-const SLIDE_SPEED = 5.5; // +3 floor ⇒ 8.5 m/s entry, decays with the timer
+const SLIDE_SPEED = 5.5; // decays across SLIDE_TIME
+/** Added on top of the decaying slide speed, so entry is a burst. */
+const SLIDE_ENTRY_BONUS = 3;
 const SLIDE_TIME = 0.65;
 const COYOTE_TIME = 0.1;
 const JUMP_BUFFER_TIME = 0.14;
@@ -19,6 +21,17 @@ const STAND_RADIUS = 0.45;
 const CROUCH_RADIUS = 0.38;
 const STAND_SEGMENT = 0.9;
 const CROUCH_SEGMENT = 0.4;
+/**
+ * How far the stand-up probe is lifted off the floor, in metres.
+ *
+ * The probe's bottom cap lands EXACTLY on the floor plane when it is built at
+ * `feet.y + STAND_RADIUS`, and `Octree.capsuleIntersect` reports that flush
+ * contact as a hit. The result was a player who could crouch and then never
+ * stand up again, anywhere in the arena, because the floor was always in the
+ * way. A few centimetres of clearance is below any real ceiling and above the
+ * floating-point noise of the floor's own triangles.
+ */
+const STAND_PROBE_LIFT = 0.04;
 const STAMINA_MAX = 100;
 const STAMINA_DRAIN = 17; // ≈5.9 s of sprint
 const STAMINA_REGEN = 24;
@@ -69,6 +82,12 @@ export class Player {
   /** Actual health lost by the last hit, for honest damage-taken statistics.
    *  A shield-absorbed hit reports 0 because the health bar did not move. */
   public lastDamageTaken = 0;
+  /**
+   * Who hurt us last, as a short player-facing label ("EXPLODER", "BURN",
+   * "BARREL"). The HUD prints this next to the damage arc, which is the whole
+   * answer to "I took damage from nowhere": every source must name itself.
+   */
+  public lastDamageSource = '';
   /** First-person body (Game adds it to the scene) — visible when you look down. */
   public readonly body = new THREE.Group();
   /** Fires once per touchdown after an airborne stretch (land sfx + viewmodel dip).
@@ -105,6 +124,10 @@ export class Player {
   private coyoteTimer = 0;
   private jumpBuffer = 0;
   private crouched = false;
+  /** Committed direction of the active slide (see update()). */
+  private readonly slideDir = new THREE.Vector3();
+  /** Fires once when a slide starts, so the owner can play feedback. */
+  public onSlide: (() => void) | null = null;
   private yaw = 0;
   private pitch = 0;
   /** Camera-only kick — never moves the point of aim. */
@@ -126,6 +149,17 @@ export class Player {
   private sprintLocked = false;
   private sprinting = false;
   private adsT = 0;
+  /**
+   * Aimed field of view for the equipped weapon, in degrees. Set by the weapon
+   * controller from the weapon definition, so aiming a scoped rifle is a real
+   * change of sight picture and not a cosmetic one.
+   */
+  public adsFov = ADS_FOV;
+  /**
+   * Movement speed multiplier from the equipped weapon's weight. Read from the
+   * weapon each step by the owner, so a heavy gun really costs mobility.
+   */
+  public weaponMoveMul = 1;
   private wasAirborne = false;
   private sensitivity = 1;
   private readonly tmpDir = new THREE.Vector3();
@@ -367,7 +401,7 @@ export class Player {
     this.recoilResetT = 0;
   }
 
-  public damage(amount: number, from: THREE.Vector3 | null = null): void {
+  public damage(amount: number, from: THREE.Vector3 | null = null, source = ''): void {
     if (this.dead) return;
     // Challenge wager first: the multiplier is part of the contract the player
     // signed up for, so it applies before armor and the shield.
@@ -382,6 +416,7 @@ export class Player {
     }
     const healthLost = Math.min(this.health, Math.max(0, remaining));
     this.lastDamageTaken = healthLost;
+    this.lastDamageSource = source;
     if (remaining > 0) this.health = Math.max(0, this.health - remaining);
     this.addShake(Math.min(0.5, incoming * 0.03));
     this.onDamaged?.(from);
@@ -460,7 +495,11 @@ export class Player {
     if (this.stamina <= 0) this.exhausted = true;
     if (!input.sprintHeld) this.sprintLocked = false;
     if (wantsSprint && this.stamina <= 0) this.sprintLocked = true;
-    const canSprint = wantsSprint && !wantsCrouch && !this.exhausted && !this.sprintLocked;
+    // Sprint is evaluated WITHOUT the crouch term. Crouch used to cancel
+    // sprint, which made the slide condition below (`sprinting && crouch`)
+    // impossible to satisfy: the slide could never fire. Sprint now stays
+    // true for the frame the crouch key lands, which is what starts a slide.
+    const canSprint = wantsSprint && !this.exhausted && !this.sprintLocked;
     this.sprinting = canSprint;
     if (canSprint) {
       this.stamina = Math.max(0, this.stamina - STAMINA_DRAIN * dt);
@@ -469,25 +508,45 @@ export class Player {
       this.stamina = Math.min(STAMINA_MAX, this.stamina + STAMINA_REGEN * dt);
       if (this.exhausted && this.stamina >= STAMINA_RESUME) this.exhausted = false;
     }
+    // Slide entry: crouch pressed while sprinting, grounded, moving, and not
+    // already crouched. `wasCrouching` guards the edge so holding C does not
+    // re-trigger the slide every tick.
     if (wantsCrouch && this.sprinting && this.grounded && !this.wasCrouching && moving) {
       this.slideTimer = SLIDE_TIME;
+      this.slideDir.copy(this.tmpMove);
+      this.onSlide?.();
     }
     this.wasCrouching = wantsCrouch;
     this.slideTimer = Math.max(0, this.slideTimer - dt);
 
     let speed = WALK_SPEED;
-    if (this.slideTimer > 0) speed = SLIDE_SPEED * (this.slideTimer / SLIDE_TIME) + 3;
-    else if (canSprint) speed = WALK_SPEED * SPRINT_MULT;
+    if (this.slideTimer > 0) {
+      // The slide keeps its own direction, so steering mid-slide does not
+      // curve the path: a slide is a committed movement, which is what makes
+      // it a dodge rather than a speed boost.
+      speed = SLIDE_SPEED * (this.slideTimer / SLIDE_TIME) + SLIDE_ENTRY_BONUS;
+    } else if (canSprint && !wantsCrouch) speed = WALK_SPEED * SPRINT_MULT;
     else if (wantsCrouch) speed = WALK_SPEED * CROUCH_MULT;
-    if (input.moveX !== 0) speed *= input.moveZ === 0 ? 0.85 : 0.93;
+    if (input.moveX !== 0 && this.slideTimer <= 0) speed *= input.moveZ === 0 ? 0.85 : 0.93;
+    // Weapon weight applies to every ground speed, including the slide: a
+    // launcher must not slide as far as a pistol, or the loadout would have no
+    // cost and the choice would collapse to "most damage".
+    speed *= this.weaponMoveMul;
     this.adsT = damp(this.adsT, input.aimHeld && !canSprint ? 1 : 0, 10, dt);
 
     const accel = this.grounded ? (this.slideTimer > 0 ? 2.2 : 14) : 5.5;
     // The Glacial affix scales the TARGET speed, not the acceleration: a slowed
     // player still reaches a stable speed rather than sliding into a wall.
     const slowK = 1 - this.slowFraction;
-    this.velocity.x = damp(this.velocity.x, this.tmpMove.x * speed * slowK, accel, dt);
-    this.velocity.z = damp(this.velocity.z, this.tmpMove.z * speed * slowK, accel, dt);
+    // While sliding the velocity is driven along the committed slide direction,
+    // so the slide cannot be steered into a circle.
+    if (this.slideTimer > 0 && this.grounded) {
+      this.velocity.x = damp(this.velocity.x, this.slideDir.x * speed * slowK, accel, dt);
+      this.velocity.z = damp(this.velocity.z, this.slideDir.z * speed * slowK, accel, dt);
+    } else {
+      this.velocity.x = damp(this.velocity.x, this.tmpMove.x * speed * slowK, accel, dt);
+      this.velocity.z = damp(this.velocity.z, this.tmpMove.z * speed * slowK, accel, dt);
+    }
     // A dash overrides the movement target entirely: it is a committed move
     // with its own duration, which is what makes it a positioning tool rather
     // than a speed boost.
@@ -548,13 +607,45 @@ private updateCrouch(wantsCrouch: boolean): void {
     }
     if (!this.crouched || wantsCrouch) return;
 
-    this.standTest.start.set(feet.x, feet.y + STAND_RADIUS, feet.z);
-    this.standTest.end.set(feet.x, feet.y + STAND_RADIUS + STAND_SEGMENT, feet.z);
-    if (this.octree.capsuleIntersect(this.standTest)) return;
+    // Stand-up test: the probe must use the STANDING radius, because that is
+    // the shape the player is asking to become. Building it with a stale or
+    // wrong radius is what made standing up fail under low cover: the probe
+    // reported a hit that the real standing capsule would not have hit.
+    //
+    // The probe is also lifted off the floor (see STAND_PROBE_LIFT): without
+    // that clearance the bottom cap sits flush on the floor plane and the
+    // octree reports the floor itself as an obstruction.
+    this.standTest.radius = STAND_RADIUS;
+    this.standTest.start.set(feet.x, feet.y + STAND_RADIUS + STAND_PROBE_LIFT, feet.z);
+    this.standTest.end.set(feet.x, feet.y + STAND_RADIUS + STAND_PROBE_LIFT + STAND_SEGMENT, feet.z);
+    if (this.octree.capsuleIntersect(this.standTest)) {
+      // Still blocked. The player is under something real, so they stay
+      // crouched and the next step re-tests: walking out from under it stands
+      // them up automatically, with no extra input.
+      return;
+    }
     this.collider.radius = STAND_RADIUS;
     this.collider.start.copy(this.standTest.start);
     this.collider.end.copy(this.standTest.end);
+    // Settle onto the floor: the probe was lifted, the real capsule is not.
+    this.collider.start.y -= STAND_PROBE_LIFT;
+    this.collider.end.y -= STAND_PROBE_LIFT;
     this.crouched = false;
+  }
+
+  /** True while crouched (HUD + camera use it for the low-posture read). */
+  public get isCrouched(): boolean {
+    return this.crouched;
+  }
+
+  /** 0..1 progress into the aim, for the scope overlay fade. */
+  public get aimFraction(): number {
+    return this.adsT;
+  }
+
+  /** True while a crouch-slide is in progress. */
+  public get isSliding(): boolean {
+    return this.slideTimer > 0;
   }
 
   private updateCamera(dt: number, moveAmount: number, sprinting: boolean): void {
@@ -594,7 +685,13 @@ private updateCrouch(wantsCrouch: boolean): void {
       jz,
       'YXZ',
     );
-    const targetFov = sprinting ? 82 : 75 + (ADS_FOV - 75) * this.adsT;
+    // Aiming narrows the FOV toward the WEAPON's optic. A scoped rifle goes far
+    // enough that the HUD's scope overlay takes over; iron sights only tighten
+    // the view a little. Sprinting always widens it, because the read the
+    // player needs while sprinting is "what is around me", not "what is far"
+    // — but aim wins over sprint, or a scoped walk would fight its own zoom.
+    const aimFov = 75 + (this.adsFov - 75) * this.adsT;
+    const targetFov = sprinting && this.adsT < 0.02 ? 82 : aimFov;
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov = damp(this.camera.fov, targetFov, 8, dt);
       this.camera.updateProjectionMatrix();

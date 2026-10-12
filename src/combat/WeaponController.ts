@@ -5,7 +5,7 @@ import type { InputFrame } from '../input/Input';
 import type { Effects } from '../render/Effects';
 import type { GameAudio } from '../audio/Audio';
 import type { World } from '../world/World';
-import { WEAPON_ORDER, createWeaponState, type WeaponState } from './weapons';
+import { createWeaponState, sanitizeLoadout, type WeaponId, type WeaponState } from './weapons';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -32,7 +32,14 @@ export interface WeaponView {
 
 /** Owns all weapon state: inventory, ammo, reload, switching, and firing. */
 export class WeaponController {
-  private states: WeaponState[] = WEAPON_ORDER.map(createWeaponState);
+  /**
+   * The equipped loadout. Four slots, chosen in the menu. The ten-weapon pool
+   * still exists, but it lives in the loadout screen rather than in the middle
+   * of a firefight: cycling ten guns with the mouse wheel is not a decision,
+   * it is a chore.
+   */
+  private loadout: WeaponId[] = sanitizeLoadout([]);
+  private states: WeaponState[] = this.loadout.map(createWeaponState);
   private index = 0;
   private readonly viewSnapshot: WeaponView = {
     index: 0,
@@ -52,9 +59,23 @@ export class WeaponController {
   private readonly tmpMuzzle = new THREE.Vector3();
   private readonly tmpRight = new THREE.Vector3();
   private readonly tmpUp = new THREE.Vector3();
+  // Ricochet scratch. These must survive across a leg boundary, which is why
+  // they are dedicated fields rather than reused temporaries.
+  private readonly richFrom = new THREE.Vector3();
+  private readonly richDir = new THREE.Vector3();
+  private readonly richPoint = new THREE.Vector3();
+  private readonly richNormal = new THREE.Vector3();
+  private richHitWall = false;
   /** Rounds still owed to the current burst group. */
   private burstLeft = 0;
   private burstT = 0;
+  /**
+   * Charge-up state for the heavy weapons. `chargeT` counts up while the
+   * trigger is held, `chargeReady` latches once the shot has released so the
+   * same hold cannot fire twice.
+   */
+  private chargeT = 0;
+  private chargeReady = false;
 
   public onFired: ((weapon: WeaponState) => void) | null = null;
   public onSwitched: (() => void) | null = null;
@@ -146,9 +167,13 @@ export class WeaponController {
   }
 
   public reset(): void {
-    this.states = WEAPON_ORDER.map(createWeaponState);
+    this.states = this.loadout.map(createWeaponState);
     this.index = 0;
     this.lastShot = null;
+    this.chargeT = 0;
+    this.chargeReady = false;
+    this.burstLeft = 0;
+    this.burstT = 0;
     // Famine: reserves only, never the magazine. The first magazine is what
     // the opening fight is balanced around, so cutting it would make wave 1
     // unwinnable rather than tense.
@@ -160,6 +185,39 @@ export class WeaponController {
         );
       }
     }
+  }
+
+  /**
+   * Equip a new loadout. Called from the menu, never mid-run, so it is safe to
+   * rebuild every state from scratch: the player is choosing a kit, not
+   * swapping a magazine.
+   */
+  public setLoadout(ids: readonly string[]): void {
+    const next = sanitizeLoadout(ids);
+    // Skip the rebuild when nothing moved, so opening the menu twice does not
+    // silently refill the magazines of the run in progress.
+    if (next.length === this.loadout.length && next.every((id, i) => id === this.loadout[i])) return;
+    this.loadout = next;
+    this.states = this.loadout.map(createWeaponState);
+    this.index = 0;
+    this.chargeT = 0;
+    this.chargeReady = false;
+  }
+
+  /** The equipped ids, for the HUD slot ring and the loadout screen. */
+  public get equipped(): readonly WeaponId[] {
+    return this.loadout;
+  }
+
+  /** Return to slot 0 and clear any in-flight burst or charge. */
+  public reslot(): void {
+    const current = this.states[this.index];
+    if (current) current.reloading = false;
+    this.index = 0;
+    this.burstLeft = 0;
+    this.burstT = 0;
+    this.chargeT = 0;
+    this.chargeReady = false;
   }
 
   /** Single source for bullet and crosshair spread. */
@@ -266,6 +324,31 @@ export class WeaponController {
     return Math.max(1, Math.round(state.def.magSize * this.mods.magMul));
   }
 
+  /**
+   * Aimed field of view for the equipped weapon, in degrees. Every weapon has
+   * one; the scoped ones go low enough that the scope overlay takes over.
+   */
+  public adsFov(): number {
+    return this.current.def.adsFov;
+  }
+
+  /** True while the equipped weapon has a magnified optic. */
+  public get scoped(): boolean {
+    return this.current.def.scoped;
+  }
+
+  /** 0..1 charge progress for the HUD ring; 1 when the weapon has no charge. */
+  public get chargeFraction(): number {
+    const time = this.current.def.chargeTime ?? 0;
+    if (time <= 0) return 1;
+    return Math.min(1, this.chargeT / time);
+  }
+
+  /** Movement speed multiplier for the equipped weapon (heavy guns slow you). */
+  public get moveMul(): number {
+    return this.current.def.moveMul ?? 1;
+  }
+
   public update(frame: InputFrame, dt: number): void {
     if (frame.slotPressed > 0 && frame.slotPressed <= this.states.length) {
       this.switchTo(frame.slotPressed - 1);
@@ -289,7 +372,25 @@ export class WeaponController {
     }
 
     const wantsFire = weapon.def.auto ? frame.fireHeld : frame.firePressed;
-    if (wantsFire && frame.locked && !weapon.reloading && weapon.cooldown <= 0) {
+    // Charge-up weapons hold the shot until the capacitor is full. The
+    // telegraph is the point: the biggest hits in the game must be visible
+    // before they land, or they are just damage the player cannot answer.
+    const chargeTime = weapon.def.chargeTime ?? 0;
+    if (chargeTime > 0) {
+      if (frame.fireHeld && frame.locked && !weapon.reloading && weapon.mag > 0) {
+        this.chargeT = Math.min(chargeTime, this.chargeT + dt);
+        if (this.chargeT >= chargeTime && !this.chargeReady) {
+          this.chargeReady = true;
+          this.fire(weapon, this.player.isAiming, (weapon.def.chargeDamageMul ?? 1));
+        }
+      } else {
+        // Released early: the charge is lost, not banked. Banking it would let
+        // the player pre-charge behind cover and delete the trade-off.
+        if (this.chargeT > 0 && !this.chargeReady) this.audio.empty();
+        this.chargeT = 0;
+        this.chargeReady = false;
+      }
+    } else if (wantsFire && frame.locked && !weapon.reloading && weapon.cooldown <= 0) {
       if (weapon.mag <= 0) {
         this.audio.empty();
         weapon.cooldown = 0.25;
@@ -320,6 +421,9 @@ export class WeaponController {
     // would fire the previous weapon's remaining rounds on its own cadence.
     this.burstLeft = 0;
     this.burstT = 0;
+    // A swap also drops a charge: the capacitor belongs to the weapon.
+    this.chargeT = 0;
+    this.chargeReady = false;
     this.index = index;
     const next = this.states[index];
     if (next) next.cooldown = Math.max(next.cooldown, 0.18);
@@ -350,7 +454,7 @@ export class WeaponController {
     weapon.reloading = false;
   }
 
-  private fire(weapon: WeaponState, aiming: boolean): void {
+  private fire(weapon: WeaponState, aiming: boolean, chargeMul = 1): void {
     weapon.mag -= 1;
     // Fire rate is a run modifier: every card that speeds the gun up must
     // change the cooldown here, or the card would only affect the animation.
@@ -410,7 +514,7 @@ export class WeaponController {
         .addScaledVector(right, Math.cos(azimuth) * angle)
         .addScaledVector(up, Math.sin(azimuth) * angle)
         .normalize();
-      const result = this.fireRay(this.tmpOrigin, muzzle, dir, weapon, pellet === 0);
+      const result = this.fireRay(this.tmpOrigin, muzzle, dir, weapon, pellet === 0, chargeMul);
       hitAny ||= result !== 0;
       blockedAny ||= result === 5;
       headshotAny ||= result === 2 || result === 3;
@@ -470,7 +574,7 @@ export class WeaponController {
         const falloff = Math.max(0, 1 - selfDist / selfRadius);
         // Capped: the endless damage ramp must not turn a rocket into suicide.
         const selfDamage = Math.min(MAX_SELF_BLAST, def.damage * (def.selfBlastFraction ?? 0) * falloff);
-        if (selfDamage > 0) this.player.damage(selfDamage, point);
+        if (selfDamage > 0) this.player.damage(selfDamage, point, 'YOUR OWN BLAST');
       }
     }
   }
@@ -490,7 +594,58 @@ export class WeaponController {
     dir: THREE.Vector3,
     weapon: WeaponState,
     showTracer: boolean,
+    chargeMul = 1,
   ): 0 | 1 | 2 | 3 | 4 | 5 {
+    // Ricochet runs as a bounce loop rather than recursion: the bounce count is
+    // at most two, so a loop keeps the trace readable and lets each leg draw
+    // its own tracer segment through the path.
+    const maxBounces = Math.max(0, Math.floor(weapon.def.ricochet ?? 0));
+    // Scratch copies: the legs below overwrite the shared temporaries, so the
+    // live ray origin and direction must live outside them.
+    this.richFrom.copy(origin);
+    this.richDir.copy(dir);
+    for (let bounce = 0; bounce <= maxBounces; bounce++) {
+      const finalLeg = bounce === maxBounces;
+      const result = this.fireRayLeg(
+        this.richFrom, muzzle, this.richDir, weapon, showTracer, chargeMul, finalLeg,
+      );
+      if (result !== 0) return result;
+      // `fireRayLeg` returns 0 either for a clean miss or for a wall stop. A
+      // wall stop is the only case that can bounce, and it leaves the impact
+      // point and surface normal in the dedicated ricochet fields.
+      if (!this.richHitWall || finalLeg) return 0;
+      const normal = this.richNormal;
+      const dot = this.richDir.dot(normal);
+      // Guard against a grazing hit producing a zero-length reflect: without
+      // this the round can bounce back along its own path forever.
+      if (Math.abs(dot) < 1e-4) return 0;
+      this.richDir.addScaledVector(normal, -2 * dot).normalize();
+      this.richFrom.copy(this.richPoint);
+      // Push the new origin a hair off the surface, or the very next ray
+      // intersects the wall it just left.
+      this.richFrom.addScaledVector(this.richDir, 0.02);
+    }
+    return 0;
+  }
+
+  /**
+   * One straight leg of a shot. Returns the same result codes as `fireRay`.
+   *
+   * A wall stop returns 0 and reports the impact through `richHitWall`,
+   * `richPoint` and `richNormal` rather than through the shared temporaries,
+   * because the ricochet loop needs those three values to survive the call
+   * that produced them.
+   */
+  private fireRayLeg(
+    origin: THREE.Vector3,
+    muzzle: THREE.Vector3,
+    dir: THREE.Vector3,
+    weapon: WeaponState,
+    showTracer: boolean,
+    chargeMul: number,
+    finalLeg: boolean,
+  ): 0 | 1 | 2 | 3 | 4 | 5 {
+    this.richHitWall = false;
     this.ray.set(origin, dir);
     const wallHit = this.world.octree.rayIntersect(this.ray);
     const wallDist = wallHit ? wallHit.distance : weapon.def.range;
@@ -498,12 +653,12 @@ export class WeaponController {
 
     if (enemyHit) {
       const point = this.tmpPoint.copy(origin).addScaledVector(dir, enemyHit.distance);
-      // Damage model: base x headshot x crit x run modifiers. A crit is a
-      // separate roll from a headshot so the two stack, which is what makes a
+      // Damage model: base x charge x headshot x crit x run modifiers. A crit is
+      // a separate roll from a headshot so the two stack, which is what makes a
       // crit card meaningful on a precision weapon.
       const headshotMul = enemyHit.headshot ? 2 * this.mods.headshotMul : 1;
       const crit = this.mods.critChance > 0 && Math.random() < this.mods.critChance;
-      const damage = weapon.def.damage * this.damageScale * this.mods.damageMul *
+      const damage = weapon.def.damage * chargeMul * this.damageScale * this.mods.damageMul *
         headshotMul * (crit ? this.mods.critMul : 1);
       const hit = this.enemies.damageEnemy(
         enemyHit.enemy,
@@ -532,9 +687,14 @@ export class WeaponController {
     } else if (wallHit && wallDist <= weapon.def.range) {
       const normal = wallHit.triangle.getNormal(this.tmpNormal);
       if (normal.dot(dir) > 0) normal.negate();
+      this.richHitWall = true;
+      this.richPoint.copy(wallHit.position);
+      this.richNormal.copy(normal);
       // Destructible props (barrels) are checked BEFORE the wall treatment so a
       // barrel in front of a wall takes the round instead of the wall eating it.
-      if (this.onPropHit?.(wallHit.position, dir, weapon.def.damage * this.damageScale * this.mods.damageMul)) {
+      if (this.onPropHit?.(wallHit.position, dir, weapon.def.damage * chargeMul * this.damageScale * this.mods.damageMul)) {
+        // A prop absorbed the round: it is a stop, not a bounce surface.
+        this.richHitWall = false;
         if (showTracer) this.effects.tracer(muzzle, wallHit.position, weapon.def.tracerColor);
         if (weapon.def.blastRadius) {
           const point = this.tmpPoint.copy(wallHit.position);
@@ -543,12 +703,16 @@ export class WeaponController {
         return 0;
       }
       this.effects.impact(wallHit.position, normal);
-      this.effects.decal(wallHit.position, normal);
+      // The decal belongs to the FINAL stop only: a ricochet that leaves a mark
+      // on every surface it grazes turns the arena into a graffiti wall.
+      if (finalLeg) this.effects.decal(wallHit.position, normal);
       if (showTracer) this.effects.tracer(muzzle, wallHit.position, weapon.def.tracerColor);
       // A wall hit still detonates — that is the whole point of a launcher.
       if (weapon.def.blastRadius) {
         const point = this.tmpPoint.copy(wallHit.position);
         this.explode(point, weapon, null);
+        // A rocket that detonates does not bounce.
+        this.richHitWall = false;
       }
     } else if (showTracer) {
       const end = this.tmpPoint.copy(origin).addScaledVector(dir, weapon.def.range);

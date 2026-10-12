@@ -1,4 +1,5 @@
 import { icon, type IconName } from './icons';
+import { LOADOUT_SLOTS, WEAPONS, WEAPON_ORDER } from '../combat/weapons';
 import { GAME_MODES, type GameMode, type SaveData } from '../core/storage';
 import type { WavePhase } from '../game/Waves';
 import type { QualitySetting } from '../core/storage';
@@ -26,6 +27,23 @@ const GRENADE_LABEL: Record<HudState['grenadeKind'], string> = {
   frag: 'FRAG',
   smoke: 'SMOKE',
   emp: 'EMP',
+};
+
+/**
+ * Weapon id to slot icon. The HUD owns this because the icon set is a HUD
+ * concern: the simulation only ever names a weapon, never draws one.
+ */
+const WEAPON_ICON: Record<string, IconName> = {
+  ar: 'rifle',
+  smg: 'smg',
+  shotgun: 'shotgun',
+  rail: 'railgun',
+  dmr: 'dmr',
+  lmg: 'lmg',
+  pistol: 'pistol',
+  launcher: 'launcher',
+  beam: 'beam',
+  burst: 'burst',
 };
 
 /** Tier display order for the achievement ledger. */
@@ -174,6 +192,56 @@ export interface HudState {
   bossPhase: number;
   /** True while the boss rear core is intact. */
   bossWeakPoint: boolean;
+  /** Arena theme name, for the location readout. */
+  mapName: string;
+  /** One-line description of the arena theme. */
+  mapTagline: string;
+  /** Names of the four equipped weapons, in slot order, for the slot ring. */
+  loadoutNames: string[];
+  /** Weapon ids of the four equipped weapons, in slot order (drives icons). */
+  loadoutIds: string[];
+  /** True while the equipped weapon has a magnified optic. */
+  scoped: boolean;
+  /** 0..1 progress into the aim, so the scope overlay can fade in with it. */
+  adsT: number;
+  /** 0..1 charge progress on a charge-up weapon; 1 for everything else. */
+  charge: number;
+  /** True when the equipped weapon actually charges (drives the charge ring). */
+  charging: boolean;
+  /** World-space target markers, already projected to screen space. */
+  markers: TargetMarker[];
+  /** Active entries at the start of `markers`. */
+  markerCount: number;
+  /**
+   * The last damage the player took, named. Empty when nothing has landed
+   * recently. This is the answer to "where did that come from": every source
+   * that can hurt the player reports its own label here.
+   */
+  hurtBy: string;
+  /** Seconds since that hit, for the fade-out. */
+  hurtAge: number;
+}
+
+/**
+ * One world-space indicator over an enemy or an ally. Projected by the caller
+ * (which owns the camera), so the HUD only has to place a div at x/y.
+ */
+export interface TargetMarker {
+  /** -1..1 clip space, already converted to CSS px by the caller. */
+  x: number;
+  y: number;
+  /** Distance in metres, for the range text. */
+  distance: number;
+  /** Marker colour, matching the radar hue for this kind. */
+  colorCss: string;
+  /** 'enemy' | 'ally' | 'elite' | 'boss' — drives the glyph. */
+  role: string;
+  /** 0..1 health fraction, for the tick under the glyph. */
+  health: number;
+  /** True when the marker is off screen and should clamp to the edge. */
+  clamped: boolean;
+  /** Glyph letter or symbol, already chosen by the caller. */
+  glyph: string;
 }
 
 export interface DeathStats {
@@ -215,6 +283,10 @@ const RADAR_INTERVAL = 0.05;
 /** Salvage meter scale: the kiosk's most expensive item is 120 salvage, so the
  *  chip's fill bar completes there and holds at full beyond it. */
 const SALVAGE_METER_SCALE = 120;
+/** Upper bound on simultaneously drawn world markers (matches Game's pool). */
+const MAX_MARKERS = 28;
+/** Seconds a named-damage label stays on screen. */
+const HURT_LABEL_TIME = 2.4;
 
 export class Hud {
   public readonly root: HTMLDivElement;
@@ -232,6 +304,8 @@ export class Hud {
   public onDailyRun: (() => void) | null = null;
   /** Menu: toggle one challenge wager (see game/Challenges.ts). */
   public onChallengeToggle: ((id: ChallengeId) => void) | null = null;
+  /** Menu: the equipped loadout changed (four weapon ids, in slot order). */
+  public onLoadoutChange: ((ids: string[]) => void) | null = null;
 
   private readonly healthFill: HTMLElement;
   private readonly healthHead: HTMLElement;
@@ -243,7 +317,7 @@ export class Hud {
   private readonly slots: HTMLElement[] = [];
   /** Last icon index written per slot, so the innerHTML rebuild is skipped
    *  while the window is unchanged. -1 means "never written". */
-  private readonly slotIconCache: number[] = [-1, -1, -1];
+  private readonly slotIconCache: number[] = [];
   private readonly weaponNameEl: HTMLElement;
   private readonly waveBanner: HTMLElement;
   private readonly bannerTitle: HTMLElement;
@@ -277,8 +351,6 @@ export class Hud {
   private readonly challengeChips: HTMLButtonElement[] = [];
   private readonly challengePayout: HTMLElement;
   private readonly challengeIds: ChallengeId[] = [];
-  /** Icon per weapon slot, in WEAPON_ORDER — drives the 3-slot window. */
-  private slotIcons: IconName[] = [];
   private readonly slotCount: HTMLElement;
   /** Touch overlay elements — shown only in touch mode. */
   private readonly touchRoot: HTMLElement;
@@ -334,8 +406,7 @@ export class Hud {
   private readonly copyTimers = new Map<HTMLElement, number>();
   private seedDenyTimer = 0;
   /** Boss bar. */
-  private readonly bossBar: HTMLElement;
-  private readonly bossNameEl: HTMLElement;
+  private readonly bossBar: HTMLElement;  private readonly bossNameEl: HTMLElement;
   private readonly bossPhaseEl: HTMLElement;
   private readonly bossFill: HTMLElement;
   /** Status pips beside the health numeral. */
@@ -359,6 +430,24 @@ export class Hud {
   private achievementsSeen = false;
   /** Last signature of the ledger inputs; the list is only rebuilt when it moves. */
   private achSignature = '';
+  /** World-marker DOM pool, grown on demand up to MAX_MARKERS. */
+  private readonly markerEls: HTMLElement[] = [];
+  private readonly markerHost: HTMLElement;
+  /** Named-damage banner. */
+  private readonly hurtEl: HTMLElement;
+  private readonly hurtN: HTMLElement;
+  private hurtValue = '';
+  /** Scope overlay (magnified optics) and the charge ring (heavy weapons). */
+  private readonly scopeEl: HTMLElement;
+  private readonly chargeRing: HTMLElement;
+  private scopeShown = false;
+  /** Loadout tab. */
+  private readonly loadoutSlotsEl: HTMLElement;
+  private readonly loadoutPoolEl: HTMLElement;
+  /** Live loadout, owned here and pushed to Game on every change. */
+  private loadoutIds: string[] = [];
+  /** Which slot the next pool click replaces. */
+  private loadoutCursor = 0;
 
   /** Cached DOM write — skips entirely when the value is unchanged (hot path: 60 fps). */
   private setText(key: string, el: HTMLElement, v: string): void {
@@ -452,12 +541,25 @@ export class Hud {
       <div class="hud__vignette" data-vignette></div>
       <div class="hud__frame" data-frame></div>
       <div class="hud__dmg-container" data-dmg-container></div>
+      <!-- Named damage: the arc says WHERE, this says WHAT. A hit with no
+           visible attacker is the most confusing thing that can happen. -->
+      <div class="hud__hurt" data-hurt hidden><b data-hurt-n></b></div>
+      <!-- World-space target markers over enemies and allies. Projected by
+           Game, placed here, and never interactive. -->
+      <div class="hud__markers" data-markers></div>
       <div class="hud__crosshair" data-crosshair>
         <span class="ch ch--tl"></span><span class="ch ch--tr"></span>
         <span class="ch ch--bl"></span><span class="ch ch--br"></span>
         <span class="ch ch--dot"></span>
       </div>
       <div class="hud__hitmarker" data-hitmarker></div>
+      <!-- Scope overlay: only present for the magnified optics, and it fades
+           in with the aim so the transition is never a hard cut. -->
+      <div class="hud__scope" data-scope hidden>
+        <div class="hud__scope-mask"></div>
+        <div class="hud__scope-cross"><i></i><i></i></div>
+        <div class="hud__scope-ticks"></div>
+      </div>
       <div class="hud__pops" data-pops></div>
       <div class="hud__banner" data-banner>
         <div class="hud__banner-title" data-banner-title>WAVE 1</div>
@@ -578,71 +680,110 @@ export class Hud {
             <span class="hud__reload-spin" data-reload-spin>${icon('reload')}</span>
           </div>
           <div class="hud__reload"><div class="hud__reload-fill" data-reload></div></div>
+          <!-- Charge ring: the heavy weapons telegraph their shot here. -->
+          <div class="hud__charge" data-charge hidden>
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <circle class="hud__charge-track" cx="20" cy="20" r="17" />
+              <circle class="hud__charge-fill" cx="20" cy="20" r="17" data-charge-fill />
+            </svg>
+          </div>
         </div>
       </div>
       <div class="hud__menu" data-menu>
         <div class="hud__menu-card">
           <div class="hud__menu-title">FRONTAL FORCE</div>
           <div class="hud__menu-best" data-menu-best></div>
-          <div class="hud__menu-records" data-menu-records hidden></div>
-          <!-- Achievement ledger: grouped by tier, capped height, own scroller. -->
-          <div class="hud__ach" data-ach hidden>
-            <div class="hud__ach-summary" data-ach-summary>UNLOCKED 0/0</div>
-            <div class="hud__ach-list" data-ach-list></div>
+          <!--
+            Tabs. The menu used to show ten named areas at once, which is a
+            control panel rather than a menu: everything competes for the same
+            glance and nothing reads. One tab is visible at a time, and the
+            tab that matters (PLAY) is the one that opens.
+          -->
+          <div class="hud__tabs" role="tablist">
+            <button type="button" class="hud__tab active" data-tab="play" role="tab">${icon('play')}<span>PLAY</span></button>
+            <button type="button" class="hud__tab" data-tab="kit" role="tab">${icon('crate')}<span>LOADOUT</span></button>
+            <button type="button" class="hud__tab" data-tab="record" role="tab">${icon('trophy')}<span>RECORDS</span></button>
+            <button type="button" class="hud__tab" data-tab="setup" role="tab">${icon('grid')}<span>SETTINGS</span></button>
           </div>
-          <div class="hud__modes" role="group" aria-label="Game mode">
-            <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="onslaught" title="Heavy waves from wave 2, ×1.75 score">${icon('skull')}<span>ONSLAUGHT</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="rotator" title="Weapon swaps every kill, ×1.5 score">${icon('swap')}<span>ROTATION</span></button>
-            <button type="button" class="hud__mode-chip" data-mode="overrun" title="Endless: 24-alive cap, HP ×1.12 per wave, ×1.5 score, own best-wave record">${icon('infinity')}<span>OVERRUN</span></button>
-          </div>
-          <!-- Challenge wagers: opt-in difficulty that pays score. Each chip
-               toggles independently, and the readout states the total payout
-               so the trade is visible before DEPLOY. -->
-          <div class="hud__challenges" data-challenges role="group" aria-label="Challenge wagers">
-            <div class="hud__challenges-head">
-              <span class="hud__challenges-title">WAGERS</span>
-              <span class="hud__challenges-payout" data-challenge-payout>NO WAGER</span>
+
+          <div class="hud__panel" data-panel="play">
+            <div class="hud__modes" role="group" aria-label="Game mode">
+              <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
+              <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
+              <button type="button" class="hud__mode-chip" data-mode="onslaught" title="Heavy waves from wave 2, ×1.75 score">${icon('skull')}<span>ONSLAUGHT</span></button>
+              <button type="button" class="hud__mode-chip" data-mode="rotator" title="Weapon swaps every kill, ×1.5 score">${icon('swap')}<span>ROTATION</span></button>
+              <button type="button" class="hud__mode-chip" data-mode="overrun" title="Endless: 24-alive cap, HP ×1.12 per wave, ×1.5 score, own best-wave record">${icon('infinity')}<span>OVERRUN</span></button>
             </div>
-            <div class="hud__challenges-row">
-              ${CHALLENGE_IDS.map((id) => {
-                const def = CHALLENGES[id];
-                return (
-                  `<button type="button" class="hud__challenge" data-challenge="${id}" ` +
-                  `title="${def.description}" aria-pressed="false">` +
-                  `${icon('skull')}<span>${def.name.toUpperCase()}</span></button>`
-                );
-              }).join('')}
+            <!-- Challenge wagers: opt-in difficulty that pays score. Each chip
+                 toggles independently, and the readout states the total payout
+                 so the trade is visible before DEPLOY. -->
+            <div class="hud__challenges" data-challenges role="group" aria-label="Challenge wagers">
+              <div class="hud__challenges-head">
+                <span class="hud__challenges-title">WAGERS</span>
+                <span class="hud__challenges-payout" data-challenge-payout>NO WAGER</span>
+              </div>
+              <div class="hud__challenges-row">
+                ${CHALLENGE_IDS.map((id) => {
+                  const def = CHALLENGES[id];
+                  return (
+                    `<button type="button" class="hud__challenge" data-challenge="${id}" ` +
+                    `title="${def.description}" aria-pressed="false">` +
+                    `${icon('skull')}<span>${def.name.toUpperCase()}</span></button>`
+                  );
+                }).join('')}
+              </div>
+            </div>
+            <!-- Seed row: a code the player was given, or today's shared daily.
+                 Both live inside the menu overlay, which carries the hidden
+                 class outside the menu, so this input cannot hold focus mid-run. -->
+            <div class="hud__seed-row">
+              <input
+                class="hud__seed-input"
+                type="text"
+                data-seed-input
+                maxlength="8"
+                inputmode="text"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                placeholder="SEED CODE"
+                aria-label="Seed code"
+              >
+              <button type="button" class="hud__btn hud__btn--seed" data-seed-run>${icon('flag')}<span>DEPLOY SEED</span></button>
+              <button type="button" class="hud__btn hud__btn--ghost" data-daily-run>${icon('clock')}<span>DAILY RUN</span></button>
             </div>
           </div>
-          <!-- Seed row: a code the player was given, or today's shared daily.
-               Both live inside the menu overlay, which carries the hidden
-               class outside the menu, so this input cannot hold focus mid-run. -->
-          <div class="hud__seed-row">
-            <input
-              class="hud__seed-input"
-              type="text"
-              data-seed-input
-              maxlength="8"
-              inputmode="text"
-              autocomplete="off"
-              autocapitalize="characters"
-              spellcheck="false"
-              placeholder="SEED CODE"
-              aria-label="Seed code"
-            >
-            <button type="button" class="hud__btn hud__btn--seed" data-seed-run>${icon('flag')}<span>DEPLOY SEED</span></button>
-            <button type="button" class="hud__btn hud__btn--ghost" data-daily-run>${icon('clock')}<span>DAILY RUN</span></button>
+
+          <!-- Kit tab: the loadout, built on demand. -->
+          <div class="hud__panel hidden" data-panel="kit">
+            <div class="hud__loadout-head">
+              <span class="hud__loadout-hint">Pick a slot, then pick a weapon.</span>
+            </div>
+            <div class="hud__loadout-slots" data-loadout-slots></div>
+            <div class="hud__loadout-pool" data-loadout-pool></div>
           </div>
-          <div class="hud__keys" data-keys></div>
-          <div class="hud__settings">
-            <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
-            <label title="Touch look" class="hud__setting-touch">${icon('move')}<input type="range" min="0.2" max="3" step="0.05" data-touch-sens aria-label="Touch sensitivity"></label>
-            <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
-            <label title="Graphics quality" class="hud__setting-quality">${icon('grid')}<select data-quality aria-label="Graphics quality"><option value="auto">AUTO</option><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select></label>
+
+          <!-- Records tab: personal bests and the achievement ledger. -->
+          <div class="hud__panel hidden" data-panel="record">
+            <div class="hud__menu-records" data-menu-records></div>
+            <div class="hud__ach" data-ach>
+              <div class="hud__ach-summary" data-ach-summary>UNLOCKED 0/0</div>
+              <div class="hud__ach-list" data-ach-list></div>
+            </div>
           </div>
-          <button class="hud__btn" data-start>${icon('play')}<span>DEPLOY</span></button>
+
+          <!-- Settings tab: controls, audio, graphics. -->
+          <div class="hud__panel hidden" data-panel="setup">
+            <div class="hud__keys" data-keys></div>
+            <div class="hud__settings">
+              <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
+              <label title="Touch look" class="hud__setting-touch">${icon('move')}<input type="range" min="0.2" max="3" step="0.05" data-touch-sens aria-label="Touch sensitivity"></label>
+              <label title="Volume">${icon('speaker')}<input type="range" min="0" max="1" step="0.05" data-vol aria-label="Volume"></label>
+              <label title="Graphics quality" class="hud__setting-quality">${icon('grid')}<select data-quality aria-label="Graphics quality"><option value="auto">AUTO</option><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select></label>
+            </div>
+          </div>
+
+          <button class="hud__btn hud__btn--deploy" data-start>${icon('play')}<span>DEPLOY</span></button>
         </div>
       </div>
       <div class="hud__pause hidden" data-pause>
@@ -766,6 +907,12 @@ export class Hud {
     this.achList = q('[data-ach-list]');
 
     this.buildKeys(q('[data-keys]'));
+    this.loadoutSlotsEl = q('[data-loadout-slots]');
+    this.loadoutPoolEl = q('[data-loadout-pool]');
+    // The loadout is a tab, so it is built once at boot rather than on open:
+    // the tab click is the only thing between the player and their kit.
+    this.buildLoadoutScreen();
+    this.buildTabs();
     const popsEl = q('[data-pops]');
     for (let i = 0; i < 6; i++) {
       const pop = document.createElement('div');
@@ -787,20 +934,16 @@ export class Hud {
     this.timerN = q('[data-timer-n]');
 
     const slotsEl = q('[data-slots]');
-    const slotIcons: IconName[] = [
-      'rifle', 'smg', 'shotgun', 'railgun', 'dmr',
-      'lmg', 'pistol', 'launcher', 'beam', 'burst',
-    ];
-    // Ten weapons would be an unreadable icon wall, so the HUD shows a
-    // three-slot window (previous / current / next) plus an index counter.
-    for (let i = 0; i < 3; i++) {
+    // Four slots, matching the loadout. The icons come from the LIVE loadout
+    // each frame, so this list is only the pool the HUD may draw from.
+    for (let i = 0; i < LOADOUT_SLOTS; i++) {
       const slot = document.createElement('div');
       slot.className = 'hud__slot';
-      slot.innerHTML = icon(slotIcons[i] ?? 'rifle');
+      slot.hidden = true;
       slotsEl.appendChild(slot);
       this.slots.push(slot);
+      this.slotIconCache.push(-1);
     }
-    this.slotIcons = slotIcons;
     this.slotCount = q('[data-slot-count]');
     this.weaponNameEl = q('[data-weapon-name]');
 
@@ -811,6 +954,12 @@ export class Hud {
       dmgContainer.appendChild(dir);
       this.damageDirs.push(dir);
     }
+
+    this.markerHost = q('[data-markers]');
+    this.hurtEl = q('[data-hurt]');
+    this.hurtN = q('[data-hurt-n]');
+    this.scopeEl = q('[data-scope]');
+    this.chargeRing = q('[data-charge]');
 
     this.sensInputs = qa<HTMLInputElement>('input[data-sens]');
     this.touchSensInputs = qa<HTMLInputElement>('input[data-touch-sens]');
@@ -1013,25 +1162,56 @@ export class Hud {
       `scaleX(${s.reloading ? s.reloadProgress : 0})`,
     );
 
+    // Slot ring: all four equipped weapons, always visible. A window of three
+    // was a workaround for having ten weapons; with a four-slot loadout the
+    // whole kit fits on screen, so the player can see every option at once and
+    // never has to remember what is one scroll away.
+    const names = s.loadoutNames;
+    const ids = s.loadoutIds;
+    const total = Math.max(1, ids.length);
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i];
       if (!slot) continue;
-      // Window of three around the active weapon: prev / current / next.
-      const total = this.slotIcons.length;
-      const offset = i - 1;
-      const idx = ((s.weaponIndex + offset) % total + total) % total;
-      // innerHTML is a full parse; only pay it when the window actually
-      // changed. Before this cache the loop re-parsed three icons 60 times a
-      // second for a value that changes on a weapon swap.
+      const present = i < ids.length;
+      slot.hidden = !present;
+      if (!present) continue;
+      const idx = i % total;
       if (this.slotIconCache[i] !== idx) {
         this.slotIconCache[i] = idx;
-        slot.innerHTML = icon(this.slotIcons[idx] ?? 'rifle');
+        slot.innerHTML = icon(WEAPON_ICON[ids[idx] ?? ''] ?? 'rifle');
       }
-      slot.classList.toggle('active', i === 1);
-      slot.classList.toggle('hud__slot--edge', i !== 1);
+      slot.classList.toggle('active', i === s.weaponIndex);
+      slot.classList.remove('hud__slot--edge');
+      const name = names[idx] ?? '';
+      if (slot.title !== name) slot.title = name;
     }
-    this.setText('slotn', this.slotCount, `${s.weaponIndex + 1}/${this.slotIcons.length}`);
+    this.setText('slotn', this.slotCount, `${s.weaponIndex + 1}/${total}`);
     this.setText('wname', this.weaponNameEl, s.weaponName);
+
+    // Scope overlay: fades in with the aim, so the change of sight picture is
+    // continuous rather than a hard cut to a black frame.
+    const scopeOn = s.inGame && s.scoped && s.adsT > 0.02;
+    if (scopeOn !== this.scopeShown) {
+      this.scopeShown = scopeOn;
+      this.scopeEl.hidden = !scopeOn;
+    }
+    if (scopeOn) {
+      this.setStyle('scopeo', this.scopeEl, 'opacity', Math.min(1, s.adsT * 1.6).toFixed(2));
+    }
+
+    // Charge ring: only for weapons that actually charge.
+    this.chargeRing.hidden = !s.charging || !s.inGame;
+    if (s.charging && s.inGame) {
+      const svg = this.chargeRing.firstElementChild;
+      const fill = svg?.lastElementChild as SVGCircleElement | null | undefined;
+      if (fill) {
+        const c = 2 * Math.PI * 17;
+        // dashoffset is a presentation attribute, not a CSS custom property, so
+        // it is written directly rather than through the cached style helper.
+        fill.style.strokeDashoffset = (c * (1 - s.charge)).toFixed(2);
+      }
+      this.chargeRing.classList.toggle('is-ready', s.charge >= 1);
+    }
 
     this.setText('wave', this.waveText, String(s.wave));
     this.setText('score', this.scoreText, String(s.score));
@@ -1078,10 +1258,84 @@ export class Hud {
     const gap = s.crosshairGapPx;
     this.setStyle('chgap', this.crosshair, '--ch-gap', `${gap.toFixed(1)}px`);
 
+    this.renderMarkers(s);
+    this.renderHurt(s);
+
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.waveBanner.classList.remove('show');
     }
+  }
+
+  /**
+   * World markers. Positions arrive already projected, so this is pure DOM
+   * placement: the pool is grown once to the high-water mark and then only
+   * transformed, which keeps a 28-enemy wave at 28 transforms per frame and
+   * zero allocations.
+   */
+  private renderMarkers(s: HudState): void {
+    const count = s.inGame ? Math.min(s.markerCount, MAX_MARKERS) : 0;
+    while (this.markerEls.length < count) {
+      const el = document.createElement('div');
+      el.className = 'hud__marker';
+      el.innerHTML = '<i class="hud__marker-dot"></i><span class="hud__marker-n"></span>'
+        + '<span class="hud__marker-glyph"></span>';
+      this.markerHost.appendChild(el);
+      this.markerEls.push(el);
+    }
+    for (let i = 0; i < this.markerEls.length; i++) {
+      const el = this.markerEls[i];
+      if (!el) continue;
+      if (i >= count) {
+        if (!el.hidden) el.hidden = true;
+        continue;
+      }
+      const m = s.markers[i];
+      if (!m) {
+        el.hidden = true;
+        continue;
+      }
+      if (el.hidden) el.hidden = false;
+      this.setStyle(`mk${i}`, el, 'transform', `translate3d(${m.x.toFixed(1)}px, ${m.y.toFixed(1)}px, 0)`);
+      // Colour is the KIND (each enemy def owns a hue, shared with the radar)
+      // and the class is the ROLE (shape and size). Keeping them separate means
+      // a new enemy kind is legible the day it ships, with no CSS change.
+      const cls = `hud__marker hud__marker--${m.role}${m.clamped ? ' is-clamped' : ''}`;
+      if (el.className !== cls) el.className = cls;
+      this.setStyle(`mkc${i}`, el, '--mk-color', m.colorCss);
+      const n = el.lastElementChild?.previousElementSibling as HTMLElement | undefined;
+      const range = m.clamped ? '' : `${Math.round(m.distance)}m`;
+      if (n && n.textContent !== range) n.textContent = range;
+      const glyph = el.lastElementChild as HTMLElement | null;
+      const wanted = m.glyph;
+      if (glyph && glyph.textContent !== wanted) glyph.textContent = wanted;
+      if (glyph) glyph.hidden = wanted === '';
+      // Health tick: the dot's fill height is the health fraction.
+      const dot = el.firstElementChild as HTMLElement | null;
+      if (dot) this.setStyle(`mkh${i}`, dot, '--hp', m.health.toFixed(2));
+    }
+  }
+
+  /**
+   * Named damage banner. It only appears for a few seconds after a hit and it
+   * always names the source, which is the fix for "I lost health and I do not
+   * know why": if a source cannot name itself, the label says so rather than
+   * staying silent.
+   */
+  private renderHurt(s: HudState): void {
+    const show = s.inGame && s.hurtAge < HURT_LABEL_TIME && s.hurtBy !== '';
+    this.hurtEl.hidden = !show;
+    if (!show) {
+      this.hurtValue = '';
+      return;
+    }
+    if (this.hurtValue !== s.hurtBy) {
+      this.hurtValue = s.hurtBy;
+      this.hurtN.textContent = s.hurtBy;
+    }
+    // The banner fades with age, so it never competes with the next hit.
+    const k = clamp01(1 - s.hurtAge / HURT_LABEL_TIME);
+    this.setStyle('hurtk', this.hurtEl, 'opacity', (0.25 + k * 0.75).toFixed(2));
   }
 
   /**
@@ -1531,7 +1785,128 @@ export class Hud {
 
   public showMenu(visible: boolean): void {
     this.menu.classList.toggle('hidden', !visible);
+    // The menu always opens on PLAY: the panel the player came back for is the
+    // one that starts a run, not whatever they were last fiddling with.
+    if (visible) this.selectTab('play');
     this.syncOverlay();
+  }
+
+  /**
+   * Switch the visible menu panel. The tab buttons carry the state, so the
+   * screen never has to track which panel is showing.
+   */
+  private selectTab(id: string): void {
+    for (const tab of this.menu.querySelectorAll<HTMLElement>('[data-tab]')) {
+      tab.classList.toggle('active', tab.dataset.tab === id);
+      tab.setAttribute('aria-selected', tab.dataset.tab === id ? 'true' : 'false');
+    }
+    for (const panel of this.menu.querySelectorAll<HTMLElement>('[data-panel]')) {
+      panel.classList.toggle('hidden', panel.dataset.panel !== id);
+    }
+    if (id === 'kit') this.renderLoadout();
+  }
+
+  private buildTabs(): void {
+    for (const tab of this.menu.querySelectorAll<HTMLElement>('[data-tab]')) {
+      tab.addEventListener('click', () => {
+        const id = tab.dataset.tab;
+        if (id) this.selectTab(id);
+      });
+    }
+  }
+
+  /** Adopt a loadout chosen elsewhere (the save, or a seed). */
+  public setLoadoutSelection(ids: readonly string[]): void {
+    this.loadoutIds = ids.slice();
+    this.renderLoadout();
+  }
+
+  /**
+   * Build the loadout screen once: one row of four slots and the full pool.
+   * The pool is the entire arsenal, so the screen doubles as the weapon
+   * reference: every gun's role text is visible without a separate codex.
+   */
+  private buildLoadoutScreen(): void {
+    for (let i = 0; i < LOADOUT_SLOTS; i++) {
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      slot.className = 'hud__lo-slot';
+      slot.dataset.slot = String(i);
+      slot.addEventListener('click', () => {
+        this.loadoutCursor = i;
+        this.renderLoadout();
+      });
+      this.loadoutSlotsEl.appendChild(slot);
+    }
+    for (const id of WEAPON_ORDER) {
+      const def = WEAPONS[id];
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'hud__lo-weapon';
+      card.dataset.weapon = id;
+      card.innerHTML = `<span class="hud__lo-weapon-ic">${icon(WEAPON_ICON[id] ?? 'rifle')}</span>`
+        + `<span class="hud__lo-weapon-body">`
+        + `<b class="hud__lo-weapon-name">${def.name}</b>`
+        + `<span class="hud__lo-weapon-role">${def.role}</span>`
+        + `<span class="hud__lo-weapon-stats">`
+        + `<i>${def.damage}${def.pellets > 1 ? `x${def.pellets}` : ''}</i>`
+        + `<i>${def.fireRate.toFixed(1)}/s</i>`
+        + `<i>${def.magSize}</i>`
+        + `${def.scoped ? '<i class="is-scope">SCOPE</i>' : ''}`
+        + `</span></span>`;
+      card.addEventListener('click', () => this.pickWeapon(id));
+      this.loadoutPoolEl.appendChild(card);
+    }
+  }
+
+  /**
+   * Put `id` in the selected slot. A weapon already in another slot is MOVED
+   * rather than duplicated: two slots holding the same gun is a wasted slot,
+   * and the player would have to fix it manually.
+   */
+  private pickWeapon(id: string): void {
+    const slot = this.loadoutCursor;
+    const existing = this.loadoutIds.indexOf(id);
+    const next = this.loadoutIds.slice();
+    if (existing === slot) {
+      this.renderLoadout();
+      return;
+    }
+    if (existing >= 0) {
+      // Swap the two positions so the displaced weapon is not lost.
+      const displaced = next[slot] ?? id;
+      next[slot] = id;
+      next[existing] = displaced;
+    } else {
+      next[slot] = id;
+    }
+    this.loadoutIds = next;
+    // Advance the cursor so a player filling all four slots never has to
+    // re-click the slot between picks.
+    this.loadoutCursor = (slot + 1) % LOADOUT_SLOTS;
+    this.renderLoadout();
+    this.onLoadoutChange?.(next.slice());
+  }
+
+  /** Repaint the loadout screen from `loadoutIds`. */
+  private renderLoadout(): void {
+    const slots = this.loadoutSlotsEl.children;
+    for (let i = 0; i < slots.length; i++) {
+      const el = slots[i] as HTMLElement;
+      const id = this.loadoutIds[i];
+      const def = id !== undefined ? WEAPONS[id as keyof typeof WEAPONS] : undefined;
+      el.classList.toggle('active', i === this.loadoutCursor);
+      el.innerHTML = def && id !== undefined
+        ? `<span class="hud__lo-slot-n">${i + 1}</span>`
+          + `<span class="hud__lo-weapon-ic">${icon(WEAPON_ICON[id] ?? 'rifle')}</span>`
+          + `<b>${def.name}</b>`
+        : `<span class="hud__lo-slot-n">${i + 1}</span><b>EMPTY</b>`;
+    }
+    for (const card of this.loadoutPoolEl.children) {
+      const el = card as HTMLElement;
+      const id = el.dataset.weapon;
+      el.classList.toggle('equipped', id !== undefined && this.loadoutIds.includes(id));
+    }
   }
 
   public showFatal(message: string): void {

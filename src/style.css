@@ -226,6 +226,106 @@ body {
 }
 
 /* ==========================================================================
+   Named damage + world markers.
+   The damage arc answers WHERE the hit came from; the label answers WHAT did
+   it. Together they make every point of health loss attributable, which is the
+   only way a hit from an unseen source can feel fair.
+   ========================================================================== */
+.hud__hurt {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 62px);
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--danger);
+  text-shadow: 0 0 10px rgba(255, 77, 94, 0.55), 0 1px 2px #000;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 77, 94, 0.45);
+  background: rgba(12, 8, 10, 0.55);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.hud__hurt b { font-weight: 700; }
+.hud__hurt b::before { content: '\25B2'; margin-right: 6px; font-size: 8px; }
+
+/* Marker layer: full-viewport, never interactive, sits under the chrome. */
+.hud__markers {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  contain: layout paint style;
+}
+.hud__marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* The transform is written per frame; the anchor correction lives here so
+     the JS never has to add a half-size offset to every projection. */
+  margin: -26px 0 0 -18px;
+  width: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  will-change: transform;
+}
+.hud__marker[hidden] { display: none; }
+.hud__marker-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mk-color, #fff);
+  box-shadow: 0 0 8px var(--mk-color, #fff);
+  /* Health tick: the inner bar's height is `--hp`, so a marker shows how hurt
+     its owner is without a second element or a label. */
+  overflow: hidden;
+}
+.hud__marker-dot::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: calc(var(--hp, 1) * 100%);
+  background: var(--mk-color, #fff);
+  opacity: 0.95;
+}
+.hud__marker-glyph {
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--mk-color, #fff);
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9), 0 1px 2px #000;
+}
+.hud__marker-glyph[hidden] { display: none; }
+.hud__marker-n {
+  font-family: var(--font-data);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: rgba(232, 240, 244, 0.72);
+  text-shadow: 0 1px 2px #000;
+}
+/* Off-screen markers shrink and hollow out: present, but clearly not in view. */
+.hud__marker.is-clamped { opacity: 0.6; }
+.hud__marker.is-clamped .hud__marker-dot {
+  background: transparent;
+  border: 1.5px solid var(--mk-color, #fff);
+  box-shadow: none;
+}
+.hud__marker--enemy { --mk-color: #ff5c5c; }
+.hud__marker--elite { --mk-color: #ffd76b; }
+.hud__marker--boss { --mk-color: #ff4d5e; }
+.hud__marker--ally { --mk-color: #7ddb8a; }
+.hud__marker--boss .hud__marker-dot,
+.hud__marker--elite .hud__marker-dot { width: 9px; height: 9px; }
+
+/* ==========================================================================
    Crosshair — four corner brackets around a cyan dot.
    The brackets open with the real cone (`--ch-gap`), so the reticle is the
    spread readout rather than a decoration.

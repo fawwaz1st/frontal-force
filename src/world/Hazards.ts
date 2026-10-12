@@ -51,8 +51,14 @@ export interface HazardDamageSink {
     floor: number,
     source: 'barrel' | 'hazard',
   ): number;
-  /** Damage the player if inside the radius. Returns true when the player was hit. */
-  damagePlayerInRadius(point: THREE.Vector3, radius: number, damage: number): boolean;
+  /** Damage the player if inside the radius. Returns true when the player was hit.
+   *  `source` is a short player-facing label so the HUD can name the hazard. */
+  damagePlayerInRadius(
+    point: THREE.Vector3,
+    radius: number,
+    damage: number,
+    source?: string,
+  ): boolean;
 }
 
 /**
@@ -565,7 +571,7 @@ export class Hazards {
   private detonate(h: HazardRuntime, sink: HazardDamageSink, byPlayer: boolean): void {
     const p = h.position;
     sink.damageEnemiesInRadius(p, h.radius, h.damage, BARREL_ENEMY_FLOOR, 'barrel');
-    sink.damagePlayerInRadius(p, BARREL_SELF_RADIUS, h.damage * BARREL_SELF_FRACTION);
+    sink.damagePlayerInRadius(p, BARREL_SELF_RADIUS, h.damage * BARREL_SELF_FRACTION, 'BARREL BLAST');
     this.effects.ring(p, BARREL_BAND_COLOR, BARREL_RING_GROW, BARREL_RING_LIFE);
     this.effects.burst(p, BARREL_BAND_COLOR, BARREL_BLAST_SPARKS, BARREL_BLAST_SPARK_SPEED);
     this.audio.barrelBlast(this.panToward(p));
@@ -620,7 +626,7 @@ export class Hazards {
       sink.damageEnemiesInRadius(
         h.position, h.radius, h.damage, TESLA_ENEMY_FLOOR, 'hazard',
       );
-      sink.damagePlayerInRadius(h.position, h.radius, h.damage);
+      sink.damagePlayerInRadius(h.position, h.radius, h.damage, 'TESLA COIL');
       this.tmp.copy(h.position);
       this.tmp.y += TESLA_ORB_Y;
       this.effects.burst(this.tmp, TESLA_ORB_COLOR, TESLA_SPARKS, TESLA_SPARK_SPEED);
@@ -670,7 +676,7 @@ export class Hazards {
       sink.damageEnemiesInRadius(
         h.position, h.radius, VENT_ENEMY_DAMAGE, VENT_ENEMY_FLOOR, 'hazard',
       );
-      sink.damagePlayerInRadius(h.position, h.radius, VENT_DAMAGE);
+      sink.damagePlayerInRadius(h.position, h.radius, VENT_DAMAGE, 'STEAM VENT');
       this.tmp.copy(h.position);
       this.tmp.x += (Math.random() - 0.5) * VENT_SMOKE_JITTER;
       this.tmp.z += (Math.random() - 0.5) * VENT_SMOKE_JITTER;

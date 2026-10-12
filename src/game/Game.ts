@@ -8,6 +8,7 @@ import { Player } from '../player/Player';
 import { Effects } from '../render/Effects';
 import { EnemyManager, type Enemy } from '../ai/Enemies';
 import { WeaponController, PLAYER_TARGET_ID } from '../combat/WeaponController';
+import { WEAPONS, sanitizeLoadout, type WeaponId } from '../combat/weapons';
 import { Grenades, type GrenadeKind } from '../combat/Grenades';
 import { Viewmodel } from '../render/Viewmodel';
 import { Ally } from '../ai/Ally';
@@ -27,7 +28,7 @@ import {
   type ChallengeId,
   type ChallengeMods,
 } from './Challenges';
-import { Hud, type HudState, type RadarBlip, type SettingsPatch } from '../ui/Hud';
+import { Hud, type HudState, type RadarBlip, type SettingsPatch, type TargetMarker } from '../ui/Hud';
 import { Draft } from '../ui/Draft';
 import { Kiosk, type KioskItem } from '../ui/Kiosk';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -127,8 +128,8 @@ class PlayerTarget implements CombatTarget {
     return dot * dot;
   }
 
-  public receiveDamage(amount: number, from: THREE.Vector3): void {
-    this.player.damage(amount, from);
+  public receiveDamage(amount: number, from: THREE.Vector3, source = ''): void {
+    this.player.damage(amount, from, source);
   }
 }
 
@@ -214,6 +215,16 @@ export class Game {
   }));
   private readonly radarColorCache = new Map<number, string>();
   private radarCount = 0;
+  /** World-space markers over enemies and allies, rebuilt each HUD tick. */
+  private readonly targetMarkers: TargetMarker[] = Array.from({ length: 28 }, () => ({
+    x: 0, y: 0, distance: 0, colorCss: '#ffffff', role: 'enemy',
+    health: 1, clamped: false, glyph: '',
+  }));
+  private markerCount = 0;
+  private readonly markerProject = new THREE.Vector3();
+  private readonly markerProject2 = new THREE.Vector3();
+  private hudMarkerTimer = 0;
+  private hurtAge = 99;
   private readonly hudSnapshot: HudState = {
     health: 100,
     maxHealth: 100,
@@ -270,6 +281,18 @@ export class Game {
     slowT: 0,
     achievementsQueued: 0,
     eliteAlive: 0,
+    mapName: '',
+    mapTagline: '',
+    loadoutNames: [],
+    loadoutIds: [],
+    scoped: false,
+    adsT: 0,
+    charge: 1,
+    charging: false,
+    markers: this.targetMarkers,
+    markerCount: 0,
+    hurtBy: '',
+    hurtAge: 99,
   };
   private menuTime = 0;
   /** Last consumed look delta (render-rate) — drives cosmetic weapon sway. */
@@ -290,6 +313,9 @@ export class Game {
     // Restore the persisted wager selection before the menu is ever shown, so
     // the chips and the payout readout agree with the save on first paint.
     this.setChallenges(this.save.challenges);
+    // Loadout: repaired through the weapon table before it ever reaches the
+    // controller, so a save from an older build cannot leave an empty kit.
+    this.setLoadout(this.save.loadout, false);
     this.hud.setChallengeSelection(this.challenges);
     this.hud.setMenuBest(this.save.bestScore, this.recordWave);
     this.hud.setMenuRecords(this.save);
@@ -475,12 +501,12 @@ export class Game {
       if (result.dealt > 0) this.onDamageDealt(result.dealt, false);
       return result.killed;
     },
-    damagePlayerInRadius: (point, radius, damage) => {
+    damagePlayerInRadius: (point, radius, damage, source) => {
       if (this.player.dead) return false;
       const distance = this.player.position.distanceTo(point);
       if (distance > radius) return false;
       const falloff = Math.max(0.35, 1 - distance / radius);
-      this.player.damage(damage * falloff, point);
+      this.player.damage(damage * falloff, point, source);
       return true;
     },
   };
@@ -492,6 +518,8 @@ export class Game {
       this.combo = 0;
       this.comboTimer = 0;
       this.waveTookDamage = true;
+      // Reset the "hurt by" clock so the label always describes the newest hit.
+      this.hurtAge = 0;
       // Health actually lost, after the shield ate its share: a fully absorbed
       // hit must not read as damage taken on the death card.
       this.run.stats.damageTaken += this.player.lastDamageTaken;
@@ -502,6 +530,9 @@ export class Game {
       const angle = this.damageAngle(from);
       this.hud.damageFrom(angle);
       this.audio.hurt(Math.sin(angle));
+    };
+    this.player.onSlide = () => {
+      this.audio.dash();
     };
     this.player.onLanded = (fallSpeed) => {
       this.audio.land();
@@ -571,6 +602,7 @@ export class Game {
       this.hud.setMenuBest(this.save.bestScore, this.recordWave);
       persistSave(this.save);
     };
+    this.hud.onLoadoutChange = (ids) => this.setLoadout(ids);
     this.input.onPauseKey = () => {
       if (this.phase === 'playing') this.pause();
       else if (this.phase === 'paused') this.resume();
@@ -744,6 +776,26 @@ export class Game {
       scoreMul: this.challengeMods.scoreMul,
       label: challengeLabel(this.challenges),
     };
+  }
+
+  /**
+   * Equip a loadout from the menu. The kit is persisted, because choosing four
+   * weapons and then losing them on reload would make the choice pointless.
+   * `persist` is false during boot so loading a save does not immediately
+   * rewrite it.
+   */
+  public setLoadout(ids: readonly string[], persist = true): void {
+    const clean = sanitizeLoadout(ids);
+    this.weapons.setLoadout(clean);
+    // A loadout change while a run is live must not leave the player holding a
+    // weapon that is no longer in the kit, so the controller re-slots to the
+    // first equipped weapon.
+    this.weapons.reslot();
+    this.syncLoadoutReadout();
+    this.hud.setLoadoutSelection(clean);
+    if (!persist) return;
+    this.save.loadout = clean.slice();
+    persistSave(this.save);
   }
 
   /** Start today's shared-seed run. */
@@ -1248,7 +1300,15 @@ export class Game {
   private updatePlayingStep(dt: number, frame: InputFrame): void {
     this.run.tick(dt);
     this.updateAbilities(dt, frame);
+    // The weapon owns the optic and the weight: a scoped rifle really zooms and
+    // a heavy gun really slows the walk. Both are read here rather than inside
+    // Player, so Player never has to know weapons exist.
+    this.player.adsFov = this.weapons.adsFov();
+    this.player.weaponMoveMul = this.weapons.moveMul;
     this.player.update(dt, frame, this.dashT > 0 ? this.dashDir : null);
+    // The damage-source label fades after a couple of seconds: it must describe
+    // the hit the player just felt, not linger as a permanent banner.
+    this.hurtAge += dt;
     // Player velocity is read straight off PlayerTarget.velocity (the player
     // integrates it), so no separate sampling pass is needed here.
     this.pLast.copy(this.player.position);
@@ -1304,9 +1364,11 @@ export class Game {
       return result;
     });
     this.ally.update(dt, this.player.position, this.enemies, this.waves.damageScale);
-    // Affix riders on the player: burn damage and the Glacial slow.
+    // Affix riders on the player: burn damage and the Glacial slow. The burn
+    // names its source: a damage-over-time with no visible attacker is the
+    // single most confusing way to lose health.
     const afflict = this.enemies.tickPlayerAffixes(dt);
-    if (afflict.burnDamage > 0) this.player.damage(afflict.burnDamage, null);
+    if (afflict.burnDamage > 0) this.player.damage(afflict.burnDamage, null, 'AFFIX BURN');
     this.player.setSlow(afflict.slowFraction);
     // Passive regeneration from cards.
     if (this.run.mods.regen > 0 && !this.player.dead) {
@@ -1615,6 +1677,13 @@ export class Game {
     state.reloadProgress = view.reloadProgress;
     state.weaponIndex = view.index;
     state.weaponName = weapon.def.name;
+    // The loadout readout is derived from the LIVE equipped list, so a menu
+    // change is reflected the moment the run starts with no extra plumbing.
+    this.syncLoadoutReadout();
+    state.scoped = weapon.def.scoped;
+    state.adsT = this.player.aimFraction;
+    state.charge = this.weapons.chargeFraction;
+    state.charging = (weapon.def.chargeTime ?? 0) > 0;
     state.wave = Math.max(1, this.waves.wave);
     state.enemiesLeft = this.enemies.aliveCount;
     state.phase = this.waves.phase;
@@ -1668,7 +1737,42 @@ export class Game {
     state.bossName = boss ? BOSS_NAME : '';
     state.bossPhase = boss ? boss.phase : 0;
     state.bossWeakPoint = boss ? !boss.weakPointBroken : false;
+    // Arena identity and the world markers. The map name is part of the run
+    // readout because the map is part of the seed now.
+    state.mapName = this.world.themeName;
+    state.mapTagline = this.world.themeTagline;
+    state.markers = this.targetMarkers;
+    state.markerCount = this.markerCount;
+    state.hurtBy = this.player.lastDamageSource;
+    state.hurtAge = this.hurtAge;
     return state;
+  }
+
+  /**
+   * Refresh the loadout readout arrays in place. The HUD reads them every
+   * frame, so they are mutated rather than reallocated: a 4-element array per
+   * frame would be 240 allocations a second for a value that changes when the
+   * player opens the menu.
+   */
+  private syncLoadoutReadout(): void {
+    const ids = this.weapons.equipped;
+    const names = this.hudSnapshot.loadoutNames;
+    const outIds = this.hudSnapshot.loadoutIds;
+    if (names.length !== ids.length) {
+      names.length = 0;
+      outIds.length = 0;
+      for (const id of ids) {
+        names.push(WEAPONS[id].name);
+        outIds.push(id);
+      }
+      return;
+    }
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i] as WeaponId;
+      const name = WEAPONS[id].name;
+      if (names[i] !== name) names[i] = name;
+      if (outIds[i] !== id) outIds[i] = id;
+    }
   }
 
   /** Normalized crosshair spread 0..1 from the ACTUAL cone the next shot uses. */
@@ -1703,15 +1807,121 @@ export class Game {
       blip.x = clamp(rx / range, -1, 1);
       blip.z = clamp(rz / range, -1, 1);
       blip.color = enemy.def.color;
-      let colorCss = this.radarColorCache.get(enemy.def.color);
-      if (!colorCss) {
-        colorCss = `#${enemy.def.color.toString(16).padStart(6, '0')}`;
-        this.radarColorCache.set(enemy.def.color, colorCss);
-      }
-      blip.colorCss = colorCss;
+      blip.colorCss = this.colorCssOf(enemy.def.color);
       count += 1;
     });
     this.radarCount = count;
+  }
+
+  /**
+   * Project every live enemy and ally to screen space for the world markers.
+   *
+   * Markers exist because the radar is a 2D abstraction: it tells you something
+   * is behind you but not WHAT it is or HOW hurt it is. A marker carries the
+   * kind's colour, its glyph, its health, and its range, so a glance answers
+   * "what is that, where is it, and can I kill it" without reading a label.
+   *
+   * Cost is bounded: 28 markers, one matrix multiply each, and off-screen
+   * markers are still emitted (clamped to the edge) so a flanking enemy cannot
+   * arrive unannounced.
+   */
+  private buildMarkers(dt: number): void {
+    // The projection only needs to be as fresh as the eye can read it.
+    this.hudMarkerTimer -= dt;
+    if (this.hudMarkerTimer > 0) return;
+    this.hudMarkerTimer = 0.05;
+    const camera = this.player.camera;
+    camera.updateMatrixWorld();
+    const halfW = this.container.clientWidth * 0.5;
+    const halfH = this.container.clientHeight * 0.5;
+    if (halfW <= 0 || halfH <= 0) {
+      this.markerCount = 0;
+      return;
+    }
+    let count = 0;
+    const emit = (
+      world: THREE.Vector3,
+      colorCss: string,
+      role: string,
+      health: number,
+      glyph: string,
+    ): void => {
+      if (count >= this.targetMarkers.length) return;
+      const marker = this.targetMarkers[count];
+      if (!marker) return;
+      this.markerProject.copy(world).project(camera);
+      // Behind the camera: clamp to the edge on the correct side instead of
+      // mirroring through the centre, which is the classic "marker points the
+      // wrong way" bug.
+      const behind = this.markerProject.z > 1;
+      let x = this.markerProject.x;
+      let y = this.markerProject.y;
+      let clamped = behind;
+      if (behind) {
+        x = x >= 0 ? 1 : -1;
+        y = y >= 0 ? 1 : -1;
+      } else if (Math.abs(x) > 1 || Math.abs(y) > 1) {
+        clamped = true;
+        const k = 1 / Math.max(Math.abs(x), Math.abs(y));
+        x *= k;
+        y *= k;
+      }
+      marker.x = halfW + x * halfW * 0.94;
+      marker.y = halfH - y * halfH * 0.9;
+      marker.distance = world.distanceTo(this.player.position);
+      marker.colorCss = colorCss;
+      marker.role = role;
+      marker.health = clamp(health, 0, 1);
+      marker.clamped = clamped;
+      marker.glyph = glyph;
+      count += 1;
+    };
+
+    this.enemies.forEachLive((enemy) => {
+      const at = enemy.group.position;
+      const colorCss = this.colorCssOf(enemy.def.color);
+      // Elites and the boss get their own glyph so a threat is never just
+      // "another dot": the shape is the read, the colour is the kind.
+      const role = enemy.kind === 'wardenPrime' ? 'boss' : enemy.elite ? 'elite' : 'enemy';
+      const glyph = enemy.kind === 'wardenPrime' ? 'B'
+        : enemy.kind === 'healer' ? '+'
+          : enemy.kind === 'summoner' ? 'S'
+            : enemy.kind === 'sniper' ? 'X'
+              : enemy.kind === 'exploder' ? '!'
+                : enemy.elite ? 'E' : '';
+      emit(
+        this.markerProject2.set(at.x, at.y + enemy.def.height + 0.55, at.z),
+        colorCss,
+        role,
+        enemy.health / enemy.def.health,
+        glyph,
+      );
+    });
+
+    // Ally markers are always lime, matching the escort's own HUD plate, so
+    // friendly and hostile markers can never be confused at a glance.
+    for (const bot of this.ally.bots) {
+      if (!bot.active) continue;
+      const at = bot.position;
+      emit(
+        this.markerProject2.set(at.x, at.y + 2.3, at.z),
+        '#7ddb8a',
+        'ally',
+        bot.hpFraction,
+        'A',
+      );
+    }
+    this.markerCount = count;
+  }
+
+  /** Cached `#rrggbb` for a numeric colour, shared with the radar. */
+  private colorCssOf(color: number): string {
+    let colorCss = this.radarColorCache.get(color);
+    if (!colorCss) {
+      colorCss = `#${color.toString(16).padStart(6, '0')}`;
+      this.radarColorCache.set(color, colorCss);
+    }
+    return colorCss;
   }
 
   // ---------- Rendering / resize ----------
@@ -1726,9 +1936,11 @@ export class Game {
       this.frameLook.set(look.dx, look.dy);
       this.player.look(look.dx, look.dy);
       this.buildRadar();
+      this.buildMarkers(frameDt);
     } else {
       this.frameLook.set(0, 0);
       this.radarCount = 0;
+      this.markerCount = 0;
     }
     this.player.body.visible = this.phase === 'playing' || this.phase === 'paused';
     // Runtime quality probe: a downgrade reallocates framebuffers, so it is
