@@ -75,6 +75,8 @@ const EXECUTE_HEAL = 18;
  */
 const CARD_VALUE = 50;
 const SELL_REFUND_RATE = 0.4;
+/** How close a bullet impact must land to count as hitting a barrel. */
+const BARREL_HIT_RADIUS = 0.6;
 
 /**
  * Adapter: makes the human a `CombatTarget` without teaching Player about
@@ -391,6 +393,19 @@ export class Game {
       if (result === 2 || result === 3) this.run.stats.headshots += 1;
     };
     this.weapons.onDamageDealt = (amount, headshot) => this.onDamageDealt(amount, headshot);
+    // Barrel shooting: a prop hit within a barrel's radius damages that barrel,
+    // so the arena's explosive props are part of the fight instead of scenery.
+    this.weapons.onPropHit = (point, _dir, amount) => {
+      const barrel = this.hazards.nearest(point, BARREL_HIT_RADIUS);
+      if (!barrel) return false;
+      return this.hazards.damageHazard(barrel, amount, point, true);
+    };
+    // Affix riders: a Blazing enemy sets the player burning, a Glacial one
+    // slows them. The rider belongs to the enemy that was shot.
+    this.weapons.onEnemyHit = (enemy, headshot) => {
+      void headshot;
+      this.enemies.applyAffixOnHit(this.playerTarget, enemy);
+    };
     this.weapons.onSwitched = () => {
       this.viewmodel.notifySwitch();
       this.audio.weaponSwitch();
@@ -1251,6 +1266,11 @@ export class Game {
       reloadProgress: wv.reloadProgress,
     });
     this.waves.update(dt, this.player.position);
+    // Smoke and EMP fields feed the enemy perception and shield systems, which
+    // is what turns the two support grenades into mechanical tools rather than
+    // visual effects. Cheap: both reads are a short field-list scan.
+    this.enemies.smokeBlocks = (point) => this.grenades.isSmoked(point);
+    this.enemies.shieldsDisabled = this.grenades.isEmped(this.player.position);
     this.enemies.playerYaw = this.player.yawAngle;
     this.enemies.update(
       dt,

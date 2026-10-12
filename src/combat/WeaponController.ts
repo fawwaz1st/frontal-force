@@ -103,6 +103,20 @@ export class WeaponController {
   public getMuzzle:
     | ((eye: THREE.Vector3, out: THREE.Vector3) => void)
     | null = null;
+  /**
+   * Destructible world props along the shot line (barrels). The owner wires
+   * this to the hazard system, which is why the weapon does not need to know
+   * hazards exist: it reports a hit and the owner decides what it means.
+   * Returns true when the prop absorbed the round.
+   */
+  public onPropHit:
+    | ((point: THREE.Vector3, dir: THREE.Vector3, amount: number) => boolean)
+    | null = null;
+  /**
+   * Called when a player shot lands on an enemy, so affix riders (burn, slow,
+   * chain) can fire. The weapon owns the hit, the enemy manager owns the rider.
+   */
+  public onEnemyHit: ((enemy: Enemy, headshot: boolean) => void) | null = null;
 
   public constructor(
     private readonly player: Player,
@@ -504,6 +518,9 @@ export class WeaponController {
       // round, and the damage/lifesteal readouts must reflect that, not the
       // number that was nominally fired.
       this.onDamageDealt?.(hit.dealt, enemyHit.headshot);
+      // Affix riders: the enemy hit the player, so its Blazing/Glacial/Charged
+      // affixes fire here. The player's own cards never own this path.
+      this.onEnemyHit?.(enemyHit.enemy, enemyHit.headshot);
       this.effects.ring(point, crit ? 0xffd76b : 0xffffff, 1.2, 0.18);
       if (showTracer) this.effects.tracer(muzzle, point, weapon.def.tracerColor);
       if (weapon.def.blastRadius) this.explode(point, weapon, enemyHit.enemy);
@@ -515,6 +532,16 @@ export class WeaponController {
     } else if (wallHit && wallDist <= weapon.def.range) {
       const normal = wallHit.triangle.getNormal(this.tmpNormal);
       if (normal.dot(dir) > 0) normal.negate();
+      // Destructible props (barrels) are checked BEFORE the wall treatment so a
+      // barrel in front of a wall takes the round instead of the wall eating it.
+      if (this.onPropHit?.(wallHit.position, dir, weapon.def.damage * this.damageScale * this.mods.damageMul)) {
+        if (showTracer) this.effects.tracer(muzzle, wallHit.position, weapon.def.tracerColor);
+        if (weapon.def.blastRadius) {
+          const point = this.tmpPoint.copy(wallHit.position);
+          this.explode(point, weapon, null);
+        }
+        return 0;
+      }
       this.effects.impact(wallHit.position, normal);
       this.effects.decal(wallHit.position, normal);
       if (showTracer) this.effects.tracer(muzzle, wallHit.position, weapon.def.tracerColor);
