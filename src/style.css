@@ -2428,7 +2428,15 @@ kbd {
   /* Keycaps describe a keyboard: useless on a phone, and they cost a screen of
      scroll. Touch players get the on-screen controls instead. */
   .hud__keys { display: none; }
-  .hud__ach-list { max-height: 108px; }
+  .hud__ach-list { max-height: 96px; }
+  .hud__ach-summary { gap: 10px; margin-bottom: 6px; }
+  .hud__ring { width: 40px; height: 40px; }
+  .hud__ring b { font-size: 11px; }
+  .hud__ach-tier { margin-top: 5px; padding-bottom: 3px; }
+  .hud__stat-grid { grid-template-columns: repeat(auto-fit, minmax(74px, 1fr)); gap: 5px; }
+  .hud__stat-tile { padding: 6px 5px 5px; }
+  .hud__stat-tile b { font-size: 15px; }
+  .hud__stat-tile span { font-size: 9px; letter-spacing: 0.1em; }
   /* Compact the whole card so DEPLOY stays above the fold on a 390x844 phone. */
   .hud__menu-card { gap: 9px 16px; padding: 18px 18px 16px; }
   .hud__menu-title { font-size: 30px; }

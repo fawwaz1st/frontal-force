@@ -227,12 +227,35 @@ Four corner brackets around a 4px cyan dot. The brackets translate outward with 
 ### Signature: Scrollbars
 Track is a recessed dark rail with a 1px steel divider; the thumb is a slim steel bar inset 3px inside the track via `background-clip: content-box`. Hover turns the thumb cyan-soft, active turns it full cyan. Firefox gets the equivalent through `scrollbar-width: thin` and `scrollbar-color`.
 
+## 7. Visual Readouts
+
+The system is visual-first: a number earns its place by carrying a visual
+carrier, and the number is the precision layer under it, never the whole read.
+
+| Carrier | Used for | Rule |
+| --- | --- | --- |
+| **Headline tile** | Death-card mode, kills, score, best | One oversized tabular numeral, one icon, one label. Never more than four per row. |
+| **Meter** | Accuracy, headshot rate, survival, damage trade, best combo | A bar needs a stated scale (10 minutes, 20:1 trade, x16 combo). A bar against an invented percentage is a lie. |
+| **Pip row** | Dash and grenade charges, draft stack counts | One cell per unit, filled while held. The numeric count stays as a small secondary. |
+| **Emblem** | Elites, bosses, salvage, no-hit waves | Only rendered when the value is above zero; each carries a hue and an icon, never text alone. |
+| **Medal** | Achievement rows and tiers, draft rarity | Tier hue: bronze `#c98a5a`, silver `#b9c6d0`, gold `#ffd76b`. Locked medals stay at 50% opacity. |
+| **Progress ring** | Achievement completion | SVG stroke driven by a `--p` percentage. The count sits beside it. |
+| **Chip meter** | Salvage toward the kiosk's top price | Scaled to a real threshold in the game (120 salvage), so "can I afford it" is a glance. |
+| **Icon plate** | Kiosk rows | A 34px glyph per row, chosen from the item id, so a list is scannable by shape. |
+
+### Named Rules
+**The Carrier Rule.** A readout that only shows a number is unfinished. Give it a meter, a pip row, a ring or a medal; keep the number as the precision under it.
+
+**The Stated Scale Rule.** Every meter names what full means (a 10-minute survival bar, a 20:1 damage trade, a x16 combo). A bar without a stated scale is decoration.
+
+**The Zero Hides Rule.** Emblems and secondary readouts do not render at zero. A trophy strip shows what the run earned, not what it lacked.
+
 ### Touch Overlay
 - **Stick:** floating-origin, 2px cyan-soft ring with a cyan wash fill. Round, because a stick is round.
 - **Buttons:** seven round hit-rects with a steel border that flips to cyan on hold.
 - **Placement:** `Hud.layoutTouch()` writes positions from the input layer's own hit-rects, so what is drawn is exactly what is tappable, inset by the safe-area variables.
 
-## 7. Performance Rules
+## 8. Performance Rules
 
 - **Compositor-only animation.** Damage flash, low-health pulse, hitmarkers, pops and toasts animate opacity or transform.
 - **Cached DOM writes.** `setText`, `setStyle` and `setClass` compare against a cache and skip the write when nothing changed.
@@ -241,7 +264,7 @@ Track is a recessed dark rail with a 1px steel divider; the thumb is a slim stee
 - **No filters on the canvas.** The radar's ring is CSS, because a filtered canvas is re-rasterised every frame it changes.
 - **Named-area grids with `contain`.** Panel layout and paint work stay local to the panel.
 
-## 8. Do's and Don'ts
+## 9. Do's and Don'ts
 
 ### Do:
 - **Do** keep cyan as the only interactive/current hue.
@@ -252,6 +275,7 @@ Track is a recessed dark rail with a 1px steel divider; the thumb is a slim stee
 - **Do** keep focus rings visible on every interactive element, using an inset ring where `clip-path` clips an outline.
 - **Do** honor `prefers-reduced-motion: reduce`: keyframes collapse to opacity-only, and transform-based hovers are removed.
 - **Do** inset every anchored cluster by the safe-area variables, and keep touch targets at least 60px across.
+- **Do** give every number a visual carrier (meter, pips, ring, medal) and state the meter's scale.
 
 ### Don't:
 - **Don't** reintroduce the retired warm stencil look (amber signal, khaki hairlines, chamfered corners) or the earlier navy-glass look (backdrop blur, rounded glass cards, blue-on-blue glow).
