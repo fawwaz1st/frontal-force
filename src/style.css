@@ -1,15 +1,54 @@
+/* ==========================================================================
+   FRONTAL FORCE — Fire Control stylesheet
+   --------------------------------------------------------------------------
+   Concept: the HUD is a fire-control instrument, not a stack of floating
+   cards. Cold gunmetal plates, corner brackets instead of chamfers, ruler
+   ticks where they carry information, monospaced data numerals, and exactly
+   one live hue (instrument cyan) reserved for "interactive / current".
+
+   Layout: an explicit named-area grid. The shell is a 3-row rail (header,
+   arena, footer); the menu card, the bottom bar, the draft and the kiosk are
+   all grids with named areas, so a breakpoint reorders regions by name
+   instead of rewriting their internals.
+
+   Perf: compositor-only animations (opacity/transform), no animated
+   box-shadow, no backdrop-filter, no filter on the radar canvas, and
+   `contain` on every full-screen panel.
+   ========================================================================== */
+
 :root {
-  --accent: #ff9f1c;
-  --accent-soft: rgba(255, 159, 28, 0.4);
-  --danger: #ff5040;
-  --ok: #b6e04a;
-  --gold: #ffd76b;
-  --panel: rgba(16, 17, 12, 0.92);
-  --line: rgba(222, 210, 170, 0.28);
-  --text: #ece7d8;
-  --text-dim: rgba(222, 210, 170, 0.6);
+  /* --- Signal hues (rationed: one meaning each) --- */
+  --accent: #7ce7ff;            /* instrument cyan: interactive / current */
+  --accent-deep: #1e8fb0;       /* the solid form, for fills and borders */
+  --accent-soft: rgba(124, 231, 255, 0.38);
+  --accent-wash: rgba(124, 231, 255, 0.1);
+  --danger: #ff4d5e;            /* harm: damage, empty, K.I.A. */
+  --danger-soft: rgba(255, 77, 94, 0.4);
+  --ok: #7ddb8a;                /* recovery: integrity, health pickups */
+  --gold: #ffd76b;              /* earned: records, headshots, achievements */
+  --gold-soft: rgba(255, 215, 107, 0.38);
+
+  /* --- Gunmetal neutrals (cool, so the cyan reads as part of the panel) --- */
+  --base: #0b0e11;
+  --panel: rgba(16, 21, 26, 0.94);
+  --panel-solid: #10151a;
+  --panel-lift: rgba(23, 30, 36, 0.96);
+  --line: rgba(150, 178, 198, 0.22);
+  --line-strong: rgba(150, 178, 198, 0.42);
+  --text: #dde7ee;
+  --text-dim: rgba(176, 198, 214, 0.62);
+  --text-faint: rgba(176, 198, 214, 0.34);
+
+  /* --- Type --- */
+  --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-data: ui-monospace, 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
+
+  /* --- Frame geometry --- */
+  --tick: 26px;                 /* ruler tick pitch */
+  --frame-inset: 14px;
+  --bracket: 16px;              /* corner bracket arm length */
+
   --ch-gap: 4px;
-  /* Notch/home-indicator insets — 0 on devices without them. */
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -20,8 +59,6 @@
 
 html, body, #app {
   width: 100%;
-  /* `100vh` overshoots on iOS Safari (it equals lvh). dvh tracks the address
-     bar; the vh line is the fallback for engines without dvh. */
   height: 100vh;
   height: 100dvh;
   margin: 0;
@@ -29,20 +66,18 @@ html, body, #app {
 
 body {
   overflow: hidden;
-  /* Kill rubber-banding and pull-to-refresh so a drag is always a game input. */
   overscroll-behavior: none;
-  background: #0a0b08;
+  background: var(--base);
   color: var(--text);
-  font-family: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  font-family: var(--font-display);
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
 
-/* touch-action is NOT inherited: every element that receives pointer events
-   needs it, or the browser steals pan/pinch mid-drag. `manipulation` is not
-   enough — it still permits pan. */
+/* touch-action is not inherited: every pointer-receiving element needs it or
+   the browser steals the pan mid-drag. */
 #app, #app canvas, .hud, .hud__touch {
   touch-action: none;
 }
@@ -50,109 +85,216 @@ body {
 #app { position: relative; }
 #app canvas { display: block; position: relative; z-index: 0; }
 
-/* ---------- HUD shell ---------- */
+/* ==========================================================================
+   Custom scrollbars — instrument slider, not OS chrome.
+   Firefox uses the two standard properties; WebKit/Blink get the detailed
+   rules. The thumb is a bright bar inset in a recessed track, and it turns
+   accent cyan while held or hovered.
+   ========================================================================== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 178, 198, 0.45) rgba(10, 14, 18, 0.6);
+}
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track {
+  background: rgba(10, 14, 18, 0.6);
+  border-left: 1px solid var(--line);
+}
+::-webkit-scrollbar-thumb {
+  /* content-box + transparent border = a slim thumb floating in the track. */
+  background: rgba(150, 178, 198, 0.42);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent-soft); background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ==========================================================================
+   HUD shell — a rail grid, not a pile of absolutely placed boxes.
+   Rows: header rail / arena / footer rail. Elements anchor into the rails;
+   only the crosshair, pops and damage arcs live in the arena row.
+   ========================================================================== */
 .hud {
   position: absolute;
   inset: 0;
   z-index: 1;
   pointer-events: none;
   overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "header"
+    "arena"
+    "footer";
 }
 
+/* Corner brackets: four L-shaped marks drawn from one element with eight
+   gradients. Zero extra DOM, zero paint cost when static. */
+.hud__frame {
+  position: absolute;
+  inset: var(--frame-inset);
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background:
+    linear-gradient(var(--line-strong), var(--line-strong)) left top / var(--bracket) 1px no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) left top / 1px var(--bracket) no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) right top / var(--bracket) 1px no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) right top / 1px var(--bracket) no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) left bottom / var(--bracket) 1px no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) left bottom / 1px var(--bracket) no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) right bottom / var(--bracket) 1px no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) right bottom / 1px var(--bracket) no-repeat;
+}
+/* The frame marks the arena, so it fades out under a full-screen overlay. */
+.hud--overlay .hud__frame { opacity: 0.18; }
+
+/* ==========================================================================
+   Vignette + damage flash.
+   Both effects are STATIC layers whose opacity animates: animating
+   box-shadow (the previous approach) repainted the whole viewport every
+   frame, which is the single most expensive thing this HUD did.
+   ========================================================================== */
 .hud__vignette {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(5, 5, 3, 0.6) 100%);
-  transition: background 0.4s;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 58%, rgba(4, 6, 8, 0.62) 100%);
 }
-
-.hud__vignette.hit { animation: dmg 0.45s ease-out; }
-@keyframes dmg {
-  0% { box-shadow: inset 0 0 140px 40px rgba(255, 40, 60, 0.55); }
-  100% { box-shadow: inset 0 0 140px 40px rgba(255, 40, 60, 0); }
+/* Low-health pulse: a static crimson ring, composited via opacity only. */
+.hud__vignette::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(255, 45, 66, 0.42) 100%);
 }
-
-.hud__vignette.lowhp { animation: lowhp 1.1s ease-in-out infinite; }
+.hud__vignette.lowhp::before { animation: lowhp 1.15s ease-in-out infinite; }
 @keyframes lowhp {
-  0%, 100% { box-shadow: inset 0 0 120px 20px rgba(255, 40, 60, 0.14); }
-  50% { box-shadow: inset 0 0 150px 46px rgba(255, 40, 60, 0.4); }
+  0%, 100% { opacity: 0.34; }
+  50% { opacity: 0.85; }
+}
+/* Hit flash: the same ring, fired once and faded. */
+.hud__vignette::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 34%, rgba(255, 45, 66, 0.72) 100%);
+}
+.hud__vignette.hit::after { animation: dmg 0.42s ease-out; }
+@keyframes dmg {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* ---------- Damage direction arcs ---------- */
 .hud__dmg-container {
   position: absolute;
   inset: 0;
+  z-index: 1;
   pointer-events: none;
 }
-
 .hud__dmg-arc {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 150px;
-  height: 150px;
+  width: 170px;
+  height: 170px;
   opacity: 0;
   transform: translate(-50%, -50%);
 }
-
-/* Wedge drawn at the top of the element; rotation points it at the attacker */
+/* A bracket wedge at the top of the element; rotation aims it at the shooter. */
 .hud__dmg-arc::before {
   content: '';
   position: absolute;
   left: 50%;
   top: 0;
-  width: 110px;
-  height: 22px;
+  width: 116px;
+  height: 20px;
   transform: translateX(-50%);
-  background: radial-gradient(ellipse at 50% 100%, rgba(255, 60, 80, 0.85), rgba(255, 60, 80, 0) 72%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(255, 77, 94, 0.9), rgba(255, 77, 94, 0) 74%);
   clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
 }
-
 .hud__dmg-arc.show { animation: dmgarc 0.8s ease-out; }
 @keyframes dmgarc {
   0% { opacity: 1; }
   100% { opacity: 0; }
 }
 
-/* ---------- Crosshair ---------- */
+/* ==========================================================================
+   Crosshair — four corner brackets around a cyan dot.
+   The brackets open with the real cone (`--ch-gap`), so the reticle is the
+   spread readout rather than a decoration.
+   ========================================================================== */
 .hud__crosshair {
   position: absolute;
-  left: 50%; top: 50%;
+  left: 50%;
+  top: 50%;
   transform: translate(-50%, -50%);
-  width: 40px; height: 40px;
+  width: 44px;
+  height: 44px;
+  z-index: 2;
   transition: opacity 0.2s;
 }
-.hud__crosshair.dim { opacity: 0.25; }
+.hud__crosshair.dim { opacity: 0.28; }
 
-.ch { position: absolute; background: rgba(236, 231, 216, 0.95); box-shadow: 0 0 4px rgba(255, 159, 28, 0.45); transition: transform 0.08s ease-out; }
-.ch--t { left: 19px; top: 19px; width: 2px; height: 9px; transform: translateY(calc(-1 * var(--ch-gap) - 100%)); }
-.ch--b { left: 19px; top: 19px; width: 2px; height: 9px; transform: translateY(var(--ch-gap)); }
-.ch--l { top: 19px; left: 19px; width: 9px; height: 2px; transform: translateX(calc(-1 * var(--ch-gap) - 100%)); }
-.ch--r { top: 19px; left: 19px; width: 9px; height: 2px; transform: translateX(var(--ch-gap)); }
-.ch--dot { left: 19px; top: 19px; width: 3px; height: 3px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 5px var(--accent-soft); }
+.ch {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  color: rgba(221, 231, 238, 0.92);
+  transition: transform 0.08s ease-out;
+}
+.ch--tl { left: 8px;  top: 8px;    border-left: 2px solid currentColor; border-top: 2px solid currentColor;
+          transform: translate(calc(-1 * var(--ch-gap)), calc(-1 * var(--ch-gap))); }
+.ch--tr { right: 8px; top: 8px;    border-right: 2px solid currentColor; border-top: 2px solid currentColor;
+          transform: translate(var(--ch-gap), calc(-1 * var(--ch-gap))); }
+.ch--bl { left: 8px;  bottom: 8px; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor;
+          transform: translate(calc(-1 * var(--ch-gap)), var(--ch-gap)); }
+.ch--br { right: 8px; bottom: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+          transform: translate(var(--ch-gap), var(--ch-gap)); }
+.ch--dot {
+  left: 20px;
+  top: 20px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-soft);
+}
 
+/* ---------- Hitmarker ---------- */
 .hud__hitmarker {
   position: absolute;
-  left: 50%; top: 50%;
-  width: 26px; height: 26px;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
   transform: translate(-50%, -50%) rotate(45deg);
   opacity: 0;
+  z-index: 2;
 }
-.hud__hitmarker::before, .hud__hitmarker::after {
+.hud__hitmarker::before,
+.hud__hitmarker::after {
   content: '';
   position: absolute;
   background: #fff;
 }
-.hud__hitmarker::before { left: 12px; top: 0; width: 2px; height: 26px; }
-.hud__hitmarker::after { top: 12px; left: 0; width: 26px; height: 2px; }
+.hud__hitmarker::before { left: 14px; top: 0; width: 2px; height: 30px; }
+.hud__hitmarker::after { top: 14px; left: 0; width: 30px; height: 2px; }
 .hud__hitmarker.flash { animation: hit 0.18s ease-out; }
 .hud__hitmarker.flash--head::before,
-.hud__hitmarker.flash--head::after { background: #ffd76b; box-shadow: 0 0 8px #ffd76b; }
+.hud__hitmarker.flash--head::after { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
 .hud__hitmarker.flash--head { animation: hithead 0.26s ease-out; }
 .hud__hitmarker.flash--kill::before,
 .hud__hitmarker.flash--kill::after { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
 .hud__hitmarker.flash--kill { animation: hitkill 0.3s ease-out; }
-/* Armour plate: teal, so a blocked shot never reads as a normal hit. */
+/* Armour plate: teal, matching the warden, so a blocked shot never reads as a
+   normal connect. */
 .hud__hitmarker.flash--blocked::before,
 .hud__hitmarker.flash--blocked::after { background: #35f0c8; box-shadow: 0 0 9px #35f0c8; }
 .hud__hitmarker.flash--blocked { animation: hit 0.22s ease-out; }
@@ -173,11 +315,12 @@ body {
 /* ---------- Banner ---------- */
 .hud__banner {
   position: absolute;
-  top: 18%;
+  top: 17%;
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
   text-align: center;
   opacity: 0;
+  z-index: 2;
   transition: opacity 0.3s, transform 0.3s;
 }
 .hud__banner.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -185,11 +328,27 @@ body {
   font-size: 42px;
   font-weight: 700;
   letter-spacing: 0.28em;
-  text-shadow: 0 0 24px var(--accent-soft);
+  text-shadow: 0 0 26px var(--accent-soft);
 }
-.hud__banner-sub { color: var(--text-dim); letter-spacing: 0.2em; font-size: 13px; margin-top: 4px; }
+/* Ruler rule under a banner: ticks, not a dashed stripe. */
+.hud__banner-title::after {
+  content: '';
+  display: block;
+  width: 160px;
+  height: 6px;
+  margin: 10px auto 0;
+  background:
+    repeating-linear-gradient(90deg, var(--accent) 0 1px, transparent 1px var(--tick)),
+    linear-gradient(var(--accent-soft), var(--accent-soft)) center / 100% 1px no-repeat;
+}
+.hud__banner-sub {
+  color: var(--text-dim);
+  letter-spacing: 0.2em;
+  font-size: 13px;
+  margin-top: 6px;
+}
 
-/* ---------- Icon primitives (single stroke family, 24-grid) ---------- */
+/* ---------- Icon primitives ---------- */
 .ic {
   width: 1.15em;
   height: 1.15em;
@@ -208,61 +367,136 @@ body {
   border: 0;
 }
 kbd {
-  font: 600 10px/1 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
-  letter-spacing: 0.1em;
+  font: 600 10px/1 var(--font-data);
+  letter-spacing: 0.06em;
   padding: 3px 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-bottom-width: 2px;
   border-radius: 0;
-  background: rgba(222, 210, 170, 0.07);
+  background: rgba(150, 178, 198, 0.08);
   color: var(--text);
 }
 
-/* ---------- Top chips ---------- */
+/* ==========================================================================
+   Header rail — chips anchor left, radar anchors right. Left-anchoring is
+   what makes the readout feel bolted to the panel instead of floating in
+   the middle of the view.
+   ========================================================================== */
 .hud__top {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  grid-area: header;
+  justify-self: start;
+  align-self: start;
+  margin: calc(14px + var(--safe-t)) 0 0 calc(20px + var(--safe-l));
   display: flex;
-  gap: 10px;
-  /* The row can carry eight chips, so it wraps instead of overflowing. It
-     needs an explicit width budget: `left: 50%` alone would cap the box at
-     half the viewport and wrap the row far too early. The reserve on the
-     right keeps the radar (144px + 20px inset) clear. */
   flex-wrap: wrap;
-  justify-content: center;
-  width: max-content;
-  max-width: calc(100vw - 380px);
+  align-items: center;
+  gap: 7px;
+  /* Reserve the radar's lane so chips never slide under it. */
+  max-width: calc(100vw - 200px - var(--safe-l) - var(--safe-r));
 }
+
 .hud__chip {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 14px;
+  padding: 5px 11px 5px 9px;
   border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
   background: var(--panel);
   border-radius: 0;
-  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.08em;
   font-variant-numeric: tabular-nums;
+  /* Bracket corner on the top-right: the plate silhouette of this system. */
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
 }
 .hud__chip .ic { color: var(--text-dim); }
-.hud__chip b { font-weight: 600; }
-.hud__chip--wave { color: var(--accent); border-color: var(--accent-soft); background: rgba(255, 159, 28, 0.1); }
+.hud__chip b { font-family: var(--font-data); font-weight: 700; letter-spacing: 0; }
+.hud__chip--wave {
+  color: var(--accent);
+  border-color: var(--line);
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
+}
 .hud__chip--wave .ic { color: var(--accent); }
+
+.hud__chip-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+.hud__chip--gold {
+  border-left-color: var(--gold);
+  color: var(--gold);
+}
+.hud__chip--gold .hud__chip-tag { color: rgba(255, 215, 107, 0.68); }
+
+/* Kill-combo chip keeps its slot when hidden so the row never reflows. */
+.hud__chip--combo {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
+}
+.hud__chip--combo[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+/* Every other hidden chip leaves the flow entirely. */
+.hud__chip[hidden]:not(.hud__chip--combo) { display: none; }
+
+.hud__chip--mutation {
+  color: var(--text);
+  border-left-color: rgba(255, 217, 138, 0.6);
+  background: rgba(255, 217, 138, 0.07);
+  pointer-events: auto;
+  cursor: help;
+}
+.hud__chip--mutation b { letter-spacing: 0.08em; }
+
+.hud__chip--wager {
+  color: var(--danger);
+  border-left-color: var(--danger);
+  background: rgba(255, 77, 94, 0.08);
+  pointer-events: auto;
+  cursor: help;
+}
+.hud__chip--wager .hud__chip-tag { color: rgba(255, 77, 94, 0.72); }
+.hud__chip--wager b { font-variant-numeric: tabular-nums; }
+
+.hud__chip--seed {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.hud__chip--seed:hover {
+  border-color: var(--accent-soft);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+/* clip-path eats an outline, so focus is an inset ring the chamfer cannot clip. */
+.hud__chip--seed:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.hud__chip--seed b { font-variant-numeric: tabular-nums; }
 
 /* ---------- Status line (hostiles / timer / clear) ---------- */
 .hud__enemies {
-  position: absolute;
-  top: 58px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 13px;
+  grid-area: header;
+  justify-self: start;
+  align-self: start;
+  margin: calc(52px + var(--safe-t)) 0 0 calc(20px + var(--safe-l));
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -274,45 +508,56 @@ kbd {
 .hud__enemies > span[hidden] { display: none; }
 .hud__enemies [data-en-hostiles] .ic { color: var(--danger); }
 .hud__enemies [data-en-timer] .ic { color: var(--accent); }
-.hud__enemies [data-en-clear] .ic { color: var(--ok); font-size: 16px; }
+.hud__enemies [data-en-clear] .ic { color: var(--ok); font-size: 15px; }
 
 /* ---------- Radar ---------- */
+/* No drop-shadow filter: a filtered canvas is re-rasterised on every frame it
+   changes. The ring is drawn in CSS instead. */
 .hud__radar {
-  position: absolute;
-  top: 20px;
-  right: 20px;
+  grid-area: header;
+  justify-self: end;
+  align-self: start;
+  margin: calc(16px + var(--safe-t)) calc(20px + var(--safe-r)) 0 0;
   width: 144px;
   height: 144px;
-  opacity: 0.92;
-  filter: drop-shadow(0 0 8px rgba(255, 159, 28, 0.2));
+  opacity: 0.94;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(9, 13, 17, 0.5);
 }
 
-/* ---------- Hint bar (icon + keycap, no prose) ---------- */
+/* ---------- Hint bar ---------- */
+/* Sits ABOVE the boss bar's lane (96px) so the two can be on screen at once
+   without overlapping: the hint is the more urgent read of the two. */
 .hud__hint {
   position: absolute;
-  bottom: 96px;
+  bottom: calc(150px + var(--safe-b));
   left: 50%;
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 14px;
-  border: 1px solid rgba(255, 159, 28, 0.5);
-  background: rgba(24, 18, 6, 0.88);
+  padding: 6px 13px;
+  border: 1px solid var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  background: rgba(9, 15, 20, 0.9);
   border-radius: 0;
-  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
-  font-size: 15px;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  font-size: 14px;
   color: var(--accent);
+  z-index: 2;
 }
 .hud__hint[hidden] { display: none; }
 .hud__hint--warn {
-  border-color: rgba(255, 159, 28, 0.65);
-  background: rgba(30, 22, 6, 0.92);
+  border-color: var(--accent-soft);
+  border-left-color: var(--accent);
+  background: rgba(11, 17, 22, 0.92);
   color: var(--accent);
 }
 .hud__hint--danger {
-  border-color: rgba(255, 80, 64, 0.6);
-  background: rgba(28, 8, 6, 0.9);
+  border-color: var(--danger-soft);
+  border-left-color: var(--danger);
+  background: rgba(22, 8, 11, 0.9);
   color: var(--danger);
 }
 .hud__hint--danger .ic { animation: hintpulse 1s ease-in-out infinite; }
@@ -321,20 +566,22 @@ kbd {
   50% { opacity: 0.4; }
 }
 
-/* ---------- Score pops (kill feedback, number only) ---------- */
+/* ---------- Score pops ---------- */
 .hud__pops {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
 }
 .hud__pop {
   position: absolute;
   left: 50%;
-  top: 44%;
+  top: 43%;
   transform: translate(calc(-50% + var(--pop-x, 0px)), -50%);
-  font-size: 18px;
+  font-family: var(--font-data);
+  font-size: 17px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
   color: var(--accent);
   text-shadow: 0 0 12px var(--accent-soft);
   opacity: 0;
@@ -342,17 +589,520 @@ kbd {
 }
 .hud__pop.show { animation: poprise 0.8s ease-out forwards; }
 @keyframes poprise {
-  0% { opacity: 1; transform: translate(calc(-50% + var(--pop-x, 0px)), -50%) scale(1.1); }
-  100% { opacity: 0; transform: translate(calc(-50% + var(--pop-x, 0px)), calc(-50% - 44px)) scale(0.92); }
+  0% { opacity: 1; transform: translate(calc(-50% + var(--pop-x, 0px)), -50%) scale(1.08); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--pop-x, 0px)), calc(-50% - 46px)) scale(0.94); }
 }
 
-/* ---------- Mode selector (menu) ---------- */
+/* ==========================================================================
+   Footer rail — a 3-column grid: integrity | abilities | weapon.
+   ========================================================================== */
+.hud__bottom {
+  grid-area: footer;
+  align-self: end;
+  margin: 0 calc(20px + var(--safe-r)) calc(18px + var(--safe-b)) calc(20px + var(--safe-l));
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto minmax(220px, 1fr);
+  grid-template-areas: "integrity abilities weapon";
+  align-items: end;
+  gap: 18px;
+}
+
+/* ---------- Integrity (health + shield + ally) ---------- */
+.hud__health { grid-area: integrity; min-width: 0; }
+.hud__health-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.hud__health-ic { color: var(--ok); width: 19px; height: 19px; }
+.hud__health-head.low .hud__health-ic { color: var(--danger); }
+.hud__health-num {
+  font-family: var(--font-data);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.hud__health-bar {
+  position: relative;
+  height: 12px;
+  border: 1px solid var(--line);
+  background: rgba(8, 11, 14, 0.85);
+  border-radius: 0;
+  overflow: hidden;
+}
+/* Quarter ticks: the bar reads as a gauge, so "half health" is measurable at
+   a glance instead of estimated. */
+.hud__health-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--line-strong), var(--line-strong)) 25% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--line-strong), var(--line-strong)) 75% 0 / 1px 100% no-repeat;
+}
+.hud__health-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #4e9c63, var(--ok));
+  transition: width 0.15s ease-out;
+}
+.hud__health-fill.low { background: linear-gradient(90deg, #b2313f, var(--danger)); }
+
+/* Shield rides on the bar as a second segment: one pool of absorption. */
+.hud__shield-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: var(--accent);
+  transition: left 0.15s ease-out, width 0.15s ease-out;
+}
+.hud__shield-fill.on { box-shadow: 0 0 8px var(--accent-soft); }
+.hud__shield-n {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.hud__shield-n[hidden] { display: none; }
+
+.hud__ally {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  color: var(--text-dim);
+}
+.hud__ally[hidden] { display: none; }
+.hud__ally .ic { width: 15px; height: 15px; color: var(--accent); }
+.hud__ally-n {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.hud__ally-bar {
+  width: 118px;
+  height: 5px;
+  border: 1px solid var(--line);
+  background: rgba(8, 11, 14, 0.85);
+  overflow: hidden;
+}
+.hud__ally-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+
+/* ---------- Status effect pips ---------- */
+.hud__pip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid currentColor;
+}
+.hud__pip[hidden] { display: none; }
+.hud__pip b { font-weight: 700; }
+.hud__pip--burn { color: #ff8a3c; background: rgba(255, 138, 60, 0.14); }
+.hud__pip--slow { color: #7dd8ff; background: rgba(125, 216, 255, 0.14); }
+
+/* ---------- Ability chips ---------- */
+.hud__abilities {
+  grid-area: abilities;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.hud__abilities[hidden] { display: none; }
+
+.hud__ability {
+  min-width: 76px;
+  padding: 5px 8px 6px;
+  border: 1px solid var(--line);
+  border-bottom: 2px solid var(--line-strong);
+  background: var(--panel);
+  border-radius: 0;
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.hud__ability-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+.hud__ability-top b {
+  font-family: var(--font-data);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.hud__ability-tag { color: var(--text-dim); }
+.hud__ability-bar {
+  margin-top: 5px;
+  height: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.hud__ability-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--line);
+  transition: width 0.12s linear, background 0.12s;
+}
+.hud__ability-bar i.ready { background: var(--accent); }
+.hud__ability.depleted { opacity: 0.6; }
+/* Cooking a grenade: gold, the earned-moment hue, with a visible window. */
+.hud__ability.cooking {
+  border-color: var(--gold-soft);
+  border-bottom-color: var(--gold);
+  background: rgba(255, 215, 107, 0.1);
+}
+.hud__ability.cooking .hud__ability-bar i { background: var(--gold); }
+.hud__ability.cooking .hud__ability-top b { color: var(--gold); }
+
+/* ---------- Weapon block ---------- */
+.hud__weapon {
+  grid-area: weapon;
+  text-align: right;
+  min-width: 0;
+}
+.hud__weapon-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.hud__weapon-name { color: var(--text); }
+.hud__slot-count { color: var(--text-dim); font-family: var(--font-data); letter-spacing: 0; }
+.hud__slots { display: flex; gap: 5px; justify-content: flex-end; margin-bottom: 7px; }
+.hud__slot {
+  width: 34px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+  color: var(--text-dim);
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.hud__slot .ic { width: 19px; height: 19px; }
+.hud__slot.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.hud__slot--edge { opacity: 0.5; }
+.hud__slot--edge .ic { width: 15px; height: 15px; }
+
+.hud__ammo {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-family: var(--font-data);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.hud__ammo-ic { width: 19px; height: 19px; color: var(--text-dim); }
+.hud__ammo span { font-size: 16px; color: var(--text-dim); font-weight: 400; }
+.hud__ammo.empty { color: var(--danger); animation: blink 0.6s step-end infinite; }
+.hud__ammo.empty .hud__ammo-ic { color: var(--danger); }
+@keyframes blink { 50% { opacity: 0.45; } }
+
+/* Reloading: digits swap for a spinning glyph, no per-frame innerHTML. */
+.hud__ammo.reloading b,
+.hud__ammo.reloading > span:not(.hud__reload-spin) { display: none; }
+.hud__ammo.reloading .hud__ammo-ic { display: none; }
+.hud__reload-spin { display: none; color: var(--accent); }
+.hud__ammo.reloading .hud__reload-spin {
+  display: inline-flex;
+  animation: spinslow 0.9s linear infinite;
+}
+@keyframes spinslow { to { transform: rotate(360deg); } }
+
+.hud__reload {
+  margin-top: 6px;
+  height: 3px;
+  width: 180px;
+  margin-left: auto;
+  background: rgba(8, 11, 14, 0.85);
+  overflow: hidden;
+}
+.hud__reload-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+
+/* ---------- Boss bar ---------- */
+.hud__boss {
+  position: absolute;
+  left: 50%;
+  bottom: calc(96px + var(--safe-b));
+  transform: translateX(-50%);
+  width: min(560px, 74vw);
+  padding: 7px 12px 8px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--danger);
+  background: var(--panel);
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  pointer-events: none;
+  z-index: 3;
+}
+.hud__boss[hidden] { display: none; }
+.hud__boss-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--text);
+}
+.hud__boss-phase { color: var(--danger); font-family: var(--font-data); letter-spacing: 0; }
+.hud__boss-bar {
+  margin-top: 6px;
+  height: 9px;
+  border: 1px solid var(--line);
+  background: rgba(8, 11, 14, 0.85);
+  overflow: hidden;
+}
+.hud__boss-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--danger);
+  transition: width 0.15s ease-out;
+}
+.hud__boss-fill.core-down { border-top: 2px solid var(--gold); }
+
+/* ==========================================================================
+   Overlays (menu / pause / death) — a shared shell, then per-card grids.
+   `contain` keeps a full-screen panel's layout and paint work off the rest
+   of the page.
+   ========================================================================== */
+.hud__menu, .hud__pause, .hud__death {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  align-content: safe center;
+  justify-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(6, 9, 12, 0.82);
+  pointer-events: auto;
+  transition: opacity 0.25s;
+  contain: layout paint style;
+}
+.hud__menu.hidden, .hud__pause.hidden, .hud__death.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s, visibility 0s 0.25s;
+}
+
+.hud__menu-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "title    title"
+    "best     best"
+    "records  records"
+    "ach      ach"
+    "modes    modes"
+    "wagers   wagers"
+    "seed     seed"
+    "keys     settings"
+    "deploy   deploy";
+  gap: 14px 30px;
+  justify-items: stretch;
+  text-align: center;
+  width: min(880px, calc(100vw - 40px));
+  padding: 26px 40px 24px;
+  margin: 20px 0;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-solid);
+  border-radius: 0;
+  /* Double frame: the outer hairline is the instrument bezel. */
+  outline: 1px solid var(--line);
+  outline-offset: 4px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62);
+  contain: layout paint style;
+  /* Corner brackets drawn as four L marks. */
+  background-image:
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent)),
+    linear-gradient(var(--accent), var(--accent));
+  background-repeat: no-repeat;
+  background-size: 22px 2px, 2px 22px, 22px 2px, 2px 22px, 22px 2px, 2px 22px, 22px 2px, 2px 22px;
+  background-position:
+    left top, left top,
+    right top, right top,
+    left bottom, left bottom,
+    right bottom, right bottom;
+}
+
+/* Pause keeps the same plate but a single column. */
+.hud__pause .hud__menu-card {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "title"
+    "records"
+    "settings"
+    "deploy";
+  width: min(640px, calc(100vw - 40px));
+}
+
+/* The death card adds a best row for the NEW RECORD badge. */
+.hud__death .hud__menu-card {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "title"
+    "best"
+    "records"
+    "keys"
+    "settings"
+    "deploy";
+  width: min(780px, calc(100vw - 40px));
+}
+
+/* The menu's DEPLOY button is a direct child of the card, so it claims the
+   same named area the pause and death button rows use. */
+.hud__menu-card > .hud__btn[data-start] {
+  grid-area: deploy;
+  justify-self: center;
+  margin-top: 6px;
+}
+
+.hud__menu-title {
+  grid-area: title;
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--text);
+}
+/* Ruler rule under every overlay title. */
+.hud__menu-title::after {
+  content: '';
+  display: block;
+  width: 180px;
+  height: 7px;
+  margin: 12px auto 0;
+  background:
+    repeating-linear-gradient(90deg, var(--accent) 0 1px, transparent 1px var(--tick)),
+    linear-gradient(var(--accent-soft), var(--accent-soft)) center / 100% 1px no-repeat;
+}
+.hud__menu-title--dead { color: var(--danger); }
+.hud__menu-title--dead::after {
+  background:
+    repeating-linear-gradient(90deg, var(--danger) 0 1px, transparent 1px var(--tick)),
+    linear-gradient(var(--danger-soft), var(--danger-soft)) center / 100% 1px no-repeat;
+}
+.hud__menu-title--pause {
+  font-size: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  letter-spacing: 0.24em;
+}
+.hud__menu-title--pause .ic { width: 24px; height: 24px; color: var(--accent); }
+.hud__menu-title--pause::after { width: 140px; }
+
+.hud__menu-best {
+  grid-area: best;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-data);
+}
+.hud__menu-best .ic { color: var(--gold); }
+.hud__fatal { color: var(--text-dim); max-width: 42ch; margin: 20px auto 0; }
+
+.hud__menu-records {
+  grid-area: records;
+  display: grid;
+  gap: 4px;
+  justify-self: center;
+  width: min(420px, 100%);
+}
+.hud__menu-records[hidden] { display: none; }
+.hud__menu-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+.hud__menu-stat i {
+  flex: 1;
+  border-bottom: 1px dotted var(--line);
+  transform: translateY(-3px);
+}
+.hud__menu-stat b {
+  color: var(--text);
+  font-family: var(--font-data);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Mode selector ---------- */
 .hud__modes {
+  grid-area: modes;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 7px;
   justify-content: center;
-  margin-top: 18px;
 }
 .hud__mode-chip {
   pointer-events: auto;
@@ -361,54 +1111,53 @@ kbd {
   gap: 7px;
   font: inherit;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  font-size: 13px;
+  letter-spacing: 0.14em;
   color: var(--text-dim);
-  padding: 8px 15px;
+  padding: 7px 13px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: rgba(236, 231, 216, 0.05);
+  background: rgba(150, 178, 198, 0.04);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
-.hud__mode-chip .ic { width: 15px; height: 15px; }
-.hud__mode-chip:hover { color: var(--text); border-color: rgba(222, 210, 170, 0.5); }
+.hud__mode-chip .ic { width: 14px; height: 14px; }
+.hud__mode-chip:hover { color: var(--text); border-color: var(--line-strong); }
 .hud__mode-chip.active {
   color: var(--accent);
   border-color: var(--accent);
-  background:
-    repeating-linear-gradient(-45deg, rgba(255, 159, 28, 0.14) 0 6px, transparent 6px 12px),
-    rgba(255, 159, 28, 0.08);
+  background: var(--accent-wash);
 }
 .hud__mode-chip.active .ic { color: var(--accent); }
 .hud__mode-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-/* ---------- Challenge wagers (menu) ---------- */
+/* ---------- Challenge wagers ---------- */
 .hud__challenges {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line);
+  grid-area: wagers;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 .hud__challenges-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 7px;
+  margin-bottom: 8px;
 }
 .hud__challenges-title {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.24em;
   color: var(--text-dim);
 }
 .hud__challenges-payout {
+  font-family: var(--font-data);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
 }
-/* An active wager is a committed decision, so the readout turns gold. */
 .hud__challenges-payout--on { color: var(--gold); }
 .hud__challenges-row {
   display: flex;
@@ -427,311 +1176,78 @@ kbd {
   letter-spacing: 0.1em;
   color: var(--text-dim);
   padding: 6px 11px;
-  border: 1px solid var(--line);
+  border: 1px dashed var(--line);
   border-radius: 0;
-  background: rgba(236, 231, 216, 0.03);
+  background: transparent;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
-.hud__challenge .ic { width: 13px; height: 13px; }
-.hud__challenge:hover { color: var(--text); border-color: rgba(222, 210, 170, 0.5); }
-/* Wagers read as a risk: the active state is the danger color, not the
-   accent, so it never looks like the "recommended" mode chip beside it. */
+.hud__challenge .ic { width: 12px; height: 12px; }
+.hud__challenge:hover { color: var(--text); border-color: var(--line-strong); }
+/* A wager is a signed risk: active chips get the danger hue and a solid edge. */
 .hud__challenge.active {
   color: var(--danger);
+  border-style: solid;
   border-color: var(--danger);
-  background: rgba(255, 90, 70, 0.1);
+  background: rgba(255, 77, 94, 0.1);
 }
 .hud__challenge.active .ic { color: var(--danger); }
 .hud__challenge:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 /* ---------- Pause mode readout ---------- */
 .hud__pause-mode {
+  grid-area: records;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
   color: var(--text-dim);
   font-size: 12px;
   letter-spacing: 0.18em;
 }
 .hud__pause-mode .ic { width: 15px; height: 15px; color: var(--accent); }
 
-/* ---------- Bottom: health + weapon ---------- */
-.hud__bottom {
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  bottom: 22px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-}
-
-.hud__health { width: 300px; }
-.hud__health-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.hud__health-ic { color: var(--ok); width: 20px; height: 20px; }
-.hud__health-head.low .hud__health-ic { color: var(--danger); }
-.hud__health-bar {
-  height: 10px;
-  border: 1px solid var(--line);
-  background: rgba(10, 10, 7, 0.8);
-  border-radius: 0;
-  overflow: hidden;
-  /* Positioning context for the shield segment, which is placed from the live
-     health fraction so it always begins where health ends. */
-  position: relative;
-}
-.hud__health-fill {
-  height: 100%;
-  width: 100%;
-  background: linear-gradient(90deg, #7fb238, #b6e04a);
-  transition: width 0.15s ease-out;
-}
-.hud__health-fill.low { background: linear-gradient(90deg, #ff5040, #ff8a5e); }
-.hud__health-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
-
-/* ---------- Ally drone readout ---------- */
-.hud__ally {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 7px;
-  color: var(--text-dim);
-}
-.hud__ally[hidden] { display: none; }
-.hud__ally .ic { width: 16px; height: 16px; color: var(--accent); }
-.hud__ally-n {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.06em;
-  font-variant-numeric: tabular-nums;
-}
-.hud__ally-bar {
-  width: 120px;
-  height: 5px;
-  border: 1px solid var(--line);
-  background: rgba(10, 10, 7, 0.8);
-  overflow: hidden;
-}
-.hud__ally-bar i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  background: var(--accent);
-  transition: width 0.15s ease-out;
-}
-
-.hud__weapon { text-align: right; }
-/* Weapon name + slot index — ten weapons will not fit as an icon wall, so the
-   HUD names the active one and shows a 3-slot window around it. */
-.hud__weapon-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-.hud__weapon-name { color: var(--text); }
-.hud__slot-count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.hud__slots { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 8px; }
-.hud__slot {
-  width: 34px; height: 26px;
+/* ---------- Seed row ---------- */
+.hud__seed-row {
+  grid-area: seed;
   display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 0;
-  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
-  color: var(--text-dim);
-  transition: border-color 0.12s, color 0.12s, box-shadow 0.12s;
-}
-.hud__slot .ic { width: 20px; height: 20px; }
-.hud__slot.active { border-color: var(--accent); color: var(--accent); background: rgba(255, 159, 28, 0.1); }
-/* Prev/next slots sit back so the active one reads first. */
-.hud__slot--edge { opacity: 0.55; }
-.hud__slot--edge .ic { width: 16px; height: 16px; }
-
-.hud__ammo {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
+  align-items: stretch;
+  justify-content: center;
+  width: min(560px, 100%);
+  justify-self: center;
 }
-.hud__ammo-ic { width: 20px; height: 20px; color: var(--text-dim); }
-.hud__ammo span { font-size: 17px; color: var(--text-dim); font-weight: 400; }
-.hud__ammo.empty { color: var(--danger); animation: blink 0.6s step-end infinite; }
-.hud__ammo.empty .hud__ammo-ic { color: var(--danger); }
-@keyframes blink { 50% { opacity: 0.45; } }
-
-/* Reloading: digits swap for a spinning reload glyph (no innerHTML per frame) */
-.hud__ammo.reloading b,
-.hud__ammo.reloading > span:not(.hud__reload-spin) { display: none; }
-.hud__ammo.reloading .hud__ammo-ic { display: none; }
-.hud__reload-spin {
-  display: none;
-  color: var(--accent);
-}
-.hud__ammo.reloading .hud__reload-spin {
-  display: inline-flex;
-  animation: spinslow 0.9s linear infinite;
-}
-@keyframes spinslow { to { transform: rotate(360deg); } }
-
-.hud__reload {
-  margin-top: 6px;
-  height: 4px;
-  width: 180px;
-  margin-left: auto;
-  background: rgba(10, 10, 7, 0.8);
-  border-radius: 0;
-  overflow: hidden;
-}
-.hud__reload-fill {
-  height: 100%;
-  background: var(--accent);
-  transform-origin: left;
-  transform: scaleX(0);
-}
-
-/* ---------- Menus ---------- */
-.hud__menu, .hud__pause, .hud__death {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  /* `safe` keeps the card's top reachable once it outgrows the viewport
-     (records block + 5 mode chips on a short/zoomed screen). */
-  align-content: safe center;
-  justify-items: center;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: rgba(8, 9, 6, 0.78);
+.hud__seed-input {
   pointer-events: auto;
-  transition: opacity 0.25;
-}
-.hud__top, .hud__enemies, .hud__radar, .hud__bottom, .hud__hint, .hud__banner {
-  z-index: 1;
-}
-/* visibility removes hidden overlays from tab order + the a11y tree */
-.hud__menu.hidden, .hud__pause.hidden, .hud__death.hidden {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.25s, visibility 0s 0.25s;
-}
-
-.hud__menu-card {
-  text-align: center;
-  padding: 26px 44px;
-  margin: 18px 0;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 0;
-  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
-  outline: 1px solid rgba(222, 210, 170, 0.14);
-  outline-offset: 5px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
-}
-
-.hud__menu-title {
-  font-size: 46px;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  font-family: var(--font-data);
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.2em;
+  text-align: center;
+  text-transform: uppercase;
   color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(150, 178, 198, 0.05);
+  transition: border-color 0.12s;
 }
-.hud__menu-title::after {
-  content: '';
-  display: block;
-  width: 72px;
-  height: 5px;
-  margin: 14px auto 0;
-  background: repeating-linear-gradient(-45deg, var(--accent) 0 7px, transparent 7px 14px);
-}
-.hud__menu-title--dead { color: var(--danger); }
-.hud__menu-title--dead::after { background: repeating-linear-gradient(-45deg, var(--danger) 0 7px, transparent 7px 14px); }
-.hud__menu-title--pause {
-  font-size: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  letter-spacing: 0.24em;
-}
-.hud__menu-title--pause .ic { width: 26px; height: 26px; color: var(--accent); }
-.hud__menu-best {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--accent);
-  letter-spacing: 0.14em;
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 14px;
-}
-.hud__fatal { color: var(--text-dim); max-width: 42ch; margin: 20px auto 0; }
-.hud__menu-best .ic { color: var(--gold, #ffd76b); }
+.hud__seed-input::placeholder { color: var(--text-dim); letter-spacing: 0.16em; }
+.hud__seed-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.hud__seed-input.deny { border-color: var(--danger); }
+.hud__btn--seed { font-size: 13px; padding: 10px 18px; letter-spacing: 0.16em; }
 
-/* Kill-combo chip — top row, accent state. Hidden keeps its slot so the
-   score/wave/kills chips never shift when a combo starts or lapses. */
-.hud__chip--combo {
-  color: var(--accent);
-  border-color: var(--accent-soft);
-  background: rgba(255, 159, 28, 0.1);
-}
-.hud__chip--combo[hidden] {
-  display: inline-flex;
-  visibility: hidden;
-}
-
-/* Lifetime records under the menu best line */
-.hud__menu-records {
-  margin-top: 10px;
-  display: grid;
-  gap: 4px;
-}
-.hud__menu-records[hidden] { display: none; }
-.hud__menu-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-}
-.hud__menu-stat i {
-  flex: 1;
-  border-bottom: 1px dotted var(--line);
-  transform: translateY(-3px);
-}
-.hud__menu-stat b {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---------- Keycap control diagram (icon + keys, zero prose) ---------- */
+/* ---------- Keycap control diagram ---------- */
 .hud__keys {
-  margin: 18px 0;
+  grid-area: keys;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 7px 22px;
+  gap: 6px 18px;
+  align-content: start;
+  justify-self: center;
 }
 .hud__key {
   display: flex;
@@ -739,22 +1255,176 @@ kbd {
   gap: 9px;
   color: var(--text-dim);
 }
-.hud__key .ic { width: 18px; height: 18px; color: var(--text); opacity: 0.85; }
+.hud__key .ic { width: 17px; height: 17px; color: var(--text); opacity: 0.85; }
 .hud__key-caps { display: inline-flex; gap: 3px; align-items: center; }
 
-.hud__death-stats {
-  margin: 24px 0;
-  /* The card is a stack of blocks; each block owns its own column layout, so a
-     legacy six-field call and a full run summary both lay out from one rule. */
+/* ---------- Settings ---------- */
+.hud__settings {
+  grid-area: settings;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  justify-self: center;
+}
+.hud__settings label {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  font-size: 15px;
+  align-items: center;
+  gap: 12px;
   color: var(--text-dim);
 }
-/* Row styling is scoped to the row, not to every direct child: the card is
-   built from .hud__death-block wrappers, and a `> div` rule here would flatten
-   those wrappers into flex rows. */
+.hud__settings label .ic { width: 18px; height: 18px; }
+.hud__settings input[type='range'] {
+  pointer-events: auto;
+  width: 190px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.hud__settings select {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel-solid);
+  cursor: pointer;
+}
+.hud__settings select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* ---------- Buttons ---------- */
+.hud__btn-row {
+  grid-area: deploy;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.hud__btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  /* A label is a short token: never let it break mid-word. */
+  white-space: nowrap;
+  color: #06131a;
+  padding: 13px 38px;
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  background:
+    repeating-linear-gradient(-45deg, rgba(6, 19, 26, 0.22) 0 8px, rgba(6, 19, 26, 0) 8px 16px),
+    var(--accent);
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.hud__btn .ic { width: 17px; height: 17px; }
+.hud__btn:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 0 18px var(--accent-soft); }
+.hud__btn:active { transform: translateY(0); filter: brightness(0.94); }
+
+.hud__btn--ghost {
+  font-size: 13px;
+  padding: 13px 20px;
+  border-color: var(--line-strong);
+  background: rgba(150, 178, 198, 0.05);
+  color: var(--text-dim);
+}
+.hud__btn--ghost:hover {
+  color: var(--text);
+  background: rgba(150, 178, 198, 0.1);
+  filter: none;
+  box-shadow: none;
+}
+.hud__btn--tiny { font-size: 11px; padding: 5px 12px; letter-spacing: 0.14em; }
+
+.hud__btn:focus-visible,
+.hud__settings input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---------- Achievement ledger ---------- */
+.hud__ach {
+  grid-area: ach;
+  text-align: left;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  justify-self: center;
+  width: min(560px, 100%);
+}
+.hud__ach[hidden] { display: none; }
+.hud__ach-summary {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+  text-align: center;
+  margin-bottom: 8px;
+}
+.hud__ach-list {
+  max-height: 208px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 4px;
+}
+.hud__ach-tier {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 3px;
+}
+.hud__ach-tier:first-child { margin-top: 0; }
+.hud__ach-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.hud__ach-name { flex: 1; min-width: 0; }
+.hud__ach-row--done .hud__ach-name { color: var(--gold); }
+.hud__ach-prog { font-family: var(--font-data); letter-spacing: 0; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.hud__ach-mark {
+  width: 70px;
+  text-align: right;
+  font-family: var(--font-data);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.hud__ach-row--done .hud__ach-mark { color: var(--gold); }
+
+/* ---------- Death card ---------- */
+.hud__death-stats {
+  grid-area: records;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.hud__death-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 26px;
+}
 .hud__death-block > div {
   display: flex;
   align-items: center;
@@ -764,21 +1434,60 @@ kbd {
 .hud__death-block .ic { color: var(--text-dim); }
 .hud__death-block span:not(.sr-only) {
   color: var(--text);
+  font-family: var(--font-data);
   font-weight: 700;
-  font-size: 18px;
+  font-size: 16px;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
+}
+.hud__death-seed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hud__death-seed-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+.hud__death-seed-code {
+  font-family: var(--font-data);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+.hud__death-upgrades {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+  align-items: center;
+}
+.hud__death-chip {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: rgba(150, 178, 198, 0.05);
 }
 
 .hud__record {
+  grid-area: best;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  margin-top: 14px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.3em;
-  color: #ffd76b;
-  text-shadow: 0 0 18px rgba(255, 215, 107, 0.6);
+  color: var(--gold);
+  text-shadow: 0 0 18px rgba(255, 215, 107, 0.55);
   animation: pulse 0.9s ease-in-out infinite;
 }
 .hud__record[hidden] { display: none; }
@@ -788,300 +1497,22 @@ kbd {
   50% { opacity: 0.55; }
 }
 
-/* ---------- Settings (icon + slider, no word labels) ---------- */
-.hud__settings {
-  margin: 18px 0 4px;
-  display: grid;
-  gap: 12px;
-}
-.hud__settings label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-dim);
-}
-.hud__settings label .ic { width: 19px; height: 19px; }
-.hud__settings input[type='range'] {
-  pointer-events: auto;
-  width: 200px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-/* ---------- Buttons ---------- */
-.hud__btn-row { display: flex; gap: 12px; justify-content: center; margin-top: 22px; }
-
-.hud__btn {
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font: inherit;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  color: #17120a;
-  padding: 13px 40px;
-  border: 1px solid var(--accent);
-  border-radius: 0;
-  background:
-    repeating-linear-gradient(-45deg, rgba(23, 18, 10, 0.25) 0 8px, rgba(23, 18, 10, 0) 8px 16px),
-    var(--accent);
-  cursor: pointer;
-  transition: filter 0.15s, transform 0.1s, box-shadow 0.15s;
-}
-.hud__btn .ic { width: 18px; height: 18px; }
-.hud__btn:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 0 18px var(--accent-soft); }
-.hud__btn:active { transform: translateY(0); filter: brightness(0.94); }
-
-.hud__btn--ghost {
-  font-size: 13px;
-  padding: 13px 22px;
-  border-color: var(--line);
-  background: rgba(236, 231, 216, 0.05);
-  color: var(--text-dim);
-}
-.hud__btn--ghost:hover { color: var(--text); background: rgba(236, 231, 216, 0.1); filter: none; box-shadow: none; }
-
-/* ---------- Touch devices ---------- */
-.hud__touch-note {
-  display: none;
-  margin-top: 16px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 159, 28, 0.45);
-  background: rgba(24, 18, 6, 0.85);
-  border-radius: 0;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  color: var(--accent);
-}
-@media (pointer: coarse) {
-  .hud__touch-note { display: block; }
-  .hud__btn[data-start] { display: none; }
-}
-
-/* ---------- Keyboard focus ---------- */
-.hud__btn:focus-visible,
-.hud__settings input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-/* ---------- Gameplay HUD hides under full-screen overlays ---------- */
-.hud__top, .hud__enemies, .hud__radar, .hud__bottom, .hud__hint, .hud__banner {
-  transition: opacity 0.2s;
-}
-.hud--overlay .hud__top,
-.hud--overlay .hud__enemies,
-.hud--overlay .hud__radar,
-.hud--overlay .hud__bottom,
-.hud--overlay .hud__hint,
-.hud--overlay .hud__banner { opacity: 0; }
-
-/* ---------- Reduced motion: keep feedback, drop movement ---------- */
-@media (prefers-reduced-motion: reduce) {
-  .hud__vignette.lowhp { animation: none; box-shadow: inset 0 0 130px 26px rgba(255, 40, 60, 0.28); }
-  .hud__ammo.empty { animation: none; }
-  .hud__record { animation: none; }
-  .hud__record .ic { animation: none; }
-  .hud__ammo.reloading .hud__reload-spin { animation: none; }
-  .hud__hint--danger .ic { animation: none; }
-  .hud__pop.show { animation: popfade 0.8s linear forwards; }
-  @keyframes popfade { to { opacity: 0; } }
-  .hud__vignette.hit { animation: none; box-shadow: inset 0 0 90px 18px rgba(255, 40, 60, 0.4); }
-  .hud__btn:hover { transform: none; }
-  .hud__banner { transition: none; }
-  @keyframes hit {
-    0% { opacity: 1; }
-    100% { opacity: 0; }
-  }
-  @keyframes hithead {
-    0% { opacity: 1; }
-    100% { opacity: 0; }
-  }
-  @keyframes hitkill {
-    0% { opacity: 1; }
-    60% { opacity: 0.9; }
-    100% { opacity: 0; }
-  }
-}
-
-/* ---------- Touch overlay ---------- */
-/* Positions are written by Hud.layoutTouch() from the input layer's hit-rects,
-   so what is drawn is exactly what is tappable. */
-.hud__touch {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-.hud__touch[hidden] { display: none; }
-.hud__stick {
-  position: absolute;
-  border: 2px solid var(--accent-soft);
-  border-radius: 50%;
-  background: rgba(255, 159, 28, 0.06);
-  display: grid;
-  place-items: center;
-}
-.hud__stick[hidden] { display: none; }
-.hud__stick i {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: rgba(255, 159, 28, 0.3);
-  border: 2px solid var(--accent);
-  will-change: transform;
-}
-.hud__tbtn {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--line);
-  border-radius: 50%;
-  background: rgba(16, 17, 12, 0.42);
-  color: var(--text-dim);
-  transition: border-color 0.1s, color 0.1s, background 0.1s;
-}
-.hud__tbtn[hidden] { display: none; }
-.hud__tbtn.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(255, 159, 28, 0.18);
-}
-.hud__tbtn .ic { width: 45%; height: 45%; }
-/* In touch mode the gameplay HUD gives the thumbs their corners back. */
-.hud--touch .hud__bottom { bottom: calc(22px + var(--safe-b)); }
-.hud--touch .hud__radar { top: calc(20px + var(--safe-t)); right: calc(20px + var(--safe-r)); }
-.hud--touch .hud__slots { display: none; }
-.hud--touch .hud__slot-count { display: none; }
-
-/* ---------- Responsive layout ---------- */
-/* Short viewports (phones in landscape, small laptops): shrink the chrome so
-   the arena keeps the majority of the screen. */
-@media (max-height: 560px) {
-  .hud__radar { width: 104px; height: 104px; top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
-  .hud__top { top: calc(10px + var(--safe-t)); }
-  .hud__enemies { top: calc(46px + var(--safe-t)); }
-  .hud__bottom { bottom: calc(12px + var(--safe-b)); left: calc(16px + var(--safe-l)); right: calc(16px + var(--safe-r)); }
-  .hud__health { width: 220px; }
-  .hud__ammo { font-size: 26px; }
-  .hud__hint { bottom: calc(78px + var(--safe-b)); }
-  .hud__menu-title { font-size: 34px; }
-  .hud__menu-card { padding: 18px 28px; }
-  .hud__keys { grid-template-columns: 1fr 1fr 1fr; margin: 12px 0; }
-  .hud__modes { margin-top: 12px; gap: 6px; }
-  .hud__mode-chip { padding: 6px 10px; letter-spacing: 0.1em; }
-  .hud__settings { margin-top: 12px; }
-}
-
-/* Short laptops and landscape phones: the menu card must still fit whole. */
-@media (max-height: 700px) {
-  .hud__menu-card { padding: 16px 26px; margin: 10px 0; }
-  .hud__menu-title { font-size: 30px; margin-bottom: 6px; }
-  .hud__menu-best { margin-top: 6px; font-size: 14px; }
-  .hud__keys { margin: 10px 0; gap: 5px 16px; }
-  .hud__key { font-size: 12px; }
-  .hud__modes { margin-top: 10px; gap: 6px; }
-  .hud__mode-chip { padding: 6px 10px; font-size: 12px; }
-  .hud__settings { margin-top: 10px; gap: 8px; }
-  .hud__menu-records { margin-top: 8px; gap: 3px; font-size: 12px; }
-  .hud__btn { padding: 11px 26px; }
-}
-
-/* Narrow viewports (portrait phones): stack the bottom bar and shrink chips. */
-@media (max-width: 640px) {
-  .hud__top { top: calc(8px + var(--safe-t)); gap: 6px; }
-  /* The radar drops to 96px and moves down out of the top row's way, so the
-     full width is available and the chips stay on one or two lines. */
-  .hud__top { max-width: calc(100vw - 24px); }
-  .hud__chip { font-size: 13px; padding: 5px 8px; }
-  .hud__radar { width: 96px; height: 96px; top: calc(52px + var(--safe-t)); right: calc(10px + var(--safe-r)); }
-  .hud__bottom {
-    left: calc(12px + var(--safe-l));
-    right: calc(12px + var(--safe-r));
-    bottom: calc(14px + var(--safe-b));
-    gap: 10px;
-  }
-  .hud__health { width: 100%; max-width: 240px; }
-  .hud__weapon { flex: 1 1 auto; min-width: 0; }
-  .hud__ammo { font-size: 26px; }
-  .hud__weapon-row { font-size: 11px; gap: 6px; }
-  .hud__slots { gap: 4px; margin-bottom: 5px; }
-  .hud__slot { width: 28px; height: 22px; }
-  .hud__slot .ic { width: 16px; height: 16px; }
-  .hud__slot--edge .ic { width: 13px; height: 13px; }
-  .hud__banner { font-size: 30px; }
-  .hud__menu-title { font-size: 32px; }
-  .hud__menu-card { padding: 20px 22px; }
-  .hud__keys { grid-template-columns: 1fr 1fr; margin: 14px 0; gap: 6px 12px; }
-  .hud__key { font-size: 12px; }
-  .hud__key .ic { width: 15px; height: 15px; }
-  .hud__modes { gap: 6px; margin-top: 12px; }
-  .hud__mode-chip { padding: 6px 9px; font-size: 12px; letter-spacing: 0.08em; }
-  .hud__mode-chip .ic { width: 13px; height: 13px; }
-  .hud__menu-records { font-size: 12px; }
-  .hud__settings { flex-direction: column; align-items: stretch; gap: 8px; }
-  .hud__settings input[type='range'] { width: 100%; }
-  .hud__death-stats { grid-template-columns: 1fr 1fr; font-size: 12px; }
-}
-
-/* Coarse pointers: larger tap targets everywhere, and no hover-only affordance. */
-@media (pointer: coarse) {
-  .hud__btn { padding: 15px 30px; }
-  .hud__mode-chip { padding: 10px 14px; }
-  .hud__settings input[type='range'] { height: 30px; }
-  .hud__slot { width: 34px; height: 30px; }
-  /* Hover styles would stick on touch — neutralise them. */
-  .hud__btn:hover { transform: none; filter: none; }
-  .hud__mode-chip:hover { border-color: var(--line); color: var(--text-dim); }
-}
-
-/* Landscape phone: the menu card is taller than the viewport, so drop the
-   control diagram entirely and compact everything that remains. */
-@media (max-height: 430px) and (orientation: landscape) {
-  .hud__menu-card { padding: 10px 18px; margin: 6px 0; }
-  .hud__menu-title { font-size: 22px; margin-bottom: 2px; }
-  .hud__menu-best { font-size: 12px; margin-top: 2px; }
-  .hud__keys { display: none; }
-  .hud__menu-records { display: none; }
-  .hud__settings { margin-top: 8px; flex-direction: row; gap: 10px; }
-  .hud__settings input[type='range'] { width: 110px; }
-  .hud__modes { margin-top: 8px; gap: 5px; }
-  .hud__mode-chip { padding: 5px 8px; font-size: 11px; }
-  .hud__mode-chip .ic { width: 12px; height: 12px; }
-  .hud__btn { padding: 9px 20px; font-size: 14px; }
-}
-
 /* ==========================================================================
-   Draft (between-wave upgrade pick) and Supply Kiosk (intermission shop).
-   Both are sibling overlays of the Hud root: the Hud owns no knowledge of
-   them, they only borrow its class vocabulary and design tokens.
+   Draft — card grid with a fixed header/footer rail.
    ========================================================================== */
-
-/* Rarity hues. Common reuses the khaki dim already in the palette, so only the
-   two special tiers introduce a hue, and both are used as borders only. */
-.hud__draft,
-.hud__kiosk {
-  --rarity: #ded2aa99;
-  --rarity-soft: rgba(222, 210, 170, 0.14);
-}
-
 .hud__draft {
   position: absolute;
   inset: 0;
-  /* Above the gameplay HUD (1) and the touch overlay (2), below the menus (20):
-     pause and death must be able to cover a live draft. */
   z-index: 10;
   display: grid;
   align-content: safe center;
   justify-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: rgba(8, 9, 6, 0.78);
+  background: rgba(6, 9, 12, 0.82);
   pointer-events: auto;
   transition: opacity 0.25s;
+  contain: layout paint style;
 }
 .hud__draft.hidden {
   opacity: 0;
@@ -1093,25 +1524,32 @@ kbd {
 .hud__draft-panel {
   position: relative;
   width: min(1080px, calc(100vw - 32px));
-  margin: 24px 0;
-  padding: 26px 30px 22px;
+  margin: 22px 0;
+  padding: 24px 28px 20px;
+  display: grid;
+  grid-template-areas:
+    "title"
+    "sub"
+    "cards"
+    "actions";
+  gap: 0;
+  justify-items: center;
   text-align: center;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  background: var(--panel-solid);
   border-radius: 0;
-  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
-  outline: 1px solid rgba(222, 210, 170, 0.14);
-  outline-offset: 5px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  outline: 1px solid var(--line);
+  outline-offset: 4px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62);
   transition: border-color 0.15s;
+  contain: layout paint style;
 }
-/* Refused paid reroll: the panel frame goes red, nothing else moves. Both the
-   class and the data attribute are matched so a caller cannot desync them. */
 .hud__draft-panel.hud__draft-deny,
 .hud__draft-panel[data-deny] { border-color: var(--danger); }
 
 .hud__draft-title {
-  font-size: 38px;
+  grid-area: title;
+  font-size: 36px;
   font-weight: 700;
   letter-spacing: 0.3em;
   color: var(--text);
@@ -1119,92 +1557,83 @@ kbd {
 .hud__draft-title::after {
   content: '';
   display: block;
-  width: 72px;
-  height: 5px;
-  margin: 12px auto 0;
-  background: repeating-linear-gradient(-45deg, var(--accent) 0 7px, transparent 7px 14px);
+  width: 160px;
+  height: 7px;
+  margin: 10px auto 0;
+  background:
+    repeating-linear-gradient(90deg, var(--accent) 0 1px, transparent 1px var(--tick)),
+    linear-gradient(var(--accent-soft), var(--accent-soft)) center / 100% 1px no-repeat;
 }
 .hud__draft-sub {
+  grid-area: sub;
   margin-top: 10px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.24em;
 }
 
 .hud__draft-cards {
-  margin: 22px 0 4px;
+  grid-area: cards;
+  margin: 20px 0 2px;
+  width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(212px, 1fr));
+  gap: 12px;
   align-items: stretch;
 }
 
 .hud__draft-card {
-  --rarity: #ded2aa99;
-  --rarity-soft: rgba(222, 210, 170, 0.14);
+  --rarity: var(--line-strong);
+  --rarity-soft: rgba(150, 178, 198, 0.16);
   pointer-events: auto;
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
   gap: 7px;
-  min-height: 132px;
-  padding: 16px 16px 15px;
+  min-height: 138px;
+  padding: 15px 15px 14px;
   font: inherit;
   text-align: left;
   color: var(--text);
   border: 1px solid var(--line);
+  border-top: 3px solid var(--rarity);
   border-radius: 0;
-  background: rgba(236, 231, 216, 0.04);
+  background: rgba(150, 178, 198, 0.045);
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition: border-color 0.12s, background-color 0.12s, transform 0.12s;
 }
 .hud__draft-card[data-rarity='rare'] {
-  --rarity: #7dd8ff;
-  --rarity-soft: rgba(125, 216, 255, 0.15);
+  --rarity: var(--accent);
+  --rarity-soft: rgba(124, 231, 255, 0.16);
 }
 .hud__draft-card[data-rarity='legendary'] {
-  --rarity: #ffd76b;
+  --rarity: var(--gold);
   --rarity-soft: rgba(255, 215, 107, 0.16);
 }
-
-/* Structural rarity tell #1: a thin accent bar across the top edge, drawn
-   inside the border so the hairline stays 1px. */
-.hud__draft-card[data-rarity='rare']::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 2px;
-  background: var(--rarity);
+/* Legendary carries the hatch: the same marking reserved for earned states. */
+.hud__draft-card[data-rarity='legendary'] {
+  border-top: 0;
+  background-image:
+    repeating-linear-gradient(-45deg, var(--rarity) 0 4px, transparent 4px 10px),
+    linear-gradient(rgba(150, 178, 198, 0.045), rgba(150, 178, 198, 0.045));
+  background-size: 100% 3px, 100% 100%;
+  background-repeat: no-repeat, no-repeat;
+  background-position: top left, top left;
 }
-/* Structural rarity tell #2: legendary gets the hazard hatch instead of a flat
-   bar, the same marking the design system reserves for commit actions. */
-.hud__draft-card[data-rarity='legendary']::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 4px;
-  background: repeating-linear-gradient(-45deg, var(--rarity) 0 5px, transparent 5px 10px);
-}
-
 .hud__draft-card:hover,
 .hud__draft-card:focus-visible {
   border-color: var(--rarity);
-  background: rgba(236, 231, 216, 0.07);
-  outline: 1px solid var(--rarity-soft);
-  outline-offset: 2px;
+  background-color: rgba(150, 178, 198, 0.08);
+  transform: translateY(-2px);
 }
 .hud__draft-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .hud__draft-rarity {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--rarity);
 }
@@ -1220,29 +1649,30 @@ kbd {
   color: var(--text-dim);
 }
 .hud__draft-owned {
-  margin-top: auto;
-  padding: 4px 9px;
-  font-size: 11px;
+  justify-self: start;
+  padding: 3px 8px;
+  font-family: var(--font-data);
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.12em;
   color: var(--text-dim);
   border: 1px solid var(--line);
-  background: rgba(16, 17, 12, 0.9);
-  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  background: rgba(9, 13, 17, 0.9);
 }
 
 .hud__draft-actions {
-  margin-top: 18px;
+  grid-area: actions;
+  margin-top: 16px;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: center;
   flex-wrap: wrap;
 }
-/* The reroll button never disables: a refusal is the caller's answer, and the
-   red panel flash is its only feedback. Dim the label while unaffordable. */
-.hud__draft-actions .hud__btn[data-afford='0'] { color: rgba(255, 80, 64, 0.75); }
+.hud__draft-actions .hud__btn[data-afford='0'] { color: rgba(255, 77, 94, 0.75); }
 
-/* ---------- Supply kiosk ---------- */
+/* ==========================================================================
+   Supply kiosk — a price list, so the grid is label | price per row.
+   ========================================================================== */
 .hud__kiosk {
   position: absolute;
   inset: 0;
@@ -1252,9 +1682,10 @@ kbd {
   justify-items: center;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: rgba(8, 9, 6, 0.78);
+  background: rgba(6, 9, 12, 0.82);
   pointer-events: auto;
   transition: opacity 0.25s;
+  contain: layout paint style;
 }
 .hud__kiosk.hidden {
   opacity: 0;
@@ -1265,18 +1696,26 @@ kbd {
 
 .hud__kiosk-panel {
   width: min(760px, calc(100vw - 32px));
-  margin: 24px 0;
-  padding: 26px 30px 22px;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  margin: 22px 0;
+  padding: 24px 28px 20px;
+  display: grid;
+  grid-template-areas:
+    "title"
+    "sub"
+    "salvage"
+    "list"
+    "actions";
+  border: 1px solid var(--line-strong);
+  background: var(--panel-solid);
   border-radius: 0;
-  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
-  outline: 1px solid rgba(222, 210, 170, 0.14);
-  outline-offset: 5px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  outline: 1px solid var(--line);
+  outline-offset: 4px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62);
+  contain: layout paint style;
 }
 .hud__kiosk-title {
-  font-size: 34px;
+  grid-area: title;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: 0.3em;
   color: var(--text);
@@ -1284,75 +1723,81 @@ kbd {
 .hud__kiosk-title::after {
   content: '';
   display: block;
-  width: 72px;
-  height: 5px;
-  margin: 12px 0 0;
-  background: repeating-linear-gradient(-45deg, var(--accent) 0 7px, transparent 7px 14px);
+  width: 160px;
+  height: 7px;
+  margin: 10px 0 0;
+  background:
+    repeating-linear-gradient(90deg, var(--accent) 0 1px, transparent 1px var(--tick)),
+    linear-gradient(var(--accent-soft), var(--accent-soft)) center / 100% 1px no-repeat;
 }
 .hud__kiosk-sub {
+  grid-area: sub;
   margin-top: 10px;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.24em;
 }
 .hud__kiosk-salvage {
-  margin-top: 16px;
+  grid-area: salvage;
+  margin-top: 14px;
   display: flex;
   align-items: baseline;
   gap: 10px;
   color: var(--gold);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.22em;
 }
 .hud__kiosk-salvage b {
-  font-size: 34px;
+  font-family: var(--font-data);
+  font-size: 30px;
   font-weight: 700;
   line-height: 1.1;
-  /* Tabular numerals: the readout must not reflow while salvage ticks up. */
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
 .hud__kiosk-list {
-  margin-top: 18px;
+  grid-area: list;
+  margin-top: 16px;
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
+/* Each row is its own grid: text block | price, so prices align in a column. */
 .hud__kiosk-row {
   pointer-events: auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  gap: 16px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 11px 14px;
   font: inherit;
   text-align: left;
   color: var(--text);
   border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
   border-radius: 0;
-  background: rgba(236, 231, 216, 0.04);
+  background: rgba(150, 178, 198, 0.045);
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, opacity 0.12s;
 }
 .hud__kiosk-row:not(:disabled):hover {
-  border-color: rgba(222, 210, 170, 0.5);
-  background: rgba(236, 231, 216, 0.07);
+  border-color: var(--line-strong);
+  border-left-color: var(--accent);
+  background: rgba(150, 178, 198, 0.08);
 }
 .hud__kiosk-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-/* Disabled rows stay readable: the player needs to know what exists and why it
-   is closed. `disabled` already removes them from the tab order. */
 .hud__kiosk-row:disabled { opacity: 0.45; cursor: default; }
-.hud__kiosk-row[data-state='ok'] { border-color: var(--ok); }
-.hud__kiosk-row[data-state='deny'] { border-color: var(--danger); }
-/* Sell rows are a different economic direction, so they get a distinct edge
-   and a cool price color: the player never mistakes a payout for a cost. */
+.hud__kiosk-row[data-state='ok'] { border-color: var(--ok); border-left-color: var(--ok); }
+.hud__kiosk-row[data-state='deny'] { border-color: var(--danger); border-left-color: var(--danger); }
+/* Sell rows pay out, so they read as a different direction of trade. */
 .hud__kiosk-row--sell {
-  border-left: 3px solid rgba(125, 216, 255, 0.55);
-  background: rgba(125, 216, 255, 0.035);
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
 }
-.hud__kiosk-row--sell .hud__kiosk-cost { color: #7dd8ff; }
+.hud__kiosk-row--sell .hud__kiosk-cost { color: var(--accent); }
 .hud__kiosk-row--sell .hud__kiosk-name { font-size: 14px; font-weight: 600; }
 
 .hud__kiosk-text {
@@ -1374,313 +1819,65 @@ kbd {
 }
 .hud__kiosk-cost {
   flex: none;
-  font-size: 17px;
+  font-family: var(--font-data);
+  font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--gold);
 }
-/* A price the player cannot pay yet reads as information, not as an offer. */
 .hud__kiosk-cost--short { color: rgba(255, 215, 107, 0.55); }
 .hud__kiosk-cost--blocked {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 .hud__kiosk-actions {
-  margin-top: 18px;
+  grid-area: actions;
+  margin-top: 16px;
   display: flex;
   justify-content: flex-end;
 }
 
-/* ---------- Narrow viewports: one card per row, tighter plate ---------- */
-@media (max-width: 640px) {
-  .hud__draft-panel,
-  .hud__kiosk-panel { padding: 18px 16px 16px; }
-  .hud__draft-title { font-size: 28px; letter-spacing: 0.24em; }
-  .hud__draft-cards { grid-template-columns: 1fr; gap: 10px; margin-top: 16px; }
-  .hud__draft-card { min-height: 0; }
-  .hud__draft-actions { margin-top: 14px; gap: 8px; }
-  .hud__draft-actions .hud__btn { padding: 11px 16px; font-size: 12px; }
-  .hud__kiosk-title { font-size: 26px; letter-spacing: 0.24em; }
-  .hud__kiosk-salvage b { font-size: 28px; }
-  .hud__kiosk-row { flex-direction: column; align-items: flex-start; gap: 6px; padding: 11px 12px; }
-  .hud__kiosk-cost { align-self: flex-end; }
-}
-
-/* Reduced motion: every state change is already carried by color, so the
-   transitions are pure decoration and can go. */
-@media (prefers-reduced-motion: reduce) {
-  .hud__draft,
-  .hud__draft.hidden,
-  .hud__kiosk,
-  .hud__kiosk.hidden,
-  .hud__draft-panel,
-  .hud__draft-card,
-  .hud__kiosk-row { transition: none; }
-}
-
-
 /* ==========================================================================
-   Run telemetry: ability chips, run chips, boss bar, status pips, shield,
-   achievement toasts and the achievement ledger.
-   Everything here reuses the design tokens in :root. Nothing introduces a
-   new hue: accent = interactive/current, danger = harm, gold = earned.
+   Toasts
    ========================================================================== */
-
-/* ---------- Ability chips (bottom bar, beside the ammo readout) ---------- */
-.hud__abilities {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  margin-right: 18px;
-}
-.hud__abilities[hidden] { display: none; }
-
-.hud__ability {
-  min-width: 78px;
-  padding: 6px 9px 7px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 0;
-  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
-  transition: border-color 0.12s, background 0.12s;
-}
-.hud__ability-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  color: var(--text-dim);
-}
-.hud__ability-top b {
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-}
-.hud__ability-tag { color: var(--text-dim); }
-.hud__ability-bar {
-  margin-top: 5px;
-  height: 2px;
-  background: var(--line);
-  overflow: hidden;
-}
-.hud__ability-bar i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  /* Dim while recharging; the `ready` class promotes it to accent. */
-  background: var(--line);
-  transition: width 0.12s linear, background 0.12s;
-}
-/* A banked charge is the only state worth accent: the bar is full and amber. */
-.hud__ability-bar i.ready { background: var(--accent); }
-/* No charges: the chip dims. The n/N already says 0/2; the dim is the glanceable
-   form of the same fact. */
-.hud__ability.depleted { opacity: 0.62; }
-
-/* Cooking a grenade: gold border and fill, the same "earned moment" gold the
-   hitmarker uses for a headshot. The window has a visible start and end. */
-.hud__ability.cooking {
-  border-color: var(--gold);
-  background: rgba(255, 215, 107, 0.1);
-}
-.hud__ability.cooking .hud__ability-bar i { background: var(--gold); }
-.hud__ability.cooking .hud__ability-top b { color: var(--gold); }
-
-/* ---------- Run chips (top row) ---------- */
-/* The row can now carry eight chips, so it wraps instead of running off the
-   edge; centering keeps the score/wave/kills cluster in the middle. */
-.hud__top { flex-wrap: wrap; justify-content: center; }
-
-/* Excludes the combo chip: that one deliberately keeps its slot when hidden so
-   the score/wave/kills chips never shift as a streak starts and lapses. */
-.hud__chip[hidden]:not(.hud__chip--combo) { display: none; }
-
-.hud__chip-tag {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  color: var(--text-dim);
-}
-.hud__chip--gold { color: var(--gold); border-color: rgba(255, 215, 107, 0.35); }
-.hud__chip--gold .hud__chip-tag { color: rgba(255, 215, 107, 0.7); }
-
-.hud__chip--mutation {
-  color: var(--text);
-  border-color: rgba(255, 217, 138, 0.4);
-  background: rgba(255, 217, 138, 0.08);
-  /* The description is a native title, so this chip is the one run chip that
-     needs to receive hover. It has no click action. */
-  pointer-events: auto;
-  cursor: help;
-}
-.hud__chip--mutation b { letter-spacing: 0.1em; }
-
-/* Wager chip: states that this run was deployed with challenges, and how much
-   score they are worth. Danger-colored, matching the menu chips, so the two
-   read as the same decision. Hover shows the pick list. */
-.hud__chip--wager {
-  color: var(--danger);
-  border-color: rgba(255, 90, 70, 0.45);
-  background: rgba(255, 90, 70, 0.08);
-  pointer-events: auto;
-  cursor: help;
-}
-.hud__chip--wager .hud__chip-tag { color: rgba(255, 90, 70, 0.75); }
-.hud__chip--wager b { font-variant-numeric: tabular-nums; }
-
-/* Seed chip: the one top-row chip with an action, so it is a real button and
-   keeps the pointer affordance the other chips do not have. */
-.hud__chip--seed {
-  pointer-events: auto;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
-}
-.hud__chip--seed:hover { border-color: var(--accent); color: var(--accent); }
-/* clip-path clips an outline away, so focus is drawn as an inset ring plus an
-   accent hairline: the same signal, in a shape the chamfer cannot eat. */
-.hud__chip--seed:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-.hud__chip--seed b { font-variant-numeric: tabular-nums; }
-
-/* ---------- Boss bar ---------- */
-.hud__boss {
-  position: absolute;
-  left: 50%;
-  /* 34px above the bottom edge; the bottom bar sits at 22px, so the bar clears
-     the health and ammo readouts on every viewport that fits them. */
-  bottom: calc(34px + var(--safe-b));
-  transform: translateX(-50%);
-  width: min(560px, 74vw);
-  padding: 7px 12px 8px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 0;
-  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
-  /* Must never eat a click: the player may be firing through this strip. */
-  pointer-events: none;
-  z-index: 2;
-}
-.hud__boss[hidden] { display: none; }
-.hud__boss-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  color: var(--text);
-}
-.hud__boss-phase { color: var(--danger); font-variant-numeric: tabular-nums; }
-.hud__boss-bar {
-  margin-top: 6px;
-  height: 8px;
-  border: 1px solid var(--line);
-  background: rgba(10, 10, 7, 0.8);
-  overflow: hidden;
-}
-.hud__boss-fill {
-  height: 100%;
-  width: 100%;
-  background: var(--danger);
-  transition: width 0.15s ease-out;
-}
-/* Core destroyed: the fill gains a gold top edge and the phase text has already
-   switched to CORE DOWN, so the two changes read as one event. */
-.hud__boss-fill.core-down { border-top: 2px solid var(--gold); }
-
-/* ---------- Status effect pips ---------- */
-/* Round on purpose: a pip is a dot, which the Chamfer Rule allows. */
-.hud__pip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid currentColor;
-}
-.hud__pip[hidden] { display: none; }
-.hud__pip b { font-weight: 700; }
-.hud__pip--burn { color: #ff8a3c; background: rgba(255, 138, 60, 0.14); }
-.hud__pip--slow { color: #7dd8ff; background: rgba(125, 216, 255, 0.14); }
-
-/* ---------- Shield on the health bar ---------- */
-/* Second segment, positioned by updateShield() from the live health fraction.
-   The bar clips it, so the two segments can never sum past 100 percent. */
-.hud__shield-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  background: #7dd8ff;
-  transition: left 0.15s ease-out, width 0.15s ease-out;
-}
-.hud__shield-fill.on { box-shadow: 0 0 8px rgba(125, 216, 255, 0.5); }
-.hud__shield-n {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: #7dd8ff;
-  font-variant-numeric: tabular-nums;
-}
-.hud__shield-n[hidden] { display: none; }
-
-/* ---------- Achievement toasts ---------- */
 .hud__toasts {
   position: absolute;
-  top: calc(20px + var(--safe-t));
-  right: calc(20px + var(--safe-r));
+  top: calc(18px + var(--safe-t));
+  right: calc(18px + var(--safe-r));
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: min(300px, 70vw);
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
 }
 .hud__toast {
-  padding: 10px 14px 11px;
-  border: 1px solid rgba(255, 215, 107, 0.4);
-  border-left: 3px solid var(--gold);
-  background: var(--panel);
+  padding: 9px 13px 10px;
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--gold);
+  background: var(--panel-lift);
   border-radius: 0;
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   opacity: 0;
   transform: translateX(18px);
   transition: opacity 0.24s ease-out, transform 0.24s ease-out;
+  contain: layout paint style;
 }
 .hud__toast.in { opacity: 1; transform: translateX(0); }
 .hud__toast.out { opacity: 0; transform: translateX(18px); }
 .hud__toast-eyebrow {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.28em;
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
   color: var(--gold);
   text-transform: uppercase;
 }
 .hud__toast-name {
   margin-top: 3px;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--text);
@@ -1692,194 +1889,227 @@ kbd {
   color: var(--text-dim);
 }
 
-/* ---------- Seed + daily row (menu) ---------- */
-.hud__seed-row {
-  margin-top: 12px;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
+/* ==========================================================================
+   Touch overlay
+   ========================================================================== */
+.hud__touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
 }
-.hud__seed-input {
-  pointer-events: auto;
-  width: 132px;
-  padding: 10px 12px;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.24em;
-  text-align: center;
-  text-transform: uppercase;
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: rgba(236, 231, 216, 0.05);
-  transition: border-color 0.12s;
-}
-.hud__seed-input::placeholder { color: var(--text-dim); letter-spacing: 0.2em; }
-.hud__seed-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-/* Refused seed: red frame only, no shake. The border is the whole message. */
-.hud__seed-input.deny { border-color: var(--danger); }
-.hud__btn--seed { font-size: 14px; padding: 11px 20px; letter-spacing: 0.18em; }
-
-/* ---------- Achievement ledger (menu) ---------- */
-.hud__ach {
-  margin-top: 12px;
-  text-align: left;
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-.hud__ach[hidden] { display: none; }
-.hud__ach-summary {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.2em;
-  color: var(--gold);
-  text-align: center;
-  margin-bottom: 8px;
-}
-.hud__ach-list {
-  /* The list is long by design (32 rows); the panel caps it so the menu card
-     keeps its shape, and the scroll is local to this box. */
-  max-height: 220px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-right: 6px;
-}
-.hud__ach-tier {
-  margin-top: 6px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 3px;
-}
-.hud__ach-tier:first-child { margin-top: 0; }
-.hud__ach-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-}
-.hud__ach-name { flex: 1; min-width: 0; }
-/* Locked rows stay dim; an unlocked row is the only gold in the panel. */
-.hud__ach-row--done .hud__ach-name { color: var(--gold); }
-.hud__ach-prog { font-variant-numeric: tabular-nums; color: var(--text-dim); }
-.hud__ach-mark {
-  width: 66px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-}
-.hud__ach-row--done .hud__ach-mark { color: var(--gold); }
-
-/* ---------- Death card additions ---------- */
-/* One block = one two-column row group. The stack and its gaps live on
-   .hud__death-stats; this is only the internal layout of a single block. */
-.hud__death-block {
+.hud__touch[hidden] { display: none; }
+.hud__stick {
+  position: absolute;
+  border: 2px solid var(--accent-soft);
+  border-radius: 50%;
+  background: var(--accent-wash);
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 26px;
+  place-items: center;
 }
-/* Blocks after the first get a hairline divider, so a legacy six-field card
-   (one block) and a full run summary (four blocks) both read as sections. */
-.hud__death-block + .hud__death-block {
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+.hud__stick[hidden] { display: none; }
+.hud__stick i {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(124, 231, 255, 0.3);
+  border: 2px solid var(--accent);
+  will-change: transform;
 }
-/* Blocks 3 and 4 (seed, upgrade chips) are not two-column rows; they stack. */
-.hud__death-seed,
-.hud__death-upgrades {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-}
-.hud__death-upgrades { gap: 5px; }
-.hud__death-seed {
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.hud__death-seed-tag {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.28em;
+.hud__tbtn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  background: rgba(16, 21, 26, 0.5);
   color: var(--text-dim);
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
 }
-.hud__death-seed-code {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+.hud__tbtn[hidden] { display: none; }
+.hud__tbtn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(124, 231, 255, 0.18);
 }
-.hud__btn--tiny {
-  font-size: 11px;
-  padding: 6px 12px;
-  letter-spacing: 0.18em;
-  min-width: 74px;
+.hud__tbtn .ic { width: 45%; height: 45%; }
+
+/* Touch mode gives the thumbs their corners back. */
+.hud--touch .hud__bottom { margin-bottom: calc(20px + var(--safe-b)); }
+.hud--touch .hud__radar { margin-top: calc(18px + var(--safe-t)); margin-right: calc(18px + var(--safe-r)); }
+.hud--touch .hud__slots { display: none; }
+.hud--touch .hud__slot-count { display: none; }
+.hud--touch .hud__abilities { display: none; }
+
+/* Gameplay HUD hides under full-screen overlays. */
+.hud__top, .hud__enemies, .hud__radar, .hud__bottom, .hud__hint, .hud__banner, .hud__frame {
+  transition: opacity 0.2s;
 }
-.hud__death-upgrades {
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-.hud__death-chip {
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--text);
-  border: 1px solid var(--line);
-  background: rgba(236, 231, 216, 0.05);
-  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+.hud--overlay .hud__top,
+.hud--overlay .hud__enemies,
+.hud--overlay .hud__radar,
+.hud--overlay .hud__bottom,
+.hud--overlay .hud__hint,
+.hud--overlay .hud__banner { opacity: 0; }
+
+/* ==========================================================================
+   Responsive — every breakpoint reorders the named areas, never the internals.
+   ========================================================================== */
+@media (max-height: 700px) {
+  .hud__menu-card { padding: 20px 28px 18px; gap: 10px 24px; margin: 12px 0; }
+  .hud__menu-title { font-size: 34px; }
+  .hud__menu-title::after { margin-top: 8px; }
+  .hud__keys { gap: 5px 14px; }
+  .hud__key { font-size: 12px; }
+  .hud__ach-list { max-height: 168px; }
 }
 
-/* ---------- Narrow viewports ---------- */
+@media (max-height: 560px) {
+  .hud__radar { width: 104px; height: 104px; margin: calc(10px + var(--safe-t)) calc(12px + var(--safe-r)) 0 0; }
+  .hud__top { margin: calc(10px + var(--safe-t)) 0 0 calc(14px + var(--safe-l)); }
+  .hud__enemies { margin: calc(44px + var(--safe-t)) 0 0 calc(14px + var(--safe-l)); }
+  .hud__bottom { margin: 0 calc(14px + var(--safe-r)) calc(12px + var(--safe-b)) calc(14px + var(--safe-l)); }
+  .hud__health { min-width: 0; }
+  .hud__ammo { font-size: 24px; }
+  .hud__hint { bottom: calc(126px + var(--safe-b)); }
+  .hud__menu-title { font-size: 28px; }
+  .hud__keys { grid-template-columns: 1fr 1fr 1fr; }
+  .hud__boss { bottom: calc(84px + var(--safe-b)); }
+}
+
+/* Portrait / narrow: the footer collapses to two rows and the menu card to one
+   column, with keys and settings promoted to their own full-width rows. */
+@media (max-width: 820px) {
+  .hud__menu-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "best"
+      "records"
+      "ach"
+      "modes"
+      "wagers"
+      "seed"
+      "keys"
+      "settings"
+      "deploy";
+    width: min(560px, calc(100vw - 28px));
+    padding: 22px 24px 20px;
+  }
+  /* A short ledger keeps DEPLOY reachable on a phone without a long scroll. */
+  .hud__ach-list { max-height: 124px; }
+}
+
 @media (max-width: 640px) {
-  .hud__abilities { gap: 6px; margin-right: 10px; }
-  .hud__ability { min-width: 62px; padding: 5px 7px 6px; }
-  .hud__ability-top { font-size: 10px; letter-spacing: 0.1em; }
-  .hud__ability-top b { font-size: 12px; }
-  /* The boss bar gives up width before it gives up legibility. */
-  .hud__boss { width: min(420px, 88vw); padding: 6px 9px 7px; bottom: calc(28px + var(--safe-b)); }
-  .hud__boss-head { font-size: 11px; letter-spacing: 0.14em; }
-  .hud__toasts { width: min(240px, 74vw); top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
-  .hud__toast-name { font-size: 15px; }
-  .hud__toast-desc { font-size: 12px; }
-  .hud__seed-input { width: 108px; font-size: 14px; }
-  .hud__ach-list { max-height: 170px; }
-  .hud__death-block { grid-template-columns: 1fr; gap: 7px; }
-  .hud__death-chip { font-size: 10px; }
-  .hud__death-seed { gap: 7px; }
+  .hud__top {
+    margin: calc(8px + var(--safe-t)) 0 0 calc(10px + var(--safe-l));
+    max-width: calc(100vw - 118px - var(--safe-l) - var(--safe-r));
+    gap: 5px;
+  }
+  .hud__chip { font-size: 12px; padding: 4px 8px 4px 7px; }
+  .hud__radar { width: 92px; height: 92px; margin: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) 0 0; }
+  .hud__enemies { margin: calc(46px + var(--safe-t)) 0 0 calc(10px + var(--safe-l)); }
+  .hud__bottom {
+    margin: 0 calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "abilities abilities"
+      "integrity weapon";
+    gap: 8px 12px;
+  }
+  .hud__abilities { justify-self: start; }
+  .hud__weapon { min-width: 0; }
+  .hud__ammo { font-size: 26px; }
+  .hud__weapon-row { font-size: 10px; gap: 6px; }
+  .hud__slots { gap: 4px; margin-bottom: 5px; }
+  .hud__slot { width: 28px; height: 22px; }
+  .hud__slot .ic { width: 15px; height: 15px; }
+  .hud__slot--edge .ic { width: 12px; height: 12px; }
+  .hud__health-bar { height: 10px; }
+  .hud__health-num { font-size: 22px; }
+  .hud__banner-title { font-size: 30px; }
+  .hud__seed-row { grid-template-columns: 1fr 1fr; }
+  .hud__seed-input { grid-column: 1 / -1; }
+  /* Keycaps describe a keyboard: useless on a phone, and they cost a screen of
+     scroll. Touch players get the on-screen controls instead. */
+  .hud__keys { display: none; }
+  .hud__ach-list { max-height: 108px; }
+  /* Compact the whole card so DEPLOY stays above the fold on a 390x844 phone. */
+  .hud__menu-card { gap: 9px 16px; padding: 18px 18px 16px; }
+  .hud__menu-title { font-size: 30px; }
+  .hud__menu-title::after { margin-top: 8px; }
+  .hud__menu-best { font-size: 12px; }
+  .hud__modes { gap: 5px; }
+  .hud__mode-chip { padding: 6px 10px; font-size: 12px; }
+  .hud__challenge { padding: 6px 9px; font-size: 11px; }
+  .hud__challenges { padding-top: 9px; }
+  .hud__settings { gap: 7px; }
+  .hud__settings label .ic { width: 16px; height: 16px; }
+  .hud__btn { padding: 11px 20px; font-size: 13px; letter-spacing: 0.16em; }
+  .hud__btn--seed { font-size: 12px; padding: 10px 12px; letter-spacing: 0.1em; }
+  .hud__seed-row { gap: 6px; }
+  .hud__kiosk-row { gap: 10px; padding: 10px 12px; }
+  .hud__draft-panel { padding: 18px 16px 16px; }
+  .hud__draft-title { font-size: 26px; letter-spacing: 0.22em; }
+  .hud__draft-cards { grid-template-columns: 1fr; gap: 10px; margin-top: 14px; }
+  .hud__draft-card { min-height: 0; }
+  .hud__kiosk-title { font-size: 24px; letter-spacing: 0.22em; }
+  .hud__kiosk-salvage b { font-size: 26px; }
 }
 
-/* ---------- Reduced motion: the toast appears and disappears, it does not move ---------- */
+/* Coarse pointers: bigger tap targets, and hover styles neutralised because
+   they would stick after a tap. */
+@media (pointer: coarse) {
+  .hud__btn { padding: 15px 28px; }
+  .hud__mode-chip { padding: 10px 14px; }
+  .hud__challenge { padding: 9px 13px; }
+  .hud__settings input[type='range'] { height: 30px; }
+  .hud__slot { width: 34px; height: 30px; }
+  .hud__btn:hover { transform: none; filter: none; }
+  .hud__mode-chip:hover { border-color: var(--line); color: var(--text-dim); }
+  .hud__draft-card:hover { transform: none; }
+}
+
+/* Landscape phone: the card is taller than the viewport, so drop the optional
+   blocks and compact the rest. */
+@media (max-height: 430px) and (orientation: landscape) {
+  .hud__menu-card { padding: 12px 18px; gap: 8px; margin: 6px 0; }
+  .hud__menu-title { font-size: 22px; }
+  .hud__keys { display: none; }
+  .hud__ach { display: none; }
+  .hud__settings { grid-auto-flow: column; gap: 12px; }
+  .hud__settings input[type='range'] { width: 100px; }
+  .hud__modes { gap: 5px; }
+  .hud__mode-chip { padding: 5px 8px; font-size: 11px; }
+  .hud__btn { padding: 9px 18px; font-size: 13px; }
+  .hud__boss { bottom: calc(70px + var(--safe-b)); }
+}
+
+/* ==========================================================================
+   Reduced motion: every state change is already carried by color and layout,
+   so movement can be removed without losing information.
+   ========================================================================== */
 @media (prefers-reduced-motion: reduce) {
-  .hud__toast { transition: none; transform: none; }
-  .hud__toast.in { transform: none; }
-  .hud__toast.out { transform: none; }
-  .hud__shield-fill { transition: none; }
-  .hud__ability-bar i { transition: none; }
-  .hud__boss-fill { transition: none; }
+  .hud__vignette.lowhp::before { animation: none; opacity: 0.5; }
+  .hud__vignette.hit::after { animation: none; opacity: 0; }
+  .hud__ammo.empty { animation: none; }
+  .hud__record { animation: none; }
+  .hud__record .ic { animation: none; }
+  .hud__ammo.reloading .hud__reload-spin { animation: none; }
+  .hud__hint--danger .ic { animation: none; }
+  .hud__pop.show { animation: popfade 0.8s linear forwards; }
+  @keyframes popfade { to { opacity: 0; } }
+  .hud__btn:hover { transform: none; }
+  .hud__draft-card:hover { transform: none; }
+  .hud__banner { transition: none; }
+  .hud__draft, .hud__draft.hidden,
+  .hud__kiosk, .hud__kiosk.hidden,
+  .hud__draft-panel, .hud__draft-card, .hud__kiosk-row { transition: none; }
+  .hud__menu, .hud__pause, .hud__death,
+  .hud__menu.hidden, .hud__pause.hidden, .hud__death.hidden { transition: none; }
+  .hud__toast { transition: none; }
+  @keyframes hit { 0% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes hithead { 0% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes hitkill { 0% { opacity: 1; } 60% { opacity: 0.9; } 100% { opacity: 0; } }
+  @keyframes dmgarc { 0% { opacity: 1; } 100% { opacity: 0; } }
 }
-
-/* ---------- Touch mode: the thumbs own the bottom corners ---------- */
-/* The bottom bar lifts by 22px under touch, so the ability chips and the boss
-   bar lift with it instead of landing under a thumb. */
-.hud--touch .hud__abilities { margin-bottom: 30px; }
-.hud--touch .hud__boss { bottom: calc(56px + var(--safe-b)); }
-
-/* ---------- Gameplay HUD hides under full-screen overlays ---------- */
-.hud__abilities, .hud__boss { transition: opacity 0.2s; }
-.hud--overlay .hud__abilities,
-.hud--overlay .hud__boss { opacity: 0; }

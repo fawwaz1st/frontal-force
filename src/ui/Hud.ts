@@ -216,6 +216,8 @@ export interface SettingsPatch {
 }
 
 const RADAR_SIZE = 144;
+/** Radar redraw period in seconds. 20 Hz reads as continuous motion. */
+const RADAR_INTERVAL = 0.05;
 
 export class Hud {
   public readonly root: HTMLDivElement;
@@ -242,6 +244,9 @@ export class Hud {
   private readonly ammoResv: HTMLElement;
   private readonly reloadBar: HTMLElement;
   private readonly slots: HTMLElement[] = [];
+  /** Last icon index written per slot, so the innerHTML rebuild is skipped
+   *  while the window is unchanged. -1 means "never written". */
+  private readonly slotIconCache: number[] = [-1, -1, -1];
   private readonly weaponNameEl: HTMLElement;
   private readonly waveBanner: HTMLElement;
   private readonly bannerTitle: HTMLElement;
@@ -296,6 +301,8 @@ export class Hud {
   private bannerTimer = 0;
   private dmgCursor = 0;
   private radarVisible = false;
+  /** Seconds since the last radar redraw (throttle, see RADAR_INTERVAL). */
+  private radarAccum = 0;
   private readonly txtCache = new Map<string, string>();
 
   /** Ability chips (bottom bar). */
@@ -441,10 +448,11 @@ export class Hud {
     this.root.className = 'hud';
     this.root.innerHTML = `
       <div class="hud__vignette" data-vignette></div>
+      <div class="hud__frame" data-frame></div>
       <div class="hud__dmg-container" data-dmg-container></div>
       <div class="hud__crosshair" data-crosshair>
-        <span class="ch ch--t"></span><span class="ch ch--b"></span>
-        <span class="ch ch--l"></span><span class="ch ch--r"></span>
+        <span class="ch ch--tl"></span><span class="ch ch--tr"></span>
+        <span class="ch ch--bl"></span><span class="ch ch--br"></span>
         <span class="ch ch--dot"></span>
       </div>
       <div class="hud__hitmarker" data-hitmarker></div>
@@ -996,7 +1004,13 @@ export class Hud {
       const total = this.slotIcons.length;
       const offset = i - 1;
       const idx = ((s.weaponIndex + offset) % total + total) % total;
-      slot.innerHTML = icon(this.slotIcons[idx] ?? 'rifle');
+      // innerHTML is a full parse; only pay it when the window actually
+      // changed. Before this cache the loop re-parsed three icons 60 times a
+      // second for a value that changes on a weapon swap.
+      if (this.slotIconCache[i] !== idx) {
+        this.slotIconCache[i] = idx;
+        slot.innerHTML = icon(this.slotIcons[idx] ?? 'rifle');
+      }
       slot.classList.toggle('active', i === 1);
       slot.classList.toggle('hud__slot--edge', i !== 1);
     }
@@ -1029,11 +1043,19 @@ export class Hud {
 
     this.updateHint(s);
     if (s.inGame) {
-      this.drawRadar(s);
+      // Radar throttle: the sweep and the blips move far slower than 60 Hz,
+      // and a canvas redraw is a full rasterisation, so 20 Hz is visually
+      // identical and cuts the work to a third.
+      this.radarAccum += dt;
+      if (this.radarAccum >= RADAR_INTERVAL) {
+        this.radarAccum = 0;
+        this.drawRadar(s);
+      }
       this.radarVisible = true;
     } else if (this.radarVisible) {
       this.radarCtx?.clearRect(0, 0, RADAR_SIZE, RADAR_SIZE);
       this.radarVisible = false;
+      this.radarAccum = 0;
     }
 
     // Dynamic crosshair spread — the gap is the real cone projected to pixels.
