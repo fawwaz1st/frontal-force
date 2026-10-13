@@ -113,6 +113,11 @@ export interface RadarBlip {
   z: number;
   color: number;
   colorCss: string;
+  /**
+   * Set only for a loot drop. Enemy blips leave it undefined, which is what
+   * lets the radar draw drops as a distinct shape rather than another dot.
+   */
+  drop?: 'health' | 'ammo' | 'salvage';
 }
 
 export interface HudState {
@@ -1738,6 +1743,20 @@ export class Hud {
       const px = blip.x * (r - 7);
       const py = -blip.z * (r - 7);
       ctx.fillStyle = blip.colorCss;
+      if (blip.drop) {
+        // Loot is a diamond, not a dot. The radar's dots are all threats, so a
+        // drop drawn as a dot would read as "something is there" and send the
+        // player looking for a fight that is not happening. Shape carries the
+        // category, colour carries the kind.
+        ctx.beginPath();
+        ctx.moveTo(px, py - 4.2);
+        ctx.lineTo(px + 4.2, py);
+        ctx.lineTo(px, py + 4.2);
+        ctx.lineTo(px - 4.2, py);
+        ctx.closePath();
+        ctx.fill();
+        continue;
+      }
       ctx.beginPath();
       ctx.arc(px, py, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -2168,12 +2187,18 @@ export class Hud {
     if (m) this.pauseModeEl.innerHTML = `${icon(m.icon)}<span>${m.label}</span>`;
   }
 
-  /** Floating +points at the crosshair on a kill — number only, fades up. */
-  public popScore(amount: number): void {
+  /**
+ * Floating +points at the crosshair. `salvage` marks a currency pickup so the
+ * pop reads "+12 SAL" rather than the bare number a kill score uses. Salvage
+ * and score both surface as a float-up at the crosshair, so without the tag a
+ * 12-salvage drop looks exactly like a 12-point hit.
+ */
+  public popScore(amount: number, salvage = false): void {
     const el = this.pops[this.popCursor];
     this.popCursor = (this.popCursor + 1) % this.pops.length;
     if (!el) return;
-    el.textContent = `+${amount}`;
+    el.textContent = salvage ? `+${amount} SAL` : `+${amount}`;
+    el.classList.toggle('is-salvage', salvage);
     el.style.setProperty('--pop-x', `${Math.round(Math.random() * 44 - 22)}px`);
     el.classList.remove('show');
     void el.offsetWidth; // restart animation

@@ -45,6 +45,8 @@ Elites add 35 percentage points to the salvage and ammo rolls and half that to h
 
 A drop scatters where the body fell, blinks out over its last three seconds, and expires after 22 s. That is what separates it from the arena's fixed **stations**, which are destinations that never expire and respawn 14 s after being taken. A drop is a reward that pulls you forward; a station is a place you decide to go.
 
+A drop you cannot use right now stays on the ground. Walking over a health drop at full HP does not consume it, because destroying a reward that grants nothing is a punishment for winning the fight that produced it, and it is invisible. Loot also shows on the radar as a **diamond** (the dots are threats), so you can see what is worth detouring for.
+
 ## The arena
 
 The play space is 74 x 74 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so the old 94 m box was mostly dead ground that only ever produced long walks.

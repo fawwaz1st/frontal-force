@@ -705,6 +705,12 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 .hud__pop.show { animation: poprise 0.8s ease-out forwards; }
+/* Salvage is currency, not score: gold, and it carries the SAL tag so a
+   12-salvage drop can never be misread as a 12-point hit. */
+.hud__pop.is-salvage {
+  color: var(--gold);
+  text-shadow: 0 0 12px rgba(255, 215, 107, 0.45);
+}
 @keyframes poprise {
   0% { opacity: 1; transform: translate(calc(-50% + var(--pop-x, 0px)), -50%) scale(1.08); }
   100% { opacity: 0; transform: translate(calc(-50% + var(--pop-x, 0px)), calc(-50% - 46px)) scale(0.94); }

@@ -1442,12 +1442,21 @@ export class Game {
       }
     }
 
-    const collected = this.pickups.tryCollect(this.player.position);
+    // A pickup the player cannot benefit from is left on the ground rather
+    // than consumed. Destroying a health drop at full HP punishes the kill
+    // that produced it, invisibly: the item simply ceases to exist as you
+    // touch it, and nothing about that reads as intentional. Salvage is
+    // currency and is always wanted.
+    const collected = this.pickups.tryCollect(this.player.position, (kind) => {
+      if (kind === 'salvage') return true;
+      if (kind === 'health') return this.player.health < this.player.maxHealth - 0.5;
+      return this.weapons.needsAmmo();
+    });
     if (collected === 'health') this.player.heal(HEALTH_PICKUP);
     if (collected === 'ammo') this.weapons.refillReserve();
     if (collected === 'salvage') {
       this.run.earnSalvage(SALVAGE_PICKUP);
-      this.hud.popScore(SALVAGE_PICKUP);
+      this.hud.popScore(SALVAGE_PICKUP, true);
     }
 
     this.audio.heartbeat(this.player.health / this.player.maxHealth, dt);
@@ -1901,6 +1910,29 @@ export class Game {
       blip.z = clamp(rz / range, -1, 1);
       blip.color = enemy.def.color;
       blip.colorCss = this.colorCssOf(enemy.def.color);
+      // Clear the drop tag: this slot may have held a drop on the previous
+      // sweep, and a stale tag would draw an enemy as loot.
+      delete blip.drop;
+      count += 1;
+    });
+    // Loot drops, after the enemies so a crowded wave never starves the radar
+    // of the thing the player is actually looking for. Drops are temporary and
+    // their position is unknowable without being told, which is exactly what a
+    // radar is for; the arena's permanent stations are deliberately excluded,
+    // because a fixture the player has learned once is noise on every sweep.
+    this.pickups.forEachDrop((kind, at) => {
+      if (count >= this.radarBlips.length) return;
+      const blip = this.radarBlips[count];
+      if (!blip) return;
+      const dx = at.x - playerX;
+      const dz = at.z - playerZ;
+      const rx = dx * cy - dz * sy;
+      const rz = -(dx * sy + dz * cy);
+      blip.x = clamp(rx / 46, -1, 1);
+      blip.z = clamp(rz / 46, -1, 1);
+      blip.drop = kind;
+      blip.color = kind === 'health' ? 0x2aff8a : kind === 'ammo' ? 0xffc44d : 0xffd76b;
+      blip.colorCss = this.colorCssOf(blip.color);
       count += 1;
     });
     this.radarCount = count;

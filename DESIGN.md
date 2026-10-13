@@ -355,6 +355,10 @@ Loot is rolled from the **run seed**, never `Math.random`. A seed code promises 
 
 A collected drop is **removed**, not parked invisible: the drop list stays a live count of what is actually on the ground. Shared geometry and materials are never disposed per pickup, because the other pickups are using them.
 
+**A reward the player cannot use is left on the ground.** Walking over a health drop at full HP does not consume it. Destroying a reward that grants nothing is a punishment for winning the fight that produced it, and it is invisible: the item simply ceases to exist as you touch it, and nothing about that reads as intentional. The gate is a predicate passed in by `Game`, because only the orchestrator knows the player's health and the weapon reserves. Stations obey the same rule, which is strictly better for them too: a station touched at full health stays standing, ready for the scratch seconds later, instead of vanishing into its respawn timer.
+
+**Loot is on the radar, as a diamond.** The radar's dots are all threats, so a drop drawn as a dot reads as "something is there" and sends the player looking for a fight that is not happening. Shape carries the category, colour carries the kind. Drops are appended after the enemies so a crowded wave cannot starve the pool of the thing the player is actually looking for, and the arena's permanent stations are excluded because a fixture the player has learned once is noise on every sweep.
+
 ## 11. Performance Rules
 
 - **Compositor-only animation.** Damage flash, low-health pulse, hitmarkers, pops and toasts animate opacity or transform.

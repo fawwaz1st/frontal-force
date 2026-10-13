@@ -94,6 +94,8 @@ check('Waves.ts still contains the endless formulas + constants', () => {
 
 // ---------- combo tiers (src/game/Game.ts) ----------
 const gameSrc = readSrc('game/Game.ts');
+const pickupSrc = readSrc('world/Pickups.ts');
+const hudSrc = readSrc('ui/Hud.ts');
 const comboMult = (streak: number): number => Math.min(1 + Math.floor(streak / 2), 8);
 
 check('combo: streak 0 → 1', () => assert.equal(comboMult(0), 1));
@@ -1131,6 +1133,57 @@ check('drops: salvage has its own sound, distinct from supply', () => {
   // "Restocked" and "paid" are different pieces of news.
   assert.match(audioSrc, /public pickup\(kind: 'health' \| 'ammo' \| 'salvage'\): void \{/);
   assert.match(audioSrc, /Currency: a bright metallic ping, deliberately unlike the supply/);
+});
+check('pickups: a reward the player cannot use is left on the ground', () => {
+  // The bug: walking over a health drop at full HP destroyed it and granted
+  // nothing. That is a punishment for winning the fight that produced the drop,
+  // and it is invisible — the item simply ceases to exist as you touch it.
+  // Collection is now gated on real need, so the drop survives for the scratch
+  // seconds later. Stations obey the same rule, which is strictly better for
+  // them too: a station touched at full health stays standing instead of
+  // vanishing into its respawn timer.
+  assert.match(pickupSrc, /public tryCollect\(\n\s+playerPos: THREE\.Vector3,\n\s+usable: \(kind: PickupKind\) => boolean,\n\s+\): PickupKind \| null \{/);
+  assert.match(pickupSrc, /if \(!usable\(pickup\.kind\)\) continue;/);
+  // The gate must be a caller decision, not a hardcoded rule inside Pickups:
+  // only Game knows the player's health and the weapon reserves.
+  assert.match(gameSrc, /this\.pickups\.tryCollect\(this\.player\.position, \(kind\) => \{/);
+  assert.match(gameSrc, /if \(kind === 'health'\) return this\.player\.health < this\.player\.maxHealth - 0\.5;/);
+  assert.match(gameSrc, /return this\.weapons\.needsAmmo\(\);/);
+  // Salvage is currency and is always wanted.
+  assert.match(gameSrc, /if \(kind === 'salvage'\) return true;/);
+});
+check('pickups: the ammo gate reads the real reserve, not the magazine', () => {
+  // A full magazine with a half-empty reserve still needs ammo, so the gate
+  // must look at the reserve cap rather than the current mag.
+  assert.match(weaponSrc, /public needsAmmo\(\): boolean \{\n\s+for \(const w of this\.states\) \{\n\s+if \(w\.reserve < w\.def\.reserve\) return true;/);
+});
+check('radar: loot is drawn as a diamond, not as another threat dot', () => {
+  // The radar's dots are all threats. A drop drawn as a dot reads as "something
+  // is there" and sends the player looking for a fight that is not happening.
+  // Shape carries the category, colour carries the kind.
+  assert.match(hudSrc, /if \(blip\.drop\) \{/);
+  assert.match(hudSrc, /ctx\.moveTo\(px, py - 4\.2\);/);
+  assert.match(hudSrc, /ctx\.lineTo\(px - 4\.2, py\);/);
+});
+check('radar: drops are emitted after enemies so a crowd cannot starve them', () => {
+  // A 24-enemy wave fills the blip pool. Loot is what the player is actually
+  // looking for, so it is appended after the enemies rather than competing with
+  // them for the same slots.
+  assert.match(gameSrc, /this\.pickups\.forEachDrop\(\(kind, at\) => \{/);
+  assert.match(gameSrc, /blip\.drop = kind;/);
+  // A stale tag would draw an enemy as loot, so the enemy path must clear it.
+  assert.match(gameSrc, /delete blip\.drop;/);
+});
+check('radar: stations are excluded, because a learned fixture is noise', () => {
+  assert.match(pickupSrc, /if \(!pickup\.active \|\| pickup\.station\) continue;/);
+});
+check('hud: a salvage pop says SAL, so it cannot read as a kill score', () => {
+  // Salvage and score both float up at the crosshair. Without the tag a
+  // 12-salvage drop looks exactly like a 12-point hit.
+  assert.match(hudSrc, /public popScore\(amount: number, salvage = false\): void \{/);
+  assert.match(hudSrc, /el\.textContent = salvage \? `\+\$\{amount\} SAL` : `\+\$\{amount\}`;/);
+  assert.match(hudSrc, /el\.classList\.toggle\('is-salvage', salvage\);/);
+  assert.match(gameSrc, /this\.hud\.popScore\(SALVAGE_PICKUP, true\);/);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

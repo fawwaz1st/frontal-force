@@ -161,14 +161,30 @@ export class Pickups {
     });
   }
 
-  /** Returns the kind collected, or null. */
-  public tryCollect(playerPos: THREE.Vector3): PickupKind | null {
+  /**
+   * Collect the nearest pickup the player can actually USE.
+   *
+   * `usable` gates health and ammo on real need: a health drop walked over at
+   * full HP stays where it is instead of being destroyed. Consuming a reward
+   * that grants nothing is a punishment for winning the fight that produced
+   * it, and it is invisible — the item simply ceases to exist as you touch it.
+   * Salvage is currency and is always usable.
+   *
+   * Stations obey the same rule, which is strictly better for them too: a
+   * station touched at full health stays standing, ready for the scratch
+   * seconds later, instead of vanishing into its respawn timer.
+   */
+  public tryCollect(
+    playerPos: THREE.Vector3,
+    usable: (kind: PickupKind) => boolean,
+  ): PickupKind | null {
     for (const pickup of this.pickups) {
       if (!pickup.active) continue;
       const dx = pickup.mesh.position.x - playerPos.x;
       const dz = pickup.mesh.position.z - playerPos.z;
       const dy = pickup.mesh.position.y - (playerPos.y + 1);
       if (dx * dx + dz * dz < 1.4 * 1.4 && Math.abs(dy) < 2) {
+        if (!usable(pickup.kind)) continue;
         pickup.active = false;
         pickup.mesh.visible = false;
         pickup.respawnT = RESPAWN_TIME;
@@ -217,6 +233,20 @@ export class Pickups {
   /** Live drop count, for diagnostics. */
   public get dropCount(): number {
     return this.pickups.reduce((n, p) => n + (p.station ? 0 : 1), 0);
+  }
+
+  /**
+   * Every ACTIVE drop, for the radar. Stations are excluded on purpose: they
+   * are permanent fixtures the player learns once, while a drop is a temporary
+   * object whose position the player cannot know without being told. The
+   * callback receives the kind and the world position; the position is the
+   * mesh's own vector and must not be retained.
+   */
+  public forEachDrop(fn: (kind: PickupKind, at: THREE.Vector3) => void): void {
+    for (const pickup of this.pickups) {
+      if (!pickup.active || pickup.station) continue;
+      fn(pickup.kind, pickup.mesh.position);
+    }
   }
 
   private removeAt(index: number): void {

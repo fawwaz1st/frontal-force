@@ -303,6 +303,19 @@ export class WeaponController {
     }
   }
 
+  /**
+   * True when an ammo pickup would actually give the player something: any
+   * equipped weapon still has headroom under its reserve cap. Used to decide
+   * whether a pickup is worth consuming, so a gun already at full reserve does
+   * not silently eat an ammo drop.
+   */
+  public needsAmmo(): boolean {
+    for (const w of this.states) {
+      if (w.reserve < w.def.reserve) return true;
+    }
+    return false;
+  }
+
   /** Every weapon state, for the kiosk's full-rearm purchase. */
   public allStates(): readonly WeaponState[] {
     return this.states;

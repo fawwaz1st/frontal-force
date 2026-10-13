@@ -30,7 +30,7 @@ A single-arena wave-survival FPS that runs instantly in the browser with zero ex
 
 ## Arsenal
 
-Ten weapons, each with a full stat block (`src/combat/weapons.ts`). The lineup spans auto rifles and SMGs through DMR/LMG/burst precision to the Siegebreaker launcher, whose 4 m splash falls off linearly to a 35 % floor and whose 3.2 m self-damage radius is hard-capped at 35 damage. The Trident Burst fires 3 sequential rounds (~288 rpm). The HUD shows a previous/current/next window, the weapon's name, and an `n/10` index instead of an icon wall.
+Ten weapons, each with a full stat block (`src/combat/weapons.ts`). The lineup spans auto rifles and SMGs through DMR/LMG/burst precision to the Siegebreaker launcher, whose 4 m splash falls off linearly to a 35 % floor and whose 3.2 m self-damage radius is hard-capped at 35 damage. The Trident Burst fires 3 sequential rounds (~288 rpm). A run carries three of the ten, chosen once in the loadout screen; the HUD shows all three equipped slots plus an `n/3` index instead of an icon wall.
 
 ## Squad
 
