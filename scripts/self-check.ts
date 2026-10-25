@@ -1186,5 +1186,64 @@ check('hud: a salvage pop says SAL, so it cannot read as a kill score', () => {
   assert.match(gameSrc, /this\.hud\.popScore\(SALVAGE_PICKUP, true\);/);
 });
 
+// ---------- docs stay honest (AGENTS.md, README.md, PRODUCT.md) ----------
+// The docs carry concrete numeric claims and file paths. Six of them drifted
+// silently (escort paths, the leash, corpse life, button count, test count and
+// the palette history) and nothing failed, because the suite only ever read
+// src/. These tests read the docs, so the two can no longer disagree.
+const readDoc = (rel: string): string =>
+  readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), 'utf8')
+    .replace(/\r\n/g, '\n');
+const agentsSrc = readDoc('AGENTS.md');
+const readmeSrc = readDoc('README.md');
+const productSrc = readDoc('PRODUCT.md');
+const touchSrc = readSrc('input/TouchControls.ts');
+
+check('docs: the documented ally/tactics paths exist', () => {
+  // AGENTS.md named allies/Ally.ts and game/Tactics.ts; both live in ai/.
+  assert.match(agentsSrc, /ai\/Ally\.ts/);
+  assert.match(agentsSrc, /ai\/Tactics\.ts/);
+  assert.ok(!agentsSrc.includes('allies/Ally.ts'), 'AGENTS.md still points at allies/Ally.ts');
+  assert.ok(!agentsSrc.includes('game/Tactics.ts'), 'AGENTS.md still points at game/Tactics.ts');
+});
+check('docs: no retired escort constant is documented as live', () => {
+  for (const gone of ['LEASH_SOFT', 'LEASH_HARD', 'ANCHOR_REFRESH_DISTANCE']) {
+    assert.ok(!agentsSrc.includes(gone), `AGENTS.md still documents ${gone}`);
+  }
+});
+check('docs: the documented corpse life is CORPSE_LIFE', () => {
+  const life = literal(enemiesSrc, 'CORPSE_LIFE');
+  assert.equal(life, 6);
+  // The doc must name the constant and its value, not a remembered figure.
+  assert.ok(agentsSrc.includes('CORPSE_LIFE'), 'AGENTS.md no longer names CORPSE_LIFE');
+  assert.ok(agentsSrc.includes(life + ' s'), `AGENTS.md does not state ${life} s for corpses`);
+});
+check('docs: every ButtonId is placed, and the docs state the real count', () => {
+  const ids = /type ButtonId =([\s\S]*?);/.exec(touchSrc);
+  assert.ok(ids, 'ButtonId union not found');
+  const declared = [...ids[1]!.matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
+  const placed = [...touchSrc.matchAll(/add\('([a-z]+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(placed, declared, 'a ButtonId is declared but never placed, or vice versa');
+  assert.equal(placed.length, 10);
+  assert.ok(!/7 buttons/.test(agentsSrc), 'AGENTS.md still says 7 touch buttons');
+  assert.ok(new RegExp(placed.length + ' buttons').test(agentsSrc),
+    `AGENTS.md does not state the touch button count (${placed.length})`);
+});
+check('docs: README states the real self-check count', () => {
+  // The README said 157 while the suite ran 163, because adding tests never
+  // updated the doc. Failing here forces the two to stay in step.
+  const here = readFileSync(fileURLToPath(new URL(import.meta.url)), 'utf8');
+  const actual = [...here.matchAll(/^check\('/gm)].length;
+  const m = /# (\d+) logic regression tests/.exec(readmeSrc);
+  assert.ok(m, 'README does not state a self-check count');
+  assert.equal(Number(m?.[1]), actual,
+    `README says ${m?.[1]} but the suite runs ${actual} — update the README line`);
+});
+check('docs: PRODUCT.md does not present the retired palette as current', () => {
+  assert.ok(!productSrc.includes('Replaced by the stencil-crate system'),
+    'PRODUCT.md still calls stencil-crate the replacement for the neon HUD');
+  assert.match(productSrc, /fire-control instrument/i);
+});
+
 console.log(`self-check: ${passed}/${passed + failed} passed`);
 if (failed > 0) process.exitCode = 1;
