@@ -145,15 +145,15 @@ export class FrameTimeGovernor {
     }
     if (this.avg < FrameTimeGovernor.LOW_MS) {
       // Recovery is gated behind a long sustained fast window, so a device
-      // that was only briefly throttled (thermal ramp, another tab) climbs
-      // back instead of being stuck at 25% resolution for the session. The
-      // 5 s gate is what prevents resolution pumping.
-      // Accumulate THIS FRAME's duration. Adding `sinceStep` instead made
-      // fastFor quadratic in elapsed time (a monotonic total summed into
-      // itself on every sample), so the documented 5 s gate opened after ~1 s
-      // and the governor re-applied the pixel ratio every ~1.07 s on a device
-      // that had just been throttled — the exact resolution pumping this gate
-      // exists to prevent.
+      // that was only briefly throttled (thermal ramp, another tab) climbs back
+      // instead of being stuck at 25% resolution for the session. The 5 s gate
+      // is what prevents resolution pumping.
+      //
+      // Accumulate THIS FRAME's duration, not `sinceStep`. Adding the
+      // monotonic `sinceStep` total into itself made fastFor quadratic in
+      // elapsed time, so the gate opened after ~1 s and the governor re-applied
+      // the pixel ratio every ~1.07 s — the very resolution pumping it exists
+      // to prevent.
       this.fastFor += deltaMs / 1000;
       if (this.fastFor < FrameTimeGovernor.RECOVERY_SECONDS) return false;
       if (this.stepIndex === 0) return false;
