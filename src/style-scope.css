@@ -132,6 +132,17 @@
   to { opacity: 1; }
 }
 
+/* Reduced motion: the pulse is the only animated "release now" tell, so it
+ * collapses to the static solid state rather than disappearing. The other
+ * infinite animations are neutralised in style.css's reduced-motion block;
+ * this stylesheet is a separate module, so the ring needs its own rule. */
+@media (prefers-reduced-motion: reduce) {
+  .hud__charge.is-ready .hud__charge-fill {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* ---------- Menu tabs ---------- */
 /*
  * The menu card is a grid with a named area per block, which is what let ten

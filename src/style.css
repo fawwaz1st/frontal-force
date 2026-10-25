@@ -949,6 +949,12 @@ kbd {
   height: 26px;
   display: grid;
   place-items: center;
+  /* The HUD root is pointer-events: none (the 3D scene owns the canvas), so
+   * every interactive descendant must re-enable it — the chips, buttons, mode
+   * chips, draft cards and kiosk rows all do. The slot chips are the touch
+   * weapon selector, and without this they were the one clickable element that
+   * could never be clicked. */
+  pointer-events: auto;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 0;

@@ -28,7 +28,12 @@ interface Casing {
 interface SmokePuff {
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
+  /** Remaining seconds; the growth curve divides by `maxLife`, which used to be
+   *  a hard-coded 0.55 (the small muzzle puff's lifetime) shared by every puff.
+   *  A 2.4-3.2 s smoke-grenade puff then read `1 - life/0.55` as a large
+   *  negative for its whole life, so it rendered inverted and ~2x oversized. */
   life: number;
+  maxLife: number;
 }
 
 const TRACER_POOL = 24;
@@ -111,7 +116,9 @@ export class Effects {
       const mesh = new THREE.Mesh(this.smokeGeo, this.smokeMat);
       mesh.visible = false;
       this.group.add(mesh);
-      this.smokes.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+      // maxLife 0 is a valid pool default (a puff is idle until drawn),
+      // and the growth curve falls back to 0.55 s when it is not set.
+      this.smokes.push({ mesh, vel: new THREE.Vector3(), life: 0, maxLife: 0 });
     }
     for (let i = 0; i < DECAL_POOL; i++) {
       const mesh = new THREE.Mesh(this.decalGeo, this.decalMat);
@@ -235,7 +242,8 @@ export class Effects {
       (Math.random() - 0.5) * 0.4,
     );
     if (dir) s.vel.addScaledVector(dir, 0.7);
-    s.life = 0.55;
+    s.maxLife = 0.55;
+    s.life = s.maxLife;
   }
 
   public ring(point: THREE.Vector3, color: number, grow = 6, maxLife = 0.4): void {
@@ -278,7 +286,8 @@ export class Effects {
         (Math.random() - 0.5) * 0.25,
       );
       // Long life so the cloud persists; the field timer owns the real window.
-      s.life = 2.4 + Math.random() * 0.8;
+      s.maxLife = 2.4 + Math.random() * 0.8;
+      s.life = s.maxLife;
     }
   }
 
@@ -336,7 +345,13 @@ export class Effects {
       }
       s.mesh.position.addScaledVector(s.vel, dt);
       s.vel.y -= 0.4 * dt;
-      s.mesh.scale.setScalar(0.6 + (1 - s.life / 0.55) * 1.3);
+      // Normalise by THIS puff's own lifetime, not a shared constant: a
+      // smoke-grenade puff lives 2.4-3.2 s while a muzzle puff lives 0.55 s,
+      // and dividing the long one by 0.55 made `1 - life/max` a large negative
+      // for its whole life, so the cloud rendered inverted and ~2x oversized
+      // instead of expanding and fading.
+      const span = s.maxLife > 0 ? s.maxLife : 0.55;
+      s.mesh.scale.setScalar(0.6 + (1 - s.life / span) * 1.3);
     }
   }
 

@@ -353,6 +353,10 @@ export class Player {
     this.shield = 0;
     this.slowFraction = 0;
     this.dashRemaining = 0;
+    // The named-damage label reads this straight off the player, so it must not
+    // survive a reset: death IS damage, and without this the next run opened with
+    // the previous run's "EXPLODER" still fading under the crosshair.
+    this.lastDamageSource = '';
     this.grounded = true;
     this.coyoteTimer = COYOTE_TIME;
     this.jumpBuffer = 0;
@@ -401,8 +405,34 @@ export class Player {
     this.recoilResetT = 0;
   }
 
+  /**
+   * Seconds of invulnerability left. Set by `Game` for the dash (and the
+   * melee execute); read here, because this is the single funnel every damage
+   * path (bolts, splash, affix burn, self-blast) passes through.
+   *
+   * It used to live in `Game.invulnT` and was never read anywhere, so the
+   * dash's 0.12 s window, the execute's 0.5 s window and the whole
+   * `ninjaInvincibility` upgrade card were silently no-ops: the timer ran and
+   * the player took full damage.
+   */
+  private invulnT = 0;
+
+  /** Set the invulnerability window; a positive value is maxed with what is left. */
+  public setInvulnerable(seconds: number): void {
+    if (Number.isFinite(seconds) && seconds > this.invulnT) this.invulnT = seconds;
+  }
+
+  /** Clear it (run start / teardown). */
+  public clearInvulnerable(): void {
+    this.invulnT = 0;
+  }
+
   public damage(amount: number, from: THREE.Vector3 | null = null, source = ''): void {
     if (this.dead) return;
+    // Invulnerability swallows the hit entirely: no shield drain, no shake,
+    // no damage-arc. A hit that is already intended to miss must not spend
+    // the shield or reset the combo.
+    if (this.invulnT > 0) return;
     // Challenge wager first: the multiplier is part of the contract the player
     // signed up for, so it applies before armor and the shield.
     const incoming = amount * this.incomingDamageMul;
@@ -421,6 +451,11 @@ export class Player {
     this.addShake(Math.min(0.5, incoming * 0.03));
     this.onDamaged?.(from);
     if (this.health <= 0) this.dead = true;
+  }
+
+  /** Tick the invulnerability window. Called by `Game` inside the fixed step. */
+  public tickInvulnerable(dt: number): void {
+    if (this.invulnT > 0) this.invulnT = Math.max(0, this.invulnT - dt);
   }
 
   public heal(amount: number): void {

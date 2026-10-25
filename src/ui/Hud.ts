@@ -320,9 +320,13 @@ export class Hud {
   private readonly ammoResv: HTMLElement;
   private readonly reloadBar: HTMLElement;
   private readonly slots: HTMLElement[] = [];
-  /** Last icon index written per slot, so the innerHTML rebuild is skipped
-   *  while the window is unchanged. -1 means "never written". */
-  private readonly slotIconCache: number[] = [];
+  /** Last weapon id whose icon was drawn per slot, so the innerHTML rebuild
+   *  is skipped while the slot still shows that weapon. Keyed by weapon IDENTITY,
+   *  not by slot position: with a fixed-size loadout the index `i % total` is a
+   *  constant, so an index cache never detects a kit change and the ring keeps
+   *  drawing the first loadout's icons for the rest of the session. -1 means
+   *  "never written". */
+  private readonly slotIconCache: (string | number)[] = [];
   private readonly weaponNameEl: HTMLElement;
   private readonly waveBanner: HTMLElement;
   private readonly bannerTitle: HTMLElement;
@@ -1181,9 +1185,10 @@ export class Hud {
       slot.hidden = !present;
       if (!present) continue;
       const idx = i % total;
-      if (this.slotIconCache[i] !== idx) {
-        this.slotIconCache[i] = idx;
-        slot.innerHTML = icon(WEAPON_ICON[ids[idx] ?? ''] ?? 'rifle');
+      const iconId = WEAPON_ICON[ids[idx] ?? ''] ?? 'rifle';
+      if (this.slotIconCache[i] !== iconId) {
+        this.slotIconCache[i] = iconId;
+        slot.innerHTML = icon(iconId);
       }
       slot.classList.toggle('active', i === s.weaponIndex);
       slot.classList.remove('hud__slot--edge');

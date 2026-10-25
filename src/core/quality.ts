@@ -148,7 +148,13 @@ export class FrameTimeGovernor {
       // that was only briefly throttled (thermal ramp, another tab) climbs
       // back instead of being stuck at 25% resolution for the session. The
       // 5 s gate is what prevents resolution pumping.
-      this.fastFor += this.sinceStep;
+      // Accumulate THIS FRAME's duration. Adding `sinceStep` instead made
+      // fastFor quadratic in elapsed time (a monotonic total summed into
+      // itself on every sample), so the documented 5 s gate opened after ~1 s
+      // and the governor re-applied the pixel ratio every ~1.07 s on a device
+      // that had just been throttled — the exact resolution pumping this gate
+      // exists to prevent.
+      this.fastFor += deltaMs / 1000;
       if (this.fastFor < FrameTimeGovernor.RECOVERY_SECONDS) return false;
       if (this.stepIndex === 0) return false;
       this.stepIndex -= 1;

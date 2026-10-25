@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { clamp, damp, dampAngle } from '../src/core/math.ts';
+import { codeToSeed, seedToCode } from '../src/core/rng.ts';
 import {
   CHALLENGES,
   CHALLENGE_IDS,
@@ -575,7 +576,18 @@ check('ai agility: taking a hit starts a dodge', () => {
 check('ai agility: a dodge is lateral to the shot line', () => {
   // The side is chosen by which side of the shot line the agent already holds,
   // so a dodge never crosses the line (which would read as running into fire).
-  assert.match(enemiesSrc, /enemy\.dodgeSide = -shotZ \* ownX \+ shotX \* ownZ >= 0 \? 1 : -1;/);
+  //
+  // The `force` case is the real test: without a force vector the impact point
+  // IS the agent, so `own` and `shot` are antiparallel by construction and the
+  // cross product is identically zero — which pinned every splash, burn,
+  // grenade and ally-fire dodge to the same side. The fallback must therefore
+  // come from somewhere other than that zero.
+  assert.match(
+    enemiesSrc,
+    /enemy\.dodgeSide = force\s*\?\s*\(-shotZ \* ownX \+ shotX \* ownZ >= 0 \? 1 : -1\)\s*:\s*\(Math\.sin\(enemy\.strafeSeed\) >= 0 \? 1 : -1\);/,
+  );
+  assert.ok(!/enemy\.dodgeSide = -shotZ/.test(enemiesSrc),
+    'the dodge side must be gated on `force`; an unconditional cross product is always 0');
 });
 check('ai agility: a committed burst owns movement outright', () => {
   assert.match(enemiesSrc, /const burst = this\.isBursting\(enemy\) \? this\.burstMove\(enemy, toTarget\) : null;/);
@@ -1243,6 +1255,182 @@ check('docs: PRODUCT.md does not present the retired palette as current', () => 
   assert.ok(!productSrc.includes('Replaced by the stencil-crate system'),
     'PRODUCT.md still calls stencil-crate the replacement for the neon HUD');
   assert.match(productSrc, /fire-control instrument/i);
+});
+
+// ---------- defects fixed 2026-10-25 (regression locks) ----------
+const fxSrc = readSrc('render/Effects.ts');
+const hazSrc = readSrc('world/Hazards.ts');
+const cssSrc = readSrc('style.css');
+const cssScopeSrc = readSrc('style-scope.css');
+
+check('seed: a shared seed code decodes back to the seed it came from', () => {
+  // seedToCode emitted the least-significant base-32 digit first while
+  // codeToSeed reads left-to-right as most-significant first, so every
+  // non-palindromic seed decoded to its own digit-reversed value: a seed
+  // copied off the death card produced a completely different arena.
+  for (let seed = 0; seed < 50000; seed += 37) {
+    assert.equal(codeToSeed(seedToCode(seed)), seed >>> 0,
+      `round-trip broke for ${seed} -> ${seedToCode(seed)}`);
+  }
+  for (const seed of [0, 1, 0xffffffff, 0x80000000, 0xdeadbeef]) {
+    assert.equal(codeToSeed(seedToCode(seed)), seed >>> 0);
+  }
+});
+check('seed: a code is 8 characters from the no-lookalike alphabet', () => {
+  const code = seedToCode(123456789);
+  assert.equal(code.length, 8);
+  assert.match(code, /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
+});
+check('ai: the shooter cap counts agents that already fired, not the ready set', () => {
+  // A readiness snapshot could never drain: a capped-out agent re-armed back
+  // into the wind-up window (`windup + 0.05`), so every blocked agent held a
+  // ready slot forever and with 5+ ready nobody could pass `ready - 1 < MAX`.
+  // Measured before the fix: 24 visible enemies gave 0 shots in 60 s.
+  assert.match(enemiesSrc, /private firedShooters = 0;/);
+  assert.match(enemiesSrc, /: this\.firedShooters < MAX_ACTIVE_SHOOTERS;/);
+  assert.match(enemiesSrc, /this\.firedShooters \+= 1;/);
+  assert.match(enemiesSrc, /this\.firedShooters = 0;/);
+  assert.ok(!/private readyShooters/.test(enemiesSrc),
+    'the readiness snapshot is the deadlock; the cap must count agents that fired');
+  // A capped-out agent waits a full cooldown, so it cannot re-enter the
+  // wind-up window every frame and hold its slot.
+  assert.match(enemiesSrc, /enemy\.attackTimer = def\.attackCooldown \* randRange\(0\.85, 1\.2\);/);
+  assert.ok(!/attackTimer = windup \+ 0\.05/.test(enemiesSrc),
+    'a blocked agent must not re-arm straight back into the wind-up window');
+});
+check('ai: a dodge is gated on force, because the force-less cross product is always 0', () => {
+  assert.match(enemiesSrc, /enemy\.dodgeSide = force\s*\?\s*\(-shotZ/);
+});
+check('ai: the retarget gate defends the incumbent at the visibility the loop used', () => {
+  // Hard-coding visibility: 1 here made the gate defend a remembered incumbent
+  // at full visibility while the loop had already discounted it to 0.35.
+  assert.match(enemiesSrc, /if \(candidate === incumbent\) incumbentVisibility = visibility;/);
+  assert.match(enemiesSrc, /visibility: incumbentVisibility,/);
+  assert.ok(!/visibility: 1,/.test(enemiesSrc),
+    'the hysteresis gate must not hard-code full visibility for the incumbent');
+});
+check('ai: a dodge releases the cover claim it cancels', () => {
+  assert.match(enemiesSrc, /if \(enemy\.claim\) \{\s*\r?\n\s*this\.tactics\.release\(enemy\.tacticalId\);\s*\r?\n\s*enemy\.claim = null;\s*\r?\n\s*\}/);
+});
+check('ally: the victim rescan is on a timer, not every frame', () => {
+  // Requiring a live victim as well meant that whenever no enemy was inside
+  // FIRE_RANGE the guard never fired and both roster scans ran every frame.
+  assert.match(allySrc, /if \(this\.victimTimer > 0\) return;/);
+  assert.ok(!/victimTimer > 0 && this\.victim/.test(allySrc),
+    'the rescan guard must not require a live victim');
+});
+check('quality: the recovery gate counts seconds, not an accumulating total', () => {
+  // fastFor += sinceStep made the gate quadratic in elapsed time, so the
+  // documented 5 s window opened in ~1 s and the governor re-applied the pixel
+  // ratio every ~1.07 s -- the resolution pumping the gate exists to stop.
+  assert.match(qualitySrc, /this\.fastFor \+= deltaMs \/ 1000;/);
+  assert.ok(!/fastFor \+= this\.sinceStep/.test(qualitySrc),
+    'fastFor must accumulate the frame delta, not sinceStep');
+});
+check('effects: smoke growth normalises by the puff own lifetime', () => {
+  // The growth curve lives in the smoke half of Effects.update(). Anchor on
+  // the method first: Effects.reset() also has a `for (const s of this.smokes)`
+  // loop, and matching the first one would test the wrong body.
+  const upd = /public update\(dt: number, camera: THREE\.Camera\): void \{[\s\S]*?\n  \}/.exec(fxSrc);
+  assert.ok(upd, 'Effects.update not found');
+  const loop = /for \(const s of this\.smokes\) \{[\s\S]*?\n    \}/.exec(upd[0]);
+  assert.ok(loop, 'smoke update loop not found');
+  assert.ok(!/1 - s\.life \/ 0\.55/.test(loop[0]),
+    'smoke growth still divides by the hard-coded 0.55 s puff lifetime');
+  assert.match(loop[0], /const span = s\.maxLife > 0 \? s\.maxLife : 0\.55;/);
+  assert.match(fxSrc, /s\.maxLife = 2\.4 \+ Math\.random\(\) \* 0\.8;/);
+  assert.match(fxSrc, /s\.maxLife = 0\.55;/);
+});
+check('hud: the slot ring caches the weapon id, not the slot index', () => {
+  // A fixed-size loadout makes `i % total` a constant, so an index cache never
+  // detects a kit change and the ring keeps the first loadout's icons.
+  assert.match(hudSrc, /const iconId = WEAPON_ICON\[ids\[idx\] \?\? ''\] \?\? 'rifle';/);
+  assert.match(hudSrc, /if \(this\.slotIconCache\[i\] !== iconId\) \{/);
+  assert.match(hudSrc, /slot\.innerHTML = icon\(iconId\);/);
+});
+check('css: an interactive element under the HUD root opts back in', () => {
+  // The HUD root is pointer-events: none, so the slot chips (the touch weapon
+  // selector) must re-enable it; they were the one clickable element that
+  // could never be clicked.
+  assert.match(cssSrc, /\.hud__slot \{[\s\S]*?pointer-events: auto;/);
+});
+check('css: the charge-ring pulse collapses under reduced motion', () => {
+  assert.match(cssScopeSrc,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.hud__charge\.is-ready \.hud__charge-fill \{[\s\S]*?animation: none;/);
+});
+check('hazards: the keep-clear radii come from the real player spawn', () => {
+  // A mirrored PLAYER_SPAWN constant drifted 10 m from World.playerSpawn and
+  // 5 m outside the arena wall, so a tesla coil could be placed 0.07 m from the
+  // player and open a run with ~44 damage they never walked toward.
+  assert.match(hazSrc, /this\.spawnPoint\.copy\(playerSpawn\);/);
+  assert.match(hazSrc, /const spawnX = x - this\.spawnPoint\.x;/);
+  assert.match(hazSrc, /private readonly spawnPoint = new THREE\.Vector3\(0, 0, 30\);/);
+  assert.ok(!hazSrc.includes('PLAYER_SPAWN'),
+    'hazards must not keep a mirrored copy of the player spawn');
+});
+check('hazards: Game hands spawnAll the spawn so it cannot drift again', () => {
+  assert.match(gameSrc,
+    /spawnAll\(\(\) => this\.run\.rng\.next\(\), this\.world\.playerSpawn, this\.world\.coverSpots\);/);
+});
+check('kills: execute-melee is counted exactly once', () => {
+  // damageEnemy reports the death synchronously through onEnemyKilled ->
+  // handleKill, which counts it under `pendingMeleeKill`. A second increment
+  // in doMelee made MELEE MAYHEM unlock at 13 real kills.
+  const doMelee = /private doMelee\([\s\S]*?\n  \}/.exec(gameSrc);
+  assert.ok(doMelee, 'doMelee not found');
+  assert.ok(!/this\.meleeKills \+= 1/.test(doMelee[0]),
+    'doMelee must not count the kill; handleKill does it via pendingMeleeKill');
+  assert.match(gameSrc, /if \(this\.pendingMeleeKill\) this\.meleeKills \+= 1;/);
+});
+check('kills: hazard counters come from actual kills, not prop events', () => {
+  // onDestroyed counted the barrel prop on top of the enemies its blast killed,
+  // and onTrigger counted activations (a coil firing into empty air) as kills.
+  assert.ok(!/hazard\.kind === 'barrel'\) this\.barrelKills \+= 1/.test(gameSrc),
+    'a barrel prop is not a kill; its blast kills are counted in the sink');
+  assert.match(gameSrc, /if \(result\.killed > 0 && source !== 'barrel'\) this\.hazardKills \+= result\.killed;/);
+  const sink = /damageEnemiesInRadius: \(point, radius, damage, floor, source\) => \{[\s\S]*?\n    \},/.exec(gameSrc);
+  assert.ok(sink, 'hazard sink not found');
+  assert.ok(!/onTrigger\(/.test(sink[0]), 'kills must be charged in the sink, not from activations');
+});
+check('economy: a paid reroll is billed exactly once', () => {
+  // onReroll already charged the salvage; resolveDraft subtracted it again.
+  assert.match(gameSrc, /this\.draft\.onResolve = \(result\) => this\.resolveDraft\(result\.chosen, 0\);/);
+  const resolve = /private resolveDraft\(chosen: string \| null, _rerollCost: number\): void \{[\s\S]*?\n  \}/.exec(gameSrc);
+  assert.ok(resolve, 'resolveDraft not found');
+  assert.ok(!/run\.salvage = Math\.max\(0, this\.run\.salvage - rerollCost\)/.test(resolve[0]),
+    'resolveDraft must not charge the reroll cost a second time');
+  assert.match(gameSrc, /if \(cost > 0 && !this\.run\.spendSalvage\(cost\)\)/);
+});
+check('run: invulnerability is readable, because every damage path funnels through it', () => {
+  // invulnT lived in Game and was never read: the dash window, the execute
+  // window and the ninjaInvincibility card were all no-ops.
+  assert.match(playerSrc, /if \(this\.invulnT > 0\) return;/);
+  assert.match(playerSrc, /public setInvulnerable\(seconds: number\): void \{/);
+  assert.match(gameSrc, /this\.player\.setInvulnerable\(DASH_INVULN \+ mods\.dashInvulnBonus\);/);
+  assert.match(gameSrc, /this\.player\.setInvulnerable\(0\.5\);/);
+  assert.ok(!/private invulnT/.test(gameSrc),
+    'the window must live on the player, which is the damage funnel');
+});
+check('run: the mutation ledger is written, so the death card can show it', () => {
+  assert.match(gameSrc, /this\.mutationsSeen\.push\(def\.name\);/);
+  assert.match(gameSrc, /mutationsSeen: this\.mutationsSeen\.slice\(\),/);
+});
+check('run: cross-run state is cleared at the run boundary', () => {
+  // Death IS damage, so hurtAge was still 0 and lastDamageSource still named the
+  // old killer on the first tick of the next run.
+  assert.match(gameSrc, /this\.hurtAge = 99;/);
+  assert.match(playerSrc, /this\.lastDamageSource = '';/);
+  // A Glacial slow or Blazing burn from the last seconds of one run must not
+  // tick into the next: those timers live on the enemy manager.
+  assert.match(enemiesSrc, /this\.playerBurnT = 0;\r?\n\s*this\.playerSlowT = 0;/);
+});
+check('run: the post-resume lock probe is cancelled at run boundaries', () => {
+  // It was armed for 300 ms and nothing cleared it, so a restart inside that
+  // window let the stale probe pause the brand-new run.
+  assert.match(gameSrc, /private cancelLockReprobe\(\): void \{/);
+  assert.match(gameSrc, /this\.cancelLockReprobe\(\);/);
+  assert.ok(!/window\.setTimeout\(\(\) => \{\s*\r?\n\s*if \(this\.phase === 'playing' && !this\.input\.lockedNow\) this\.pause\(\);\s*\r?\n\s*\}, 300\);/.test(gameSrc),
+    'the probe must be tracked in a handle so it can be cancelled');
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

@@ -109,10 +109,14 @@ const SEED_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 /** Render a uint32 as an 8-character shareable seed code (no look-alikes). */
 export function seedToCode(seed: number): string {
   let out = '';
-  let v = seed >>> 0;
-  for (let i = 0; i < 8; i++) {
-    out += SEED_ALPHABET[v % SEED_ALPHABET.length] ?? 'A';
-    v = Math.floor(v / SEED_ALPHABET.length);
+  const v = seed >>> 0;
+  // Most-significant digit FIRST. The old body peeled digits off the low end
+  // (`v % 32`, then divide) and appended them in that order, while
+  // `codeToSeed` reads the string left-to-right as big-endian — so a shared
+  // seed decoded to its own digit-reversed seed and never reproduced the run
+  // it was copied from.
+  for (let i = 7; i >= 0; i--) {
+    out += SEED_ALPHABET[Math.floor(v / 32 ** i) % SEED_ALPHABET.length] ?? 'A';
   }
   return out;
 }

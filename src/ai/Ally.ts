@@ -476,7 +476,12 @@ class Bot implements Interceptor, CombatTarget {
   private updateVictim(dt: number, enemies: EnemyManager, sibling: Bot | null): void {
     this.victimTimer -= dt;
     if (this.victim && this.victim.dead) this.victim = null;
-    if (this.victimTimer > 0 && this.victim) return;
+    // Timer-only. Requiring a live victim as well meant that whenever no enemy
+    // was inside FIRE_RANGE -- every intermission, every long approach -- the
+    // guard never fired and BOTH roster scans ran every frame for each bot
+    // (2 bots x 24 enemies x 2 scans x 60 fps) for no behavioural change. The
+    // documented cadence is 0.4 s.
+    if (this.victimTimer > 0) return;
     this.victimTimer = VICTIM_RESCORE;
     const claimed = sibling?.victim ?? null;
     this.victim = enemies.nearestEnemyExcluding(this.group.position, [claimed], FIRE_RANGE)

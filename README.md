@@ -78,7 +78,7 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 169 logic regression tests, no browser needed
+npm run check:self  # 190 logic regression tests, no browser needed
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.

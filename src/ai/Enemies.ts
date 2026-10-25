@@ -235,6 +235,8 @@ const PERCEPTION_INTERVAL = 0.125;
 /** Alerted contact memory (seconds) — longer than the unalerted baseline. */
 const SEARCH_MEMORY = 6;
 const MAX_ACTIVE_SHOOTERS = 4;
+/** Rushers are melee and much shorter-ranged, so fewer may commit per step. */
+const MAX_ACTIVE_RUSHERS = 2;
 const BURST_MAX = 3;
 /** Boss phase thresholds (fraction of max health remaining). */
 const BOSS_PHASE_2 = 0.66;
@@ -475,10 +477,21 @@ export class EnemyManager {
   private readonly tmp5 = new THREE.Vector3();
   private readonly tmpHead = new THREE.Vector3();
   private readonly tmpRay = new THREE.Ray();
-  /** Per-step readiness snapshot — hoisted out of the per-enemy attack scan
-   *  so `updateAttack` never walks the roster again (was O(n²) per step). */
-  private readyShooters = 0;
-  private readyRushers = 0;
+  /**
+   * Shooters / rushers that have ALREADY FIRED this step. Reset at the top of
+   * every step and incremented as each agent fires, so `updateAttack` gates on
+   * "how many have shot this step" — a count that can only grow when someone
+   * actually fires and can therefore never deadlock.
+   *
+   * This replaced a readiness snapshot (agents whose attackTimer was inside the
+   * wind-up window). A capped-out agent re-armed straight back into that
+   * window (`windup + 0.05`), so every blocked agent permanently held a ready
+   * slot: with 5+ agents simultaneously ready, `ready - 1 < MAX` was false for
+   * all of them and nobody could ever fire. Measured: 24 visible enemies gave
+   * 0 shots in 60 s against ~900 expected.
+   */
+  private firedShooters = 0;
+  private firedRushers = 0;
   /** Reused return slot for `resolveWardenHit` (no per-hit object churn). */
   private readonly wardenHit = { damage: 0, blocked: false };
   /** Fire-team state, keyed by team index. Rebuilt each team tick. */
@@ -621,6 +634,13 @@ export class EnemyManager {
     const incumbent = enemy.target;
     let best: CombatTarget | null = null;
     let bestScore = 0;
+    // The visibility the loop actually gave the incumbent, so the hysteresis
+    // gate below defends it at the score it was judged at. Hard-coding 1 here
+    // made the gate defend an out-of-sight incumbent at full visibility while
+    // the loop had already discounted it to 0.35 — the more hidden the current
+    // victim was, the harder it was to displace, so a visible enemy standing
+    // 5 m away could be ignored in favour of one the agent could not see.
+    let incumbentVisibility = 0;
     // Focus fire: a team member prefers the team's shared victim. This is a
     // BONUS rather than a hard override, so an agent with a genuinely better
     // shot (a flanker that just cleared cover) still takes it. Forcing the
@@ -638,6 +658,7 @@ export class EnemyManager {
       const remembered = candidate === incumbent && enemy.memory > 0 && enemy.targetVisible;
       const visibility = inSight ? 1 : remembered ? 0.35 : 0;
       if (visibility <= 0) continue;
+      if (candidate === incumbent) incumbentVisibility = visibility;
       const score = threatScore({
         distance,
         role: candidate.threatRole,
@@ -667,7 +688,7 @@ export class EnemyManager {
           : 0,
         hpFraction: incumbent.hpFraction,
         aimPressure: incumbent.aimPressureAt(enemy.group.position),
-        visibility: 1,
+        visibility: incumbentVisibility,
       });
       if (bestScore < incumbentScore * TARGET_SWITCH_HYSTERESIS) return;
     }
@@ -980,11 +1001,27 @@ export class EnemyManager {
         const shotZ = force ? force.z : point.z - enemy.group.position.z;
         const ownX = enemy.group.position.x - point.x;
         const ownZ = enemy.group.position.z - point.z;
-        enemy.dodgeSide = -shotZ * ownX + shotX * ownZ >= 0 ? 1 : -1;
+        // Without a `force` vector the impact point IS the agent, so `own` and
+        // `shot` are antiparallel by construction and the cross product is
+        // identically zero — `0 >= 0` pinned every splash, burn, grenade and
+        // ally-fire dodge to the same side. Fall back to the agent's own stable
+        // lateral bias (the same one the strafe code uses) so the dodge stays
+        // lateral instead of being a constant.
+        enemy.dodgeSide = force
+          ? (-shotZ * ownX + shotX * ownZ >= 0 ? 1 : -1)
+          : (Math.sin(enemy.strafeSeed) >= 0 ? 1 : -1);
         enemy.dodgeT = AGILITY_DODGE_TIME;
         enemy.dodgeCd = randRange(AGILITY_DODGE_CD_MIN, AGILITY_DODGE_CD_MAX)
           * (enemy.kind === 'wardenPrime' ? 2.6 : 1);
         // A dodge cancels a claim: the agent is no longer holding cover.
+        // Releasing it here is load-bearing — the re-claim path is gated on
+        // `!enemy.claim`, so without this the spot stayed owned for the rest of
+        // the agent's life and one fixed structure's cover was permanently lost
+        // to the rest of the roster.
+        if (enemy.claim) {
+          this.tactics.release(enemy.tacticalId);
+          enemy.claim = null;
+        }
         enemy.state = 'advance';
       }
     }
@@ -1276,17 +1313,10 @@ export class EnemyManager {
         }
       }
     }
-    // One readiness pass per step feeds every updateAttack() call below.
-    let readyShooters = 0;
-    let readyRushers = 0;
-    for (const enemy of this.enemies) {
-      if (enemy.dead || !enemy.visible) continue;
-      if (enemy.attackTimer > EnemyManager.windupOf(enemy.kind)) continue;
-      if (enemy.kind === 'rusher') readyRushers += 1;
-      else readyShooters += 1;
-    }
-    this.readyShooters = readyShooters;
-    this.readyRushers = readyRushers;
+    // The per-step fire budget starts empty; updateAttack() charges it as each
+    // agent actually fires, which is what makes the cap deadlock-free.
+    this.firedShooters = 0;
+    this.firedRushers = 0;
     // Squad state refreshes on its own cadence, before the per-agent pass, so
     // every member of a team reads the SAME team state this step.
     this.teamTimer -= dt;
@@ -1378,6 +1408,11 @@ export class EnemyManager {
 
   public clear(): void {
     this.simTime = 0;
+    // The player's affix riders are stored HERE, not on the roster, so a roster
+    // wipe alone would let a Glacial slow or a Blazing burn from the last moments
+    // of one run keep ticking into the first seconds of the next.
+    this.playerBurnT = 0;
+    this.playerSlowT = 0;
     for (const enemy of this.enemies) {
       this.tactics.release(enemy.tacticalId);
       this.disposeEnemy(enemy);
@@ -2063,17 +2098,23 @@ export class EnemyManager {
     const distance = enemy.group.position.distanceTo(victimPos);
     const inRange = distance <= def.attackRange;
     const windup = EnemyManager.windupOf(enemy.kind);
-    // Snapshot from update(): subtract self when this agent is already ready.
-    const selfReady =
-      enemy.visible && !enemy.dead && enemy.attackTimer <= windup;
-    const shootersReady = this.readyShooters - (selfReady && enemy.kind !== 'rusher' ? 1 : 0);
-    const rushersReady = this.readyRushers - (selfReady && enemy.kind === 'rusher' ? 1 : 0);
+    // Cap on how many of each role have ALREADY fired this step. A readiness
+    // count could never drain (a capped-out agent re-armed back into the
+    // wind-up window), so the gate could stay false for every agent forever.
     const roleCap = enemy.kind === 'rusher'
-      ? rushersReady < 2
-      : shootersReady < MAX_ACTIVE_SHOOTERS;
+      ? this.firedRushers < MAX_ACTIVE_RUSHERS
+      : this.firedShooters < MAX_ACTIVE_SHOOTERS;
     const canEngage = enemy.visible && enemy.state !== 'search' && inRange && roleCap;
     if (!canEngage) {
-      if (enemy.attackTimer <= 0) enemy.attackTimer = windup + 0.05;
+      // Wait a FULL cooldown before retrying, not `windup + 0.05`. The old value
+      // put the agent back inside the wind-up window 0.05 s later, so a
+      // capped-out agent re-entered it every frame and held its ready slot
+      // forever — the deadlock above. A full cooldown is also the honest
+      // cadence: an agent that cannot fire yet waits as long as one that just
+      // did.
+      if (enemy.attackTimer <= 0) {
+        enemy.attackTimer = def.attackCooldown * randRange(0.85, 1.2);
+      }
       if (enemy.telegraphed) enemy.telegraphed = false;
       return;
     }
@@ -2098,13 +2139,14 @@ export class EnemyManager {
 
     enemy.telegraphed = false;
     enemy.attackTimer = def.attackCooldown * randRange(0.85, 1.2);
-    // Consume this agent's slot from the per-step readiness snapshot: without
-    // this, N ready agents all read the same pre-step count and either all
-    // hold fire (cap deadlock) or all volley at once.
+    // Charge this agent's slot against the per-step budget. Incrementing (not
+    // decrementing a shared count) is what lets the remaining agents see a
+    // growing number and stop at the cap instead of all reading the same
+    // pre-step value and either all holding fire or all volleying at once.
     if (enemy.kind === 'rusher') {
-      if (this.readyRushers > 0) this.readyRushers -= 1;
-    } else if (this.readyShooters > 0) {
-      this.readyShooters -= 1;
+      this.firedRushers += 1;
+    } else {
+      this.firedShooters += 1;
     }
     if (enemy.kind === 'rusher') {
       if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;

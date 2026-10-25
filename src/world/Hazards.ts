@@ -92,12 +92,6 @@ const PLACE_MARGIN = 1.2;
 const PROBE_HEIGHT = 24;
 /** Floor hits above this are cover lids, so the sample is rejected. */
 const FLOOR_BAND = 0.08;
-/**
- * Mirrors `World.playerSpawn`. `spawnAll` is handed no spawn point, so the
- * keep-clear radius is measured from this constant. Keep the two in sync.
- */
-const PLAYER_SPAWN = new THREE.Vector3(0, 0, 40);
-
 const BARREL_COUNT = 7;
 const TESLA_COUNT = 3;
 const VENT_COUNT = 4;
@@ -201,6 +195,12 @@ export class Hazards {
   private readonly group = new THREE.Group();
   private readonly items: HazardRuntime[] = [];
   private readonly tmp = new THREE.Vector3();
+  /** Where the player actually stands this run — the hazard keep-clear radii
+   *  are measured from here. `spawnAll` copies `World.playerSpawn` into it; it
+   *  used to be a mirrored constant in this file, and the copy drifted 10 m
+   *  from the real spawn and 5 m outside the arena wall, so the radii were
+   *  measured from the wrong point entirely. */
+  private readonly spawnPoint = new THREE.Vector3(0, 0, 30);
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly listener = new THREE.Vector3();
   private readonly probeRay = new THREE.Ray(new THREE.Vector3(), new THREE.Vector3(0, -1, 0));
@@ -258,8 +258,22 @@ export class Hazards {
     for (let i = 0; i < VENT_COUNT; i++) this.items.push(this.buildVent());
   }
 
-  /** Rebuild all hazards for a fresh run. `rng` must be a () => number in [0,1). */
-  public spawnAll(rng: () => number, coverSpots: readonly CoverClearanceSpot[]): void {
+  /**
+   * Rebuild all hazards for a fresh run. `rng` must be a () => number in [0,1).
+   *
+   * `playerSpawn` is OWNED by World and passed in: the keep-clear radii are
+   * measured from where the player actually stands, and a mirrored copy of the
+   * constant here drifted 10 m away and outside the arena wall, which let a
+   * tesla coil be placed 0.07 m from the player's spawn and open a run with
+   * ~44 damage they never walked toward. Passing it in makes that drift
+   * impossible rather than merely stale.
+   */
+  public spawnAll(
+    rng: () => number,
+    playerSpawn: THREE.Vector3,
+    coverSpots: readonly CoverClearanceSpot[],
+  ): void {
+    this.spawnPoint.copy(playerSpawn);
     this.clear();
     // Pool order (barrels, coils, vents) fixes the rng consumption order, so the
     // same seed always produces the same layout.
@@ -498,8 +512,8 @@ export class Hazards {
     coverClearance: number,
     coverSpots: readonly CoverClearanceSpot[],
   ): boolean {
-    const spawnX = x - PLAYER_SPAWN.x;
-    const spawnZ = z - PLAYER_SPAWN.z;
+    const spawnX = x - this.spawnPoint.x;
+    const spawnZ = z - this.spawnPoint.z;
     if (spawnX * spawnX + spawnZ * spawnZ < minSpawnDistance * minSpawnDistance) return false;
     // Rejects samples on top of cover as well as samples buried inside it.
     if (!this.probeFloor(x, z)) return false;

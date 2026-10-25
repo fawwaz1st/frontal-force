@@ -210,7 +210,6 @@ export class Game {
   private dashRecharge = 0;
   private dashT = 0;
   private dashDir = new THREE.Vector3();
-  private invulnT = 0;
   private grenadeCharges = GRENADE_CHARGES;
   private grenadeRecharge = 0;
   private grenadeCook = 0;
@@ -253,6 +252,8 @@ export class Game {
   private readonly markerProject2 = new THREE.Vector3();
   private hudMarkerTimer = 0;
   private hurtAge = 99;
+  /** Handle for the post-resume pointer-lock re-probe, 0 when disarmed. */
+  private lockReprobeTimer = 0;
   private readonly hudSnapshot: HudState = {
     health: 100,
     maxHealth: 100,
@@ -499,20 +500,32 @@ export class Game {
       this.hud.showBanner(def.name.toUpperCase(), def.description);
       this.audio.record();
       this.world.applyMutation(def.fogMul, def.sunMul, def.ambientMul);
+      // Record it for the death card. Without this `mutationsSeen` was written
+      // nowhere, so the run summary always reported the mutations it saw as
+      // none and the whole ledger rendered as empty.
+      this.mutationsSeen.push(def.name);
     };
     this.waves.onBoss = (name) => {
       this.hud.showBanner(name, 'BOSS INBOUND');
       this.audio.bossSpawn();
     };
-    this.hazards.onDestroyed = (hazard, byPlayer) => {
-      if (hazard.kind === 'barrel') this.barrelKills += 1;
+    this.hazards.onDestroyed = (_hazard, byPlayer) => {
+      void _hazard;
+      // `barrelKills` is already incremented from the blast's real kill count
+      // in hazardSink (Game.ts:528). Counting the prop here on top of that
+      // counted a barrel that killed 7 enemies as 8, so the ENVIRONMENTALIST /
+      // SHRINE RAIDER achievements unlocked from prop events instead of deaths.
       if (byPlayer) {
         this.score += Math.round(
           60 * this.waves.scoreMult * this.run.mods.scoreMul * this.challengeMods.scoreMul,
         );
       }
     };
-    this.hazards.onTrigger = () => { this.hazardKills += 1; };
+    // `hazardKills` is incremented from the hazardSink for actual kills
+    // (see error sink), not per activation: an activation with no enemy in its
+    // radius is zero kills, not one, so the achievements gated on kill counts
+    // can no longer be reached by standing next to an empty coil.
+    this.hazards.onTrigger = () => { /* intentionally no-op: counted at kill time */ };
     this.grenades.onExplode = (kind, point, radius) => {
       if (kind === 'frag') this.effects.ring(point, 0xff8a3c, radius * 2.4, 0.45);
     };
@@ -527,6 +540,9 @@ export class Game {
     damageEnemiesInRadius: (point, radius, damage, floor, source) => {
       const result = this.enemies.damageArea(point, radius, damage, floor, source === 'barrel');
       if (result.killed > 0 && source === 'barrel') this.barrelKills += result.killed;
+      // Non-barrel hazards (tesla coils, flame vents) must feed `hazardKills`
+      // from actual kills, not from activation events.
+      if (result.killed > 0 && source !== 'barrel') this.hazardKills += result.killed;
       // Barrel blasts are player damage when the player triggered them; they
       // feed the damage-dealt statistic like any other kill source.
       if (result.dealt > 0) this.onDamageDealt(result.dealt, false);
@@ -645,7 +661,11 @@ export class Game {
     this.input.onFocusLost = () => {
       if (this.phase === 'playing') this.pause();
     };
-    this.draft.onResolve = (result) => this.resolveDraft(result.chosen, result.rerollCost);
+    this.draft.onResolve = (result) => this.resolveDraft(result.chosen, 0);
+    // `rerollCost` is NOT deducted again here: it was already charged by the
+    // `spendSalvage` below, at the moment the player asked. Deducting it in
+    // resolveDraft as well billed a 75-salvage reroll 150, and turned the skip
+    // bonus into a net loss.
     this.draft.onReroll = (cost) => {
       if (cost > 0 && !this.run.spendSalvage(cost)) {
         this.audio.denied();
@@ -715,6 +735,7 @@ export class Game {
    */
   private startRun(seed?: number, daily = false): void {
     this.audio.unlock();
+    this.cancelLockReprobe();
     this.phase = 'playing';
     this.audio.setMusicPaused(false);
     this.score = 0;
@@ -745,7 +766,7 @@ export class Game {
     this.world.rebuild(runSeed);
     this.world.applyMutation(1, 1, 1);
     this.enemies.setCoverSpots(this.world.coverSpots);
-    this.hazards.spawnAll(() => this.run.rng.next(), this.world.coverSpots);
+    this.hazards.spawnAll(() => this.run.rng.next(), this.world.playerSpawn, this.world.coverSpots);
     for (const [i, point] of this.world.pickupPoints.entries()) {
       this.pickups.spawnAt(i % 2 === 0 ? 'health' : 'ammo', point);
     }
@@ -845,7 +866,7 @@ export class Game {
     this.dashCharges = DASH_CHARGES + mods.dashChargesBonus;
     this.dashRecharge = 0;
     this.dashT = 0;
-    this.invulnT = 0;
+    this.player.clearInvulnerable();
     this.grenadeCharges = GRENADE_CHARGES + mods.grenadeChargesBonus;
     this.grenadeRecharge = 0;
     this.grenadeCook = 0;
@@ -858,6 +879,10 @@ export class Game {
   private resetRunStats(): void {
     this.waveTookDamage = false;
     this.waveStartT = 0;
+    // 99 is the "no label" sentinel used at construction. `hurtAge` is only
+    // zeroed when the player is hit, so a run that ended in death otherwise
+    // started its successor with the old label still inside its 2.4 s window.
+    this.hurtAge = 99;
     this.bestWaveTime = 0;
     this.noHitWaves = 0;
     this.eliteKills = 0;
@@ -904,8 +929,8 @@ export class Game {
     this.draft.show(wave, offers, this.run.salvage, this.run.rerolls);
   }
 
-  private resolveDraft(chosen: string | null, rerollCost: number): void {
-    if (chosen) {
+  private resolveDraft(chosen: string | null, _rerollCost: number): void {
+    void _rerollCost;    if (chosen) {
       const id = chosen as UpgradeId;
       if (UPGRADES[id]) {
         this.run.take(id);
@@ -918,7 +943,8 @@ export class Game {
       // Skipping pays salvage: an unspent card is not wasted, it is banked.
       this.run.earnSalvage(45);
     }
-    this.run.salvage = Math.max(0, this.run.salvage - rerollCost);
+    // `rerollCost` used to be deducted here a second time. It is now charged once,
+    // at the moment of reroll, by Draft.onReroll -> Run.spendSalvage.
     this.draft.hide();
     this.resumeAfterIntermission();
   }
@@ -1041,6 +1067,18 @@ export class Game {
     this.input.requestLock();
   }
 
+  /**
+   * Cancel the post-resume lock re-probe. It is armed for 300 ms and nothing
+   * else clears it, so without this a restart (or a trip to the menu) inside
+   * that window let the stale probe fire `pause()` against the brand-new run
+   * and freeze it behind the pause overlay with no input from the player.
+   */
+  private cancelLockReprobe(): void {
+    if (this.lockReprobeTimer === 0) return;
+    window.clearTimeout(this.lockReprobeTimer);
+    this.lockReprobeTimer = 0;
+  }
+
   private pause(): void {
     if (this.phase !== 'playing') return;
     this.phase = 'paused';
@@ -1059,13 +1097,16 @@ export class Game {
     this.input.requestLock();
     // Browsers block requestPointerLock briefly after Esc-exit; if the lock
     // doesn't come back, re-pause instead of leaving a lockless "playing" state.
-    window.setTimeout(() => {
+    this.cancelLockReprobe();
+    this.lockReprobeTimer = window.setTimeout(() => {
+      this.lockReprobeTimer = 0;
       if (this.phase === 'playing' && !this.input.lockedNow) this.pause();
     }, 300);
   }
 
   private toMenu(): void {
     if (this.phase === 'menu') return;
+    this.cancelLockReprobe();
     this.phase = 'menu';
     this.audio.setMusicPaused(false);
     this.recordRun();
@@ -1471,7 +1512,9 @@ export class Game {
    */
   private updateAbilities(dt: number, frame: InputFrame): void {
     const mods = this.run.mods;
-    this.invulnT = Math.max(0, this.invulnT - dt);
+    // The invulnerability window lives on the player, because Player.damage is
+    // the single funnel every damage source passes through.
+    this.player.tickInvulnerable(dt);
     this.meleeT = Math.max(0, this.meleeT - dt);
 
     // ---- Dash ----
@@ -1490,7 +1533,7 @@ export class Game {
       this.dashCharges -= 1;
       if (this.dashRecharge <= 0) this.dashRecharge = 0.001;
       this.dashT = DASH_TIME;
-      this.invulnT = DASH_INVULN + mods.dashInvulnBonus;
+      this.player.setInvulnerable(DASH_INVULN + mods.dashInvulnBonus);
       this.dashDir.copy(this.dashInputDirection(frame));
       this.player.startDash(this.dashDir, DASH_SPEED, DASH_TIME);
       this.effects.ring(this.player.position, 0xff9f1c, 2.6, 0.3);
@@ -1601,8 +1644,13 @@ export class Game {
       this.audio.eliteKill();
       this.enemies.damageEnemy(target, target.health + 1, at, undefined, true, PLAYER_TARGET_ID);
       this.player.heal(EXECUTE_HEAL);
-      this.invulnT = Math.max(this.invulnT, 0.5);
-      this.meleeKills += 1;
+      this.player.setInvulnerable(0.5);
+      // NO extra meleeKills here: damageEnemy reports the death synchronously
+      // through onEnemyKilled -> handleKill, which counts it under
+      // `pendingMeleeKill`. Adding it here as well double-counted every execute,
+      // so MELEE MAYHEM unlocked at 13 real kills and the death card reported
+      // twice the melee kills that happened. The non-execute branch below is
+      // counted the single correct way.
       return;
     }
     const damage = MELEE_DAMAGE * this.run.mods.meleeMul * this.waves.damageScale;
