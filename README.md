@@ -78,7 +78,7 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 157 logic regression tests, no browser needed
+npm run check:self  # 163 logic regression tests, no browser needed
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -114,7 +114,7 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | V | Melee: 42 damage, executes below 15 % health for an 18 HP heal |
 | Esc / P | Pause |
 
-**Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and on-screen buttons cover fire, jump, reload, crouch, dash, grenade, and melee. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.
+**Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and 10 on-screen buttons cover the actions — FIRE, AIM and JUMP in the main cluster, DASH, GRENADE and MELEE flanking FIRE, with SPRINT, CROUCH, RELOAD and the grenade CYCLE on the left. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.
 
 ## Reading the screen
 
