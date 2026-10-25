@@ -84,6 +84,8 @@ const MELEE_RANGE = 2.6;
 const MELEE_DAMAGE = 42;
 const MELEE_COOLDOWN = 0.5;
 const MELEE_LUNGE = 5.5;
+/** Seconds the lunge lasts. Kept beside the speed so the two are read together. */
+const MELEE_LUNGE_TIME = 0.14;
 /** Enemies below this health fraction can be executed for a heal. */
 const EXECUTE_THRESHOLD = 0.15;
 const EXECUTE_HEAL = 18;
@@ -1063,6 +1065,9 @@ export class Game {
   /** Unfreeze the sim after a draft or kiosk closes. */
   private resumeAfterIntermission(): void {
     this.phase = 'playing';
+    // Same reason as pause(): a draft or kiosk ending must not commit a grenade
+    // that was being cooked when the intermission began.
+    this.grenadeCook = 0;
     this.input.resetTransient();
     this.input.requestLock();
   }
@@ -1082,6 +1087,11 @@ export class Game {
   private pause(): void {
     if (this.phase !== 'playing') return;
     this.phase = 'paused';
+    // Drop any grenade being cooked. `resetTransient()` below clears
+    // `grenadeHeld`, and the cook branch treats a released button as a commit,
+    // so without this a pause (lock loss, alt-tab) or a draft ending while G was
+    // held threw a grenade the instant the sim resumed.
+    this.grenadeCook = 0;
     this.input.resetTransient();
     document.exitPointerLock();
     this.hud.showPause(true);
@@ -1425,7 +1435,9 @@ export class Game {
     // is what turns the two support grenades into mechanical tools rather than
     // visual effects. Cheap: both reads are a short field-list scan.
     this.enemies.smokeBlocks = (point) => this.grenades.isSmoked(point);
-    this.enemies.shieldsDisabled = this.grenades.isEmped(this.player.position);
+    // A probe, not a value: each enemy is tested against its own position, so an
+    // EMP strips the shields of the enemies standing in it.
+    this.enemies.shieldsDisabled = (point) => this.grenades.isEmped(point);
     this.enemies.playerYaw = this.player.yawAngle;
     this.enemies.update(
       dt,
@@ -1658,7 +1670,15 @@ export class Game {
     this.effects.impact(at, forward.clone().negate());
     this.audio.slashHit();
     // Lunge: the melee closes the last metre so it connects on a moving target.
-    this.player.startDash(forward, MELEE_LUNGE, 0.14);
+    // BOTH halves are required. `Player.update` only applies a dash when it is
+    // handed a dashDir, and that argument is gated on `Game.dashT` -- so calling
+    // `startDash` alone filled the player's `dashRemaining` and then did nothing,
+    // leaving the documented lunge a pure no-op. `dashT` is safe to set directly:
+    // dash charges are spent only in the dash branch, and `pendingDashKill` is
+    // set only there too, so a lunge cannot consume a charge or claim a kill.
+    this.player.startDash(forward, MELEE_LUNGE, MELEE_LUNGE_TIME);
+    this.dashDir.copy(forward);
+    this.dashT = MELEE_LUNGE_TIME;
   }
 
   // ---------- Combat callbacks ----------

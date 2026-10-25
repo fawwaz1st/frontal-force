@@ -1161,8 +1161,9 @@ export class EnemyManager {
   ): { damage: number; blocked: boolean } {
     if (enemy.weakPointBroken) return { damage: amount, blocked: false };
     // EMP: an active field disables shield absorption entirely, which is the
-    // EMP grenade's whole payoff against wardens and the boss.
-    if (this.shieldsDisabled) return { damage: amount, blocked: false };
+    // EMP grenade's whole payoff against wardens and the boss. Keyed on the
+    // SHOT's point, i.e. where the enemy is, not where the player is.
+    if (this.shieldsDisabled?.(point)) return { damage: amount, blocked: false };
     // "Behind" is determined by the shot's approach versus the boss's facing.
     const facingX = -Math.sin(enemy.group.rotation.y);
     const facingZ = -Math.cos(enemy.group.rotation.y);
@@ -1210,8 +1211,8 @@ export class EnemyManager {
     const out = this.wardenHit;
     out.damage = amount;
     out.blocked = false;
-    // EMP: the plate is dead weight while the field is up.
-    if (this.shieldsDisabled) {
+    // EMP: the plate is dead weight while the field is up, for THIS enemy.
+    if (this.shieldsDisabled?.(enemy.group.position)) {
       enemy.shieldBlocks = 0;
       return out;
     }
@@ -2753,8 +2754,15 @@ export class EnemyManager {
    * sits inside a live smoke cloud. Null when no smoke exists.
    */
   public smokeBlocks: ((point: THREE.Vector3) => boolean) | null = null;
-  /** True while an EMP field is active: enemy shields stop absorbing. */
-  public shieldsDisabled = false;
+  /**
+   * EMP probe supplied by the grenade system, in the same shape as
+   * `smokeBlocks` above. Evaluated against EACH enemy's own position: it used
+   * to be a single boolean computed from the player's position, which meant an
+   * EMP only stripped shields while the PLAYER stood inside the field -- and
+   * stripped every enemy's shield at once when they did. Throwing an EMP at a
+   * warden did nothing.
+   */
+  public shieldsDisabled: ((point: THREE.Vector3) => boolean) | null = null;
   private readonly tmpSmokeProbe = new THREE.Vector3();
 
   private raySphere(origin: THREE.Vector3, dir: THREE.Vector3, center: THREE.Vector3, radius: number): number | null {

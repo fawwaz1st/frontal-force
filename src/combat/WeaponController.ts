@@ -425,7 +425,19 @@ export class WeaponController {
     // first shot still takes a full 0.6 s / 0.4 s to leave the barrel.
     const chargeTime = weapon.def.chargeTime ?? 0;
     if (chargeTime > 0) {
-      if (frame.fireHeld && frame.locked && !weapon.reloading && weapon.mag > 0) {
+      // Same dry-fire contract as the non-charge branch below: click, and start
+      // the reload if there is a reserve. Both charge weapons (rail, launcher)
+      // only reached this branch with `weapon.mag > 0`, so with an empty magazine
+      // and the trigger held they fell through to the release `else` where
+      // `chargeT` was already 0 -- no click, no reload, a completely silent gun
+      // until R was pressed.
+      if (weapon.mag <= 0) {
+        if (frame.fireHeld && frame.locked && !weapon.reloading) {
+          this.audio.empty();
+          weapon.cooldown = 0.25;
+          if (weapon.reserve > 0) this.beginReload(weapon);
+        }
+      } else if (frame.fireHeld && frame.locked && !weapon.reloading) {
         this.chargeT = Math.min(chargeTime, this.chargeT + dt);
         if (this.chargeT >= chargeTime && weapon.cooldown <= COOLDOWN_EPS) {
           this.fire(weapon, this.player.isAiming, (weapon.def.chargeDamageMul ?? 1));
@@ -440,7 +452,20 @@ export class WeaponController {
         this.chargeT = 0;
         this.chargeReady = false;
       }
-    } else if (wantsFire && frame.locked && !weapon.reloading && weapon.cooldown <= COOLDOWN_EPS) {
+    } else if (
+      wantsFire
+      // `burstLeft <= 0` is load-bearing: without it, once a fire-rate card made
+      // `1/(fireRate*mul)` shorter than the group's own duration (0.4167 s), the
+      // `-dt` carry pulled the next group's first round onto the same tick as the
+      // previous group's last round. This branch ran first, overwrote `burstLeft`
+      // and `burstT`, and silently discarded the round that was owed -- every group
+      // then delivered 2 of 3, and stacking more fire-rate cards stopped mattering
+      // entirely (4.80 rounds/s against 6.60, a permanent -27%).
+      && this.burstLeft <= 0
+      && frame.locked
+      && !weapon.reloading
+      && weapon.cooldown <= COOLDOWN_EPS
+    ) {
       if (weapon.mag <= 0) {
         this.audio.empty();
         weapon.cooldown = 0.25;

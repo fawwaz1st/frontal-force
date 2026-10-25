@@ -777,7 +777,11 @@ check('fire rate: a gun reads ready on the tick its interval actually elapses', 
   // double-precision drift over a full magazine.
   assert.match(weaponSrc, /const COOLDOWN_EPS = 1e-6;/);
   assert.match(weaponSrc, /weapon\.cooldown <= COOLDOWN_EPS\) \{/);
-  assert.match(weaponSrc, /!weapon\.reloading && weapon\.cooldown <= COOLDOWN_EPS\) \{/);
+  // The charge branch is the one that must not re-fire a burst round: the burst
+  // branch carries an explicit `burstLeft <= 0` gate, because without it the
+  // first-round branch overwrote a pending follow-up and every group lost a
+  // round once a fire-rate card shortened the cadence below the group duration.
+  assert.match(weaponSrc, /&& this\.burstLeft <= 0\r?\n\s*&& frame\.locked/);
 });
 check('ricochet: the bounce loop is bounded by the weapon field', () => {
   assert.match(weaponSrc, /const maxBounces = Math\.max\(0, Math\.floor\(weapon\.def\.ricochet \?\? 0\)\);/);
@@ -1431,6 +1435,66 @@ check('run: the post-resume lock probe is cancelled at run boundaries', () => {
   assert.match(gameSrc, /this\.cancelLockReprobe\(\);/);
   assert.ok(!/window\.setTimeout\(\(\) => \{\s*\r?\n\s*if \(this\.phase === 'playing' && !this\.input\.lockedNow\) this\.pause\(\);\s*\r?\n\s*\}, 300\);/.test(gameSrc),
     'the probe must be tracked in a handle so it can be cancelled');
+});
+
+// ---------- combat defects fixed 2026-10-25 (regression locks) ----------
+const wcSrc = readSrc('combat/WeaponController.ts');
+const grenSrc = readSrc('combat/Grenades.ts');
+
+check('burst: the first-round branch cannot discard a pending follow-up', () => {
+  // Without the gate, once a fire-rate card made 1/(fireRate*mul) shorter than
+  // the group's own duration the -dt carry pulled the next group's first round
+  // onto the same tick as the previous group's last; this branch ran first,
+  // overwrote burstLeft/burstT, and every group delivered 2 of 3 rounds.
+  // Measured: 4.80 rounds/s against 6.60 for every mul >= 1.12.
+  assert.match(wcSrc, /&& this\.burstLeft <= 0\r?\n\s*&& frame\.locked/);
+  assert.match(wcSrc, /this\.burstLeft = burstCount - 1;/);
+  assert.match(wcSrc, /this\.burstT = BURST_ROUND_INTERVAL;/);
+});
+check('charge: an empty magazine still clicks and reloads', () => {
+  // Both charge weapons only reached their branch with mag > 0, so an empty rail
+  // or launcher fell through to the release else (chargeT already 0) and went
+  // completely silent -- no click, no auto-reload until R.
+  const charge = /if \(chargeTime > 0\) \{[\s\S]*?\n    \} else if/.exec(wcSrc);
+  assert.ok(charge, 'charge branch not found');
+  assert.match(charge[0], /if \(weapon\.mag <= 0\) \{/);
+  assert.match(charge[0], /this\.audio\.empty\(\);/);
+  assert.match(charge[0], /if \(weapon\.reserve > 0\) this\.beginReload\(weapon\);/);
+});
+check('grenade: cooking is dropped when the sim stops running', () => {
+  // resetTransient() clears grenadeHeld, and the cook branch treats a released
+  // button as a commit, so a pause or an intermission ending while G was held
+  // threw a grenade the instant the sim resumed.
+  const pauseFn = /private pause\(\): void \{[\s\S]*?\n  \}/.exec(gameSrc);
+  assert.ok(pauseFn, 'pause not found');
+  assert.match(pauseFn[0], /this\.grenadeCook = 0;/);
+  const resume = /private resumeAfterIntermission\(\): void \{[\s\S]*?\n  \}/.exec(gameSrc);
+  assert.ok(resume, 'resumeAfterIntermission not found');
+  assert.match(resume[0], /this\.grenadeCook = 0;/);
+});
+check('melee: the lunge is actually driven, not just armed', () => {
+  // Player.update only applies a dash when it is handed a dashDir, and that
+  // argument is gated on Game.dashT -- so startDash alone set dashRemaining and
+  // then did nothing. The lunge must set both halves.
+  const melee = /private doMelee\([\s\S]*?\n  \}/.exec(gameSrc);
+  assert.ok(melee, 'doMelee not found');
+  assert.match(melee[0], /this\.player\.startDash\(forward, MELEE_LUNGE, MELEE_LUNGE_TIME\);/);
+  assert.match(melee[0], /this\.dashDir\.copy\(forward\);/);
+  assert.match(melee[0], /this\.dashT = MELEE_LUNGE_TIME;/);
+  assert.match(gameSrc, /this\.player\.update\(dt, frame, this\.dashT > 0 \? this\.dashDir : null\);/);
+  assert.match(playerSrc, /if \(dashDir && this\.dashRemaining > 0\) \{/);
+});
+check('emp: shield disabling is keyed on the enemy, not on the player', () => {
+  // A single boolean from the player's position meant an EMP only worked while
+  // the PLAYER stood in it -- and then disabled every enemy's shield at once.
+  assert.match(enemiesSrc, /public shieldsDisabled: \(\(point: THREE\.Vector3\) => boolean\) \| null = null;/);
+  assert.match(enemiesSrc, /if \(this\.shieldsDisabled\?\.\(point\)\) return \{ damage: amount, blocked: false \};/);
+  assert.match(enemiesSrc, /if \(this\.shieldsDisabled\?\.\(enemy\.group\.position\)\) \{/);
+  assert.ok(!/this\.enemies\.shieldsDisabled = this\.grenades\.isEmped\(this\.player\.position\)/.test(gameSrc),
+    'the EMP probe must not be evaluated against the player position');
+  assert.match(gameSrc, /this\.enemies\.shieldsDisabled = \(point\) => this\.grenades\.isEmped\(point\);/);
+  // Same shape as the smoke probe it sits beside.
+  assert.match(grenSrc, /public isEmped\(point: THREE\.Vector3\): boolean \{/);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);
