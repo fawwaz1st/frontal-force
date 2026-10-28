@@ -624,11 +624,20 @@ export class Hud {
         <div class="hud__stick" data-stick hidden><i data-stick-nub></i></div>
         <div class="hud__tbtn" data-tbtn="fire" hidden>${icon('crosshair')}</div>
         <div class="hud__tbtn" data-tbtn="aim" hidden>${icon('target')}</div>
+        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="dash" hidden>${icon('dash')}</div>
+        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="grenade" hidden>${icon('grenade')}</div>
+        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="melee" hidden>${icon('melee')}</div>
         <div class="hud__tbtn" data-tbtn="jump" hidden>${icon('jump')}</div>
         <div class="hud__tbtn" data-tbtn="sprint" hidden>${icon('sprint')}</div>
         <div class="hud__tbtn" data-tbtn="crouch" hidden>${icon('crouch')}</div>
         <div class="hud__tbtn" data-tbtn="reload" hidden>${icon('reload')}</div>
         <div class="hud__tbtn" data-tbtn="cycle" hidden>${icon('swap')}</div>
+        <!-- Ability charge pips: dash/grenade counts, so a touch player reads
+             resources exactly the way the footer plates show them on desktop. -->
+        <div class="hud__tpips">
+          <span class="hud__tpip" data-tpip="dash"><i></i><i></i></span>
+          <span class="hud__tpip" data-tpip="grenade"><i></i><i></i></span>
+        </div>
       </div>
       <div class="hud__bottom">
         <div class="hud__health">
@@ -1398,6 +1407,9 @@ export class Hud {
     // the dim state is the tell that does not require reading the n/N.
     this.setClass('dashc', this.dashChip, 'depleted', !dashReady);
     this.renderPips(this.dashPips, s.dashCharges, s.dashMax, 'dash');
+    // The touch pips are the SAME numbers through the same renderer, so the two
+    // schemes can never drift apart: one snapshot, one pip renderer, two homes.
+    this.fillTpips('dash', s.dashCharges, s.dashMax);
 
     const cook = clamp01(s.grenadeCook);
     const cooking = cook > 0;
@@ -1405,6 +1417,7 @@ export class Hud {
     this.setText('grenn', this.grenN, `${s.grenadeCharges}/${s.grenadeMax}`);
     this.setText('grenk', this.grenKindEl, GRENADE_LABEL[s.grenadeKind]);
     this.renderPips(this.grenPips, s.grenadeCharges, s.grenadeMax, 'gren');
+    this.fillTpips('grenade', s.grenadeCharges, s.grenadeMax);
     // A live cook owns the bar: it shows the cook, not the recharge.
     this.setStyle(
       'grenw',
@@ -1424,6 +1437,29 @@ export class Hud {
    * cells and the update loop runs every frame. The key is the pair of
    * numbers, so a charge spent and a recharge landing each rebuild once.
    */
+  /**
+   * Fill a touch charge-pip row in place.
+   *
+   * Distinct from `renderPips`, which rebuilds the footer plate's innerHTML:
+   * the row is re-created when touch mode toggles, so the cells are re-read each
+   * call rather than cached, and only the classes are written. The pip row
+   * reports the SAME numbers as the footer plates off the SAME snapshot, so the
+   * desktop and touch readouts cannot disagree.
+   */
+  private fillTpips(id: string, charges: number, max: number): void {
+    if (!this.touchMode) return;
+    const row = document.querySelector<HTMLElement>(`[data-tpip="${id}"]`);
+    if (!row) return;
+    const cells = row.children;
+    const visible = Math.min(max, cells.length);
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i] as HTMLElement | undefined;
+      if (!cell) continue;
+      cell.hidden = i >= visible;
+      cell.classList.toggle('on', i < charges);
+    }
+  }
+
   private renderPips(host: HTMLElement, charges: number, max: number, key: string): void {
     const state = `${charges}/${max}`;
     const last = key === 'dash' ? this.lastDashPipState : this.lastGrenPipState;
@@ -2272,6 +2308,8 @@ export class Hud {
     const el = this.touchButtons.get(id);
     if (el) el.classList.toggle('active', held);
   }
+
+
 
   /** Injected by Game so the HUD can mirror the input hit-rects verbatim. */
   public touchButtonRects: readonly { id: string; x: number; y: number; radius: number }[] | null = null;

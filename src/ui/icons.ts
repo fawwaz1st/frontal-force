@@ -8,6 +8,9 @@ export type IconName =
   | 'reload' | 'clock' | 'check' | 'play' | 'exit' | 'grid'
   | 'target' | 'speaker' | 'mouse' | 'move' | 'jump' | 'sprint'
   | 'crouch' | 'swap' | 'pause' | 'crate' | 'crosshair' | 'infinity' | 'bot'
+  // Ability verbs, added with the touch overlay's ability cluster. Kept in the
+  // same 24x24 stroke-2 family as the rest: one icon family for the whole HUD.
+  | 'dash' | 'grenade' | 'melee'
   | 'rifle' | 'smg' | 'shotgun' | 'railgun'
   | 'dmr' | 'lmg' | 'pistol' | 'launcher' | 'beam' | 'burst'
   | 'medal' | 'spark' | 'heart' | 'coins';
@@ -27,6 +30,17 @@ const ICON_PATHS: Record<IconName, string> = {
   // Ammo: cartridge
   bullet:
     '<path d="M12 2.5c2.1 2 3.2 4.5 3.2 7v3.7H8.8V9.5c0-2.5 1.1-5 3.2-7Z"/><path d="M8.8 13.2h6.4V19a2 2 0 0 1-2 2h-2.4a2 2 0 0 1-2-2v-5.8Z"/>',
+  // Dash: a chevron pair driving forward with motion lines behind it. Reads as
+  // "move fast NOW" at 15 px, unlike the reload arc or the jump chevron.
+  dash:
+    '<path d="M3.5 12h13"/><path d="m13 7 4.5 5L13 17"/><path d="M20.5 12h.01"/><path d="M3.5 6.5h5M3.5 17.5h5"/>',
+  // Grenade: lobbed sphere with the spoon lever and pin ring — the silhouette
+  // a player reads as "throwable" without a label.
+  grenade:
+    '<path d="M15 9c0-2.8-2.2-5-5-5S5 6.2 5 9c0 1.4.6 2.7 1.6 3.6L7 14a1 1 0 0 0 1 1h3.5V9.5h-2L10 8l1.5-1.5h2V9Z"/><path d="M14 6.5 17 4"/><circle cx="18.5" cy="3" r="1.6"/><path d="M8.5 15v3.5a1.5 1.5 0 0 0 1.5 1.5h2a1.5 1.5 0 0 0 1.5-1.5V15"/>',
+  // Melee: a blade edge-on with the guard — the "swing at it" verb.
+  melee:
+    '<path d="M14.5 3.5 20 9l-8.5 8.5"/><path d="M9 14.5 3.5 20l5.5 5.5"/><path d="M14.5 3.5 9 9l5.5 5.5"/><path d="M3.5 20h6M20 3.5v6"/>',
   reload:
     '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 4v5h-5"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/>',

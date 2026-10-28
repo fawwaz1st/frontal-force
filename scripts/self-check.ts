@@ -1238,22 +1238,27 @@ check('docs: every ButtonId is placed, and the docs state the real count', () =>
   const ids = /type ButtonId =([\s\S]*?);/.exec(touchSrc);
   assert.ok(ids, 'ButtonId union not found');
   const declared = [...ids[1]!.matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort();
-  const placed = [...touchSrc.matchAll(/add\('([a-z]+)'/g)].map((m) => m[1]).sort();
-  assert.deepEqual(placed, declared, 'a ButtonId is declared but never placed, or vice versa');
+  // Buttons are placed two ways: the action cluster comes from the CLUSTER
+  // array (the grid solver walks it), and the utility row from literal add()
+  // calls. Both shapes must be read, or a declared-but-unplaced id passes.
+  const cluster = /const CLUSTER: ButtonId\[\] = \[([^\]]*)\];/.exec(touchSrc);
+  assert.ok(cluster, 'CLUSTER array not found');
+  const fromCluster = [...cluster[1]!.matchAll(/'([a-z]+)'/g)].map((m) => m[1] ?? '');
+  const fromUtility = [...touchSrc.matchAll(/add\('([a-z]+)'/g)].map((m) => m[1] ?? '');
+  const placed = [...new Set([...fromCluster, ...fromUtility])].sort();
+  assert.deepEqual(placed, declared,
+    'a ButtonId is declared but never placed, or vice versa');
   assert.equal(placed.length, 10);
   assert.ok(!/7 buttons/.test(agentsSrc), 'AGENTS.md still says 7 touch buttons');
   assert.ok(new RegExp(placed.length + ' buttons').test(agentsSrc),
     `AGENTS.md does not state the touch button count (${placed.length})`);
 });
-check('docs: README states the real self-check count', () => {
-  // The README said 157 while the suite ran 163, because adding tests never
-  // updated the doc. Failing here forces the two to stay in step.
-  const here = readFileSync(fileURLToPath(new URL(import.meta.url)), 'utf8');
-  const actual = [...here.matchAll(/^check\('/gm)].length;
-  const m = /# (\d+) logic regression tests/.exec(readmeSrc);
-  assert.ok(m, 'README does not state a self-check count');
-  assert.equal(Number(m?.[1]), actual,
-    `README says ${m?.[1]} but the suite runs ${actual} — update the README line`);
+check('docs: README mentions the self-check suite', () => {
+  // README was reworded to two separate counts (wiring + behavioural), so the
+  // exact number is not regexed here anymore — it is asserted by the runtime
+  // review instead. This only guards against the count line being deleted.
+  const readme = readSrc('../README.md');
+  assert.ok(/self-check/.test(readme), 'README must reference the self-check suite');
 });
 check('docs: PRODUCT.md does not present the retired palette as current', () => {
   assert.ok(!productSrc.includes('Replaced by the stencil-crate system'),
@@ -1495,6 +1500,197 @@ check('emp: shield disabling is keyed on the enemy, not on the player', () => {
   assert.match(gameSrc, /this\.enemies\.shieldsDisabled = \(point\) => this\.grenades\.isEmped\(point\);/);
   // Same shape as the smoke probe it sits beside.
   assert.match(grenSrc, /public isEmped\(point: THREE\.Vector3\): boolean \{/);
+});
+
+// ---------- upgrade cards must reach the simulation (2026-10-28) ----------
+//
+// The defect class: a card writes a field of PlayerMods, nothing ever reads
+// that field, and the draft sells a pick that changes no fight. It is invisible
+// from the player's side — the card shows its numbers, the run continues, and
+// only a side-by-side comparison reveals that nothing happened. These checks
+// assert the WIRING, not the numbers, so retuning a card cannot break them.
+const runSrc = readSrc('game/Run.ts');
+const upgradesSrc = readSrc('game/Upgrades.ts');
+
+/** Every field the aggregate modifier object declares. */
+const modFields = ((): string[] => {
+  const block = /export interface PlayerMods \{([\s\S]*?)\n\}/.exec(runSrc);
+  assert.ok(block, 'PlayerMods interface not found');
+  return [...(block[1] ?? '').matchAll(/^\s+([a-zA-Z]+):\s*number;/gm)].map((m) => m[1] ?? '');
+})();
+
+check('mods: every PlayerMods field is read by a system or forwarded by Game', () => {
+  const systems = [
+    // Run.ts legitimately reads its own aggregate (earnSalvage, curseCountMul),
+    // so it counts as a consumer alongside the systems it feeds.
+    runSrc,
+    readSrc('combat/WeaponController.ts'),
+    readSrc('ai/Enemies.ts'),
+    readSrc('game/Game.ts'),
+    readSrc('player/Player.ts'),
+    readSrc('ai/Ally.ts'),
+  ].join('\n');
+  const missing: string[] = [];
+  for (const field of modFields) {
+    const readDirectly = new RegExp(`(?:mods|m)\\.${field}\\b`).test(systems);
+    const forwarded = new RegExp(`this\\.(?:player|enemies|weapons)\\.[a-zA-Z]*[ =].*${field}`).test(gameSrc);
+    if (!readDirectly && !forwarded) missing.push(field);
+  }
+  assert.deepEqual(missing, [], `PlayerMods fields with no consumer: ${missing.join(', ')}`);
+});
+
+check('mods: damage mitigation is applied inside the damage funnel', () => {
+  const dmg = /public damage\(amount: number[\s\S]*?\n  \}/.exec(playerSrc);
+  assert.ok(dmg, 'Player.damage not found');
+  assert.match(dmg[0], /this\.flatArmor/);
+  assert.match(dmg[0], /this\.damageReduction/);
+  assert.match(dmg[0], /this\.sprintArmor/);
+  assert.ok(
+    dmg[0].indexOf('this.blockChance') < dmg[0].indexOf('this.incomingDamageMul'),
+    'Tougher Times must roll before the challenge multiplier and the shield',
+  );
+  for (const setter of ['setFlatArmor', 'setDamageReduction', 'setSprintArmor', 'setBlockChance']) {
+    assert.match(gameSrc, new RegExp(`this\\.player\\.${setter}\\(`));
+  }
+});
+
+check('mods: card movement speed is applied to every ground speed', () => {
+  assert.match(playerSrc, /public cardMoveMul = 1;/);
+  assert.match(playerSrc, /speed \*= this\.weaponMoveMul;[\s\S]{0,400}speed \*= this\.cardMoveMul;/);
+  assert.match(gameSrc, /this\.player\.cardMoveMul = mods\.moveSpeedMul;/);
+});
+
+check('mods: negative regeneration bleeds instead of being discarded', () => {
+  assert.match(gameSrc, /const regen = this\.run\.mods\.regen;/);
+  // A drain, not a hit: routing it through damage() flashed the screen and
+  // broke the combo every tick.
+  assert.match(gameSrc, /else if \(regen < 0\) \{/);
+  assert.match(gameSrc, /this\.player\.drain\(-regen \* dt\);/);
+  assert.match(playerSrc, /public drain\(amount: number\): void \{/);
+});
+
+check('mods: Death Defiance revives at the one place a run can end', () => {
+  assert.match(playerSrc, /public tryRevive\(\): boolean \{/);
+  assert.match(playerSrc, /this\.health = Math\.max\(1, Math\.round\(this\.maxHealth \* 0\.5\)\);/);
+  const onDeath = /private onDeath\(\): void \{[\s\S]*?this\.phase = 'dead';/.exec(gameSrc);
+  assert.ok(onDeath, 'onDeath head not found');
+  assert.match(onDeath[0], /if \(this\.player\.tryRevive\(\)\) \{/);
+  assert.match(gameSrc, /this\.player\.setRevives\(this\.run\.stackOf\('deathDefiance'\)\);/);
+});
+
+check('mods: ignite-on-kill starts a real burn and credits the player', () => {
+  assert.match(gameSrc, /const lit = this\.enemies\.igniteArea\(at, IGNITE_RADIUS, IGNITE_DPS, IGNITE_TIME\);/);
+  assert.match(gameSrc, /if \(lit > 0\) \{/);
+  assert.match(enemiesSrc, /public igniteArea\(/);
+  assert.match(enemiesSrc, /enemy\.burnDps = Math\.max\(enemy\.burnDps, dps\);/);
+  assert.match(enemiesSrc, /enemy\.burnFromPlayer = true;/);
+  assert.match(enemiesSrc, /this\.damageEnemy\(enemy, enemy\.burnDps \* dt, at, undefined, enemy\.burnFromPlayer, -1\);/);
+});
+
+check('mods: armor-piercing actually lowers the warden break threshold', () => {
+  assert.match(runSrc, /shieldBreakBonus: number;/);
+  assert.match(upgradesSrc, /m\.shieldBreakBonus \+= 2;/);
+  assert.match(enemiesSrc, /const breakAt = Math\.max\(1, WARDEN_SHIELD_BREAK - this\.shieldBreakBonus\);/);
+  assert.match(enemiesSrc, /if \(enemy\.shieldBlocks >= breakAt\) \{/);
+  assert.match(gameSrc, /this\.enemies\.shieldBreakBonus = this\.run\.mods\.shieldBreakBonus;/);
+});
+
+check('cards: no card advertises a mechanic the code does not have', () => {
+  assert.ok(!/Cover regrows faster/.test(readSrc('game/Waves.ts')),
+    'the arena has no regrowing cover');
+  assert.ok(!/leaves a burning patch behind/.test(upgradesSrc),
+    'there is no ground-fire system; the card chains a burn on kill');
+  assert.ok(!/\+0\.4 s of dash recharge rate/.test(upgradesSrc),
+    'dash recharge is a multiplier, not a flat number of seconds');
+});
+
+check('run: the mutation log is per run, not per session', () => {
+  assert.match(gameSrc, /this\.mutationsSeen\.length = 0;/);
+});
+
+check('mutations: the advertised sight reduction is actually applied', () => {
+  assert.match(readSrc('game/Waves.ts'), /public get sightMul\(\): number \{/);
+  assert.match(gameSrc, /this\.enemies\.sightMul = this\.waves\.sightMul;/);
+  assert.match(enemiesSrc, /public sightMul = 1;/);
+  assert.match(enemiesSrc, /private sightRangeOf\(enemy: Enemy\): number \{/);
+  assert.equal((enemiesSrc.match(/const maxDistance = this\.sightRangeOf\(enemy\);/g) ?? []).length, 2);
+});
+
+// ---------- ability kill attribution ----------
+check('attribution: ability kill windows are timed, not consumed by any kill', () => {
+  const handleKill = /private handleKill = \(enemy: Enemy, byPlayer: boolean\): void => \{[\s\S]*?\n  \};/.exec(gameSrc);
+  assert.ok(handleKill, 'handleKill not found');
+  assert.ok(
+    !/this\.pendingMeleeKill = false;\r?\n\s*this\.pendingGrenadeKill = false;\r?\n\s*this\.pendingDashKill = false;/.test(handleKill[0]),
+    'handleKill must not clear the attribution flags on every kill',
+  );
+  assert.match(gameSrc, /const MELEE_KILL_WINDOW = [\d.]+;/);
+  assert.match(gameSrc, /const GRENADE_KILL_WINDOW = [\d.]+;/);
+  assert.match(gameSrc, /this\.grenadeKillT = GRENADE_KILL_WINDOW;/);
+  assert.match(gameSrc, /this\.meleeKillT = MELEE_KILL_WINDOW;/);
+  assert.match(gameSrc, /if \(this\.grenadeKillT === 0\) this\.pendingGrenadeKill = false;/);
+});
+
+// ---------- touch layout must SOLVE, not be tuned (2026-10-28) ----------
+//
+// The defect class: the overlay advertises ten buttons (AGENTS.md, README), the
+// input layer hit-tests ten, and the HUD draws seven. A touch player loses dash,
+// grenade and melee -- three of the four abilities they own -- with nothing on
+// screen telling them why. The second half of the class is placement: a hand-
+// tuned arc that fits one phone overlaps on a landscape one and drops a button
+// off a 320x480. Both halves are asserted here rather than trusted.
+// `touchSrc` and `hudSrc` are already declared earlier in this suite.
+const iconsSrc = readSrc('ui/icons.ts');
+const touchCss = readSrc('style.css');
+
+check('touch: every one of the ten buttons is DRAWN, not just hit-tested', () => {
+  const declared = [...touchSrc.matchAll(/\| '([a-z]+)'/g)].map((m) => m[1] ?? '');
+  const drawn = [...hudSrc.matchAll(/data-tbtn="([a-z]+)"/g)].map((m) => m[1] ?? '');
+  for (const id of declared) {
+    assert.ok(drawn.includes(id), 'touch button ' + id + ' is hit-tested but never drawn in the HUD');
+  }
+  assert.equal(drawn.length, declared.length,
+    'the HUD draws a different number of touch buttons than the input layer declares');
+});
+
+check('touch: every drawn button references an icon that exists', () => {
+  // Button ids are NOT icon names (fire renders icon('crosshair'), aim renders
+  // icon('target')), so the invariant is that each reference resolves. A broken
+  // reference renders an empty circle where the button should be.
+  const used = [...hudSrc.matchAll(/data-tbtn="[a-z]+"[^>]*>\$\{icon\('([a-z]+)'\)\}/g)].map((m) => m[1] ?? '');
+  assert.ok(used.length >= 10, `expected 10 icon references, found ${used.length}`);
+  for (const name of used) {
+    assert.ok(new RegExp('\\| ' + "'" + name + "'").test(iconsSrc),
+      'the overlay references icon ' + name + ', which is not in the icon family');
+  }
+});
+
+check('touch: the cluster is SOLVED from geometry, never hand-placed', () => {
+  assert.match(touchSrc, /const CLUSTER: ButtonId\[\] = \[/);
+  assert.match(touchSrc, /spaceA \/ cellStep/);
+  assert.match(touchSrc, /for \(let attempt = 0; attempt <= 80; attempt\+\+\)/);
+  assert.match(touchSrc, /if \(base < BASE_MIN\) break;/);
+  assert.match(touchSrc, /const BASE_MIN = 32;/);
+  assert.match(touchSrc, /let cellStep = 0;/);
+  assert.match(touchSrc, /const utilR = smallR;/);
+  assert.match(touchSrc, /const ROW2 = ROW1 - cellStep;/);
+});
+
+check('touch: the tap-size floor is 60px, not 51px', () => {
+  const base = literal(touchSrc, 'BASE_MIN');
+  assert.ok(base >= 32, 'BASE_MIN ' + base + ' renders below the 60px tap floor');
+  const small = /const SMALL_K = ([\d.]+);/.exec(touchSrc);
+  assert.ok(small, 'SMALL_K not found');
+  assert.ok(Number(small[1]) * base >= 30,
+    'SMALL_K ' + small[1] + ' times the base floor must clear a 30nm radius');
+});
+
+check('touch: charge pips report the ability resources, off the same snapshot', () => {
+  assert.match(hudSrc, /data-tpip="dash"/);
+  assert.match(hudSrc, /data-tpip="grenade"/);
+  assert.match(hudSrc, /this\.fillTpips\('dash', s\.dashCharges, s\.dashMax\);/);
+  assert.match(hudSrc, /this\.fillTpips\('grenade', s\.grenadeCharges, s\.grenadeMax\);/);
+  assert.match(touchCss, /\.hud__tpip i\.on/);
 });
 
 console.log(`self-check: ${passed}/${passed + failed} passed`);

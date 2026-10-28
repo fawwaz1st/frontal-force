@@ -99,6 +99,19 @@ const CARD_VALUE = 50;
 const SELL_REFUND_RATE = 0.4;
 /** How close a bullet impact must land to count as hitting a barrel. */
 const BARREL_HIT_RADIUS = 0.6;
+/**
+ * Ignite-on-kill payload (Gasoline / Diesel Soaked / Greek Fire).
+ *
+ * A radius smaller than a frag grenade on purpose: this is a chain-reaction
+ * rider on a kill, not a second explosive. The burn outlasts the 3 s combo
+ * window so the fire can finish a straggler the player already moved past.
+ */
+const IGNITE_RADIUS = 5;
+const IGNITE_DPS = 14;
+const IGNITE_TIME = 3;
+/** How long a melee swing or a thrown grenade owns the kills it causes. */
+const MELEE_KILL_WINDOW = 0.8;
+const GRENADE_KILL_WINDOW = 2.5;
 
 /**
  * Adapter: makes the human a `CombatTarget` without teaching Player about
@@ -231,10 +244,20 @@ export class Game {
   private dashKills = 0;
   private lifestealHealed = 0;
   private longestCombo = 0;
-  /** Set true by the melee/grenade paths so the NEXT kill is attributed. */
+  /**
+   * Ability kill-attribution WINDOWS, in seconds remaining.
+   *
+   * A window rather than a one-shot flag because all three abilities kill
+   * asynchronously: a grenade kills on impact (up to ~2 s after the throw), a
+   * dash kill happens while the dash is still travelling, and a melee kill can
+   * come from the lunge. The window closes on its own timer, so a stale flag
+   * can never claim a kill from a later fight.
+   */
   private pendingMeleeKill = false;
   private pendingGrenadeKill = false;
   private pendingDashKill = false;
+  private meleeKillT = 0;
+  private grenadeKillT = 0;
   private readonly pLast = new THREE.Vector3(Number.NaN, 0, 0);
   private readonly radarBlips: RadarBlip[] = Array.from({ length: 24 }, () => ({
     x: 0,
@@ -580,6 +603,13 @@ export class Game {
       this.hud.damageFrom(angle);
       this.audio.hurt(Math.sin(angle));
     };
+    // Tougher Times: a blocked hit needs a visible answer, or the card is
+    // invisible. It is deliberately NOT a damage flash — nothing was taken —
+    // and it does not reset the combo, because the hit never landed.
+    this.player.onBlocked = () => {
+      this.hud.hitmarkerFlash('blocked');
+      this.audio.blocked();
+    };
     this.player.onSlide = () => {
       this.audio.dash();
     };
@@ -752,10 +782,20 @@ export class Game {
     // Fresh run: new seeded stream, new modifier set, fresh statistics.
     const runSeed = seed ?? ((Math.random() * 0xffffffff) >>> 0);
     this.run = new Run(runSeed);
+    // The mutation log is per RUN: it is rendered as "the mutations you saw"
+    // on the death card, so carrying it across a restart reported the previous
+    // run's weather as this run's.
+    this.mutationsSeen.length = 0;
     this.waves.setRng(this.run.rng);
     this.resetAbilityState();
     this.resetRunStats();
     this.applyChallenges();
+    // Reset the player's mitigation to the fresh (identity) run: the armor,
+    // reduction, block chance and move-speed fields the run starts with are
+    // only re-derived on draft resolve, so without this a SECOND run kept the
+    // first run's Plate Carrier / Wings / Tougher Times and the player walked
+    // into wave 1 already armoured by a run they had already finished.
+    this.applyRunMods();
     this.weapons.reset();
     this.enemies.clear();
     this.pickups.clear();
@@ -899,6 +939,8 @@ export class Game {
     this.pendingMeleeKill = false;
     this.pendingGrenadeKill = false;
     this.pendingDashKill = false;
+    this.meleeKillT = 0;
+    this.grenadeKillT = 0;
   }
 
   private maxDashCharges = DASH_CHARGES;
@@ -951,12 +993,29 @@ export class Game {
     this.resumeAfterIntermission();
   }
 
-  /** Push the run's aggregate modifiers into the systems that read them. */
+  /**
+   * Push the run's aggregate modifiers into the systems that read them.
+   *
+   * This is the ONLY place a card reaches the simulation, which is why every
+   * field of `PlayerMods` has to be forwarded here. A field that is written by
+   * a card but never forwarded is an upgrade that silently does nothing — the
+   * player pays a draft pick for it and gets no feedback either way.
+   */
   private applyRunMods(): void {
     const mods = this.run.mods;
-    this.player.applyMods(mods.maxHealthMul);
+    // Challenge HP multiplies the card HP; the run-start path applies the same
+    // product, so a mid-run card cannot quietly erase the wager's health cost.
+    this.player.applyMods(mods.maxHealthMul * this.challengeMods.playerHpMul);
     this.weapons.setMods(mods);
     this.waves.setCurse(this.run.curseCountMul, this.run.curseHpMul);
+    // Damage mitigation and mobility, funnelled through the player because
+    // Player.damage and Player.update are the single choke points for them.
+    this.player.setFlatArmor(mods.flatArmor);
+    this.player.setDamageReduction(mods.damageReduction);
+    this.player.setSprintArmor(mods.sprintArmor);
+    this.player.setBlockChance(mods.blockChance);
+    this.player.cardMoveMul = mods.moveSpeedMul;
+    this.player.setRevives(this.run.stackOf('deathDefiance'));
     // Ability capacity can change mid-run when a card grants a charge.
     this.maxDashCharges = DASH_CHARGES + mods.dashChargesBonus;
     this.maxGrenadeCharges = GRENADE_CHARGES + mods.grenadeChargesBonus;
@@ -1143,6 +1202,21 @@ export class Game {
   }
 
   private onDeath(): void {
+    // Death Defiance: a banked revive turns the killing blow into a reset
+    // instead of a run summary. It is checked HERE, at the one place the run
+    // can end, so every damage source is covered by construction.
+    if (this.player.tryRevive()) {
+      this.hitstopT = Math.max(this.hitstopT, 0.22);
+      this.effects.ring(this.player.position, 0xffd76b, 7, 0.6);
+      this.effects.burst(this.player.position, 0xffd76b, 24, 3);
+      this.audio.achievement();
+      this.hud.showBanner('DEATH DEFIANCE', 'BACK ON YOUR FEET');
+      // Coming back must not be silent about what it cost: the combo is gone
+      // either way, so the reset is the same as a hit.
+      this.combo = 0;
+      this.comboTimer = 0;
+      return;
+    }
     this.phase = 'dead';
     this.input.resetTransient();
     this.audio.setMusicPaused(false);
@@ -1438,6 +1512,11 @@ export class Game {
     // A probe, not a value: each enemy is tested against its own position, so an
     // EMP strips the shields of the enemies standing in it.
     this.enemies.shieldsDisabled = (point) => this.grenades.isEmped(point);
+    // The arena mutation's visibility contract: every mutation advertises a
+    // sight reduction ("Enemies see 30% less far") and this is what makes that
+    // true rather than atmospheric copy.
+    this.enemies.sightMul = this.waves.sightMul;
+    this.enemies.shieldBreakBonus = this.run.mods.shieldBreakBonus;
     this.enemies.playerYaw = this.player.yawAngle;
     this.enemies.update(
       dt,
@@ -1469,9 +1548,16 @@ export class Game {
     const afflict = this.enemies.tickPlayerAffixes(dt);
     if (afflict.burnDamage > 0) this.player.damage(afflict.burnDamage, null, 'AFFIX BURN');
     this.player.setSlow(afflict.slowFraction);
-    // Passive regeneration from cards.
-    if (this.run.mods.regen > 0 && !this.player.dead) {
-      this.player.heal(this.run.mods.regen * dt);
+    // Passive regeneration from cards. A NEGATIVE rate is a bleed and must
+    // drain rather than heal: Bloody Hand advertises "you take 1 damage per
+    // second" and pays for it with 6% lifesteal, but the old `> 0` guard
+    // silently discarded the downside, so the card was pure upside and its
+    // stated cost was a lie the player could not even measure.
+    const regen = this.run.mods.regen;
+    if (regen > 0) {
+      this.player.heal(regen * dt);
+    } else if (regen < 0) {
+      this.player.drain(-regen * dt);
     }
 
     // Footsteps: stride-linked distance cadence while grounded
@@ -1528,11 +1614,27 @@ export class Game {
     // the single funnel every damage source passes through.
     this.player.tickInvulnerable(dt);
     this.meleeT = Math.max(0, this.meleeT - dt);
+    // Attribution windows close on their own clock, so a grenade that lands
+    // long after the throw still owns its kills and a rifle kill two seconds
+    // later does not steal them.
+    if (this.meleeKillT > 0) {
+      this.meleeKillT = Math.max(0, this.meleeKillT - dt);
+      if (this.meleeKillT === 0) this.pendingMeleeKill = false;
+    }
+    if (this.grenadeKillT > 0) {
+      this.grenadeKillT = Math.max(0, this.grenadeKillT - dt);
+      if (this.grenadeKillT === 0) this.pendingGrenadeKill = false;
+    }
 
     // ---- Dash ----
     if (this.dashT > 0) {
       this.dashT = Math.max(0, this.dashT - dt);
-      if (this.dashT <= 0) this.player.clearDash();
+      if (this.dashT <= 0) {
+        this.player.clearDash();
+        // The dash kill window IS the dash: once the movement is over, a kill
+        // can no longer be "while dashing", so the claim closes with it.
+        this.pendingDashKill = false;
+      }
     }
     if (this.dashCharges < this.maxDashCharges) {
       this.dashRecharge += dt * mods.dashRechargeMul;
@@ -1608,6 +1710,7 @@ export class Game {
     this.player.eyePosition(eye);
     this.grenades.throwGrenade(this.grenadeKind, eye, dir, this.grenadeCook);
     this.pendingGrenadeKill = true;
+    this.grenadeKillT = GRENADE_KILL_WINDOW;
   }
 
   /**
@@ -1648,6 +1751,7 @@ export class Game {
     const target: Enemy = best;
     const at = target.group.position.clone().setY(target.group.position.y + 1);
     this.pendingMeleeKill = true;
+    this.meleeKillT = MELEE_KILL_WINDOW;
     const canExecute = target.health / target.def.health <= EXECUTE_THRESHOLD;
     if (canExecute) {
       this.effects.ring(at, 0xffd76b, 4, 0.35);
@@ -1745,17 +1849,20 @@ export class Game {
     // run's seeded RNG so a replayed seed drops identically.
     if (byPlayer) this.rollDrop(enemy);
     const mods = this.run.mods;
-    // Attribute the kill to whichever ability produced it, then clear the
-    // flags: attribution is one-shot by design, or a single grenade would
-    // count every later kill in the run.
+    // Attribute the kill to whichever ability produced it.
+    //
+    // The flags are WINDOWS, not one-shot claims: a melee swing, a thrown
+    // grenade and a dash each open a window of a few seconds during which kills
+    // are credited to them. The old code cleared all three on ANY kill, so
+    // throwing a grenade and then shooting one grunt while the grenade was
+    // still in the air consumed the flag — the grenade landed, killed five
+    // enemies, and every one of them was credited to the rifle. AERIAL ACE and
+    // PACIFIST ADJACENT were effectively unreachable.
     if (byPlayer) {
       if (this.pendingMeleeKill) this.meleeKills += 1;
       else if (this.pendingGrenadeKill) this.grenadeKills += 1;
       else if (this.pendingDashKill && this.dashT > 0) this.dashKills += 1;
     }
-    this.pendingMeleeKill = false;
-    this.pendingGrenadeKill = false;
-    this.pendingDashKill = false;
     if (enemy.elite) this.eliteKills += 1;
     if (enemy.kind === 'wardenPrime') this.bossKills += 1;
     // Salvage: the run's currency. Elites and bosses pay a premium, which is
@@ -1768,11 +1875,21 @@ export class Game {
     this.run.earnSalvage(salvageBase);
     // Heal-on-kill and lifesteal, both from the card pool.
     if (mods.healOnKill > 0) this.player.heal(mods.healOnKill);
-    // Ignite-on-kill: splash a small burn onto the dead enemy's neighbours.
+    // Ignite-on-kill: splash a burn onto the dead enemy's neighbours.
+    //
+    // This used to draw the ring and the sparks and apply NOTHING — no burn
+    // timer was ever set, so Gasoline, Diesel Soaked and Greek Fire were three
+    // cards that cost a draft pick and changed no fight. The visual is now
+    // driven by the count of enemies actually set alight, so an empty burst
+    // cannot read as a working card either.
     if (mods.igniteOnKill > 0 && this.run.rng.chance(mods.igniteOnKill)) {
       const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
-      this.effects.ring(at, 0xff8a3c, 5, 0.4);
-      this.effects.burst(at, 0xff8a3c, 10, 1.8);
+      const lit = this.enemies.igniteArea(at, IGNITE_RADIUS, IGNITE_DPS, IGNITE_TIME);
+      if (lit > 0) {
+        this.effects.ring(at, 0xff8a3c, IGNITE_RADIUS * 2, 0.4);
+        this.effects.burst(at, 0xff8a3c, 10, 1.8);
+        this.audio.blastAt(at.x, at.z);
+      }
     }
     // Escort kills bank the base score but never extend the player's combo.
     if (!byPlayer) {

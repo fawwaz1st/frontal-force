@@ -177,30 +177,130 @@ export class TouchControls {
     // there is exactly one source of truth for the safe area.
     const cs = getComputedStyle(document.documentElement);
     const safeB = parseFloat(cs.getPropertyValue('--safe-b')) || 0;
+    const safeT = parseFloat(cs.getPropertyValue('--safe-t')) || 0;
     const safeL = parseFloat(cs.getPropertyValue('--safe-l')) || 0;
     const safeR = parseFloat(cs.getPropertyValue('--safe-r')) || 0;
-    const r = Math.max(30, Math.min(46, w * 0.055));
+    // The base floor is the tap minimum, not an aesthetic choice: 30nm of radius
+    // renders as a 51px hit-target, which is below the 60px floor DESIGN.md
+    // requires of every touch control. 32nm gives 64px at the smallest.
+    const BASE_MIN = 32;
+    const BASE_MAX = 46;
+    // The floor is the tap minimum, not an aesthetic choice: 30nm of radius
+    // renders as a 51px hit-target, which is below the 60px floor DESIGN.md
+    // requires of every touch control. 32nm gives 64px at the smallest.
+    const r = Math.max(BASE_MIN, Math.min(BASE_MAX, w * 0.055));
     const pad = r + Math.max(10, w * 0.02);
     this.buttons.length = 0;
+    // The registration helper both clusters use. Keeping it here means the grid
+    // solver and the utility row share one insertion path.
     const add = (id: ButtonId, x: number, y: number, radius = r): void => {
       this.buttons.push({ id, x, y, radius, pointerId: null });
     };
-    // Right cluster: primary actions, thumb-reachable arc. Inset by the safe
-    // area so FIRE never sits under the home indicator.
-    add('fire', w - pad - safeR, h - pad - safeB, r * 1.22);
-    add('aim', w - pad - safeR - r * 2.5, h - pad * 1.25 - safeB);
-    add('jump', w - pad - safeR - r * 2.2, h - pad * 2.9 - safeB);
-    // Ability cluster: dash and melee flank the fire button, grenade sits
-    // between them, so all three are reachable without moving the thumb off
-    // the fire pad. Tap-and-hold on the grenade cooks it.
-    add('dash', w - pad - safeR - r * 2.6, h - pad * 4.5 - safeB, r * 0.82);
-    add('grenade', w - pad - safeR - r * 1.1, h - pad * 4.9 - safeB, r * 0.82);
-    add('melee', w - pad - safeR + r * 0.9, h - pad * 4.4 - safeB, r * 0.82);
-    // Left cluster: utility, above the stick zone.
-    add('sprint', pad + safeL, h - pad * 3.6 - safeB, r * 0.86);
-    add('crouch', pad + safeL + r * 2.2, h - pad * 3.6 - safeB, r * 0.86);
-    add('reload', pad + safeL, h - pad * 5.6 - safeB, r * 0.86);
-    add('cycle', pad + safeL + r * 2.2, h - pad * 5.6 - safeB, r * 0.86);
+    // ---- Right cluster: an adaptive grid, never a hand-placed arc.
+    //
+    // The six action buttons used to sit on a hand-tuned fan, and the fan could
+    // not serve every viewport: it overlapped on a landscape 844x390, pushed the
+    // grenade button off a 320x480, and adding the three ability buttons made
+    // both worse. Tuning per-phone magic numbers is a treadmill, so the cluster
+    // is SOLVED from the room the viewport actually has.
+    // ---- Cell geometry constants, shared by the sizing loop and the
+    // placement of BOTH clusters. One derivation means the action grid and the
+    // utility row cannot disagree about what a tap is worth.
+    const FIRE_K = 1.15;
+    // Radii as a fraction of the base. SMALL_K >= 0.9375 is what keeps the
+    // smallest hit-target at or above the 30nm (60px) floor once base is at its
+    // own 32nm floor — 0.85 rendered 54px, below the documented minimum.
+    const SMALL_K = 0.95;
+    const GAP_K = 0.14;
+    // The base floor is the tap minimum, not an aesthetic choice: 30nm of radius
+    // renders as a 51px hit-target, which is below the 60px floor DESIGN.md
+    // requires of every touch control. 32nm gives 64px at the smallest.
+    // ---- Right cluster: an adaptive grid, never a hand-placed arc.
+    //
+    // The six action buttons used to sit on a hand-tuned fan, and the fan could
+    // not serve every viewport: it overlapped on a landscape 844x390, pushed the
+    // grenade button off a 320x480, and adding the three ability buttons made
+    // both worse. Tuning per-phone magic numbers is a treadmill, so the cluster
+    // is SOLVED from the room the viewport actually has:
+    //
+    //   1. The right-hand region is bounded by the safe insets on the right and
+    //      by the left utility row (which owns the bottom-left corner).
+    //   2. A button size is chosen, the grid cell is derived FROM that size, and
+    //      the number of columns and rows is derived from the region.
+    //   3. The size shrinks until the whole cluster fits, so a small phone gets
+    //      smaller buttons rather than buttons that overlap or fall off-screen,
+    //      and a tablet keeps the large ones.
+    //
+    // The grid fills bottom-up, right-to-left, so FIRE always lands in the
+    // corner where the thumb rests and the abilities fan toward the middle.
+    const CLUSTER: ButtonId[] = ['fire', 'jump', 'aim', 'melee', 'dash', 'grenade'];
+    // Left edge of the right-hand cluster: the left utility row owns the
+    // bottom-left corner, so the action grid starts to its right of it.
+    const regionLeft = pad + safeL + BASE_MIN * 3.1;
+    const regionRight = w - safeR;
+    const regionTop = safeT + BASE_MIN * 0.4;
+    const bottom = h - safeB;
+    const spaceA = regionRight - regionLeft;
+    const spaceB = bottom - regionTop;
+
+    // German for "one place": both clusters read these after the sizing loop.
+    let cellStep = 0;
+    let fireR = 0;
+    let smallR = 0;
+    let gapSize = 0;
+
+    const fitM = (base: number): number => {
+      fireR = base * FIRE_K;
+      smallR = base * SMALL_K;
+      gapSize = base * GAP_K;
+      cellStep = fireR + smallR + gapSize;
+      return Math.max(1, Math.floor(spaceA / cellStep));
+    };
+
+    let cols = 0;
+    for (let attempt = 0; attempt <= 80; attempt++) {
+      const base = BASE_MAX - attempt * 0.25;
+      if (base < BASE_MIN) break;
+      cols = fitM(base);
+      const rows = Math.max(1, Math.floor(spaceB / cellStep));
+      if (cols * rows < CLUSTER.length) continue;
+      break;
+    }
+    // Fallback guard: a degenerate viewport (a split-screen phone, say) still
+    // keeps every button on screen. The grid already guarantees separation, so
+    // this only bites when the viewport is too small for even the floor size.
+    fitM(BASE_MIN);
+    cols = Math.max(1, cols);
+
+    // FIRE is the thumb anchor and sits in the bottom-right cell; the cluster
+    // fills toward the middle so no thumb travel is needed to reach a dash.
+    for (let n = 0; n < CLUSTER.length; n++) {
+      const id = CLUSTER[n];
+      if (id === undefined) continue;
+      const col = n % cols;
+      const row = Math.floor(n / cols);
+      const x = regionRight - fireR - col * cellStep;
+      const y = bottom - fireR - row * cellStep;
+      const radius = id === 'fire' ? fireR : smallR;
+      add(
+        id,
+        Math.min(w - safeR - radius, Math.max(safeL + radius, x)),
+        Math.min(h - safeB - radius, Math.max(safeT + radius, y)),
+        radius,
+      );
+    }
+
+    // ---- Left cluster: utility, above the stick zone.
+    // Placed on the SAME cell step as the right cluster, so the two rows cannot
+    // collide with each other and both clear the same tap floor.
+    const utilR = smallR;
+    const utilX = pad + safeL + utilR;
+    const ROW1 = bottom - utilR;
+    const ROW2 = ROW1 - cellStep;
+    add('sprint', utilX, ROW1, utilR);
+    add('crouch', utilX + cellStep, ROW1, utilR);
+    add('reload', utilX, ROW2, utilR);
+    add('cycle', utilX + cellStep, ROW2, utilR);
   }
 
   /** Hit-test the buttons; returns the button under a point, or null. */

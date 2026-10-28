@@ -160,6 +160,12 @@ export class Player {
    * weapon each step by the owner, so a heavy gun really costs mobility.
    */
   public weaponMoveMul = 1;
+  /**
+   * Movement speed multiplier from the run's upgrade cards (Wings). Same seam
+   * as `weaponMoveMul` and applied at the same point, so a +10% card and a
+   * heavy weapon multiply rather than one silently winning.
+   */
+  public cardMoveMul = 1;
   private wasAirborne = false;
   private sensitivity = 1;
   private readonly tmpDir = new THREE.Vector3();
@@ -433,9 +439,31 @@ export class Player {
     // no damage-arc. A hit that is already intended to miss must not spend
     // the shield or reset the combo.
     if (this.invulnT > 0) return;
+    // Tougher Times: a full dodge is not a hit at all, so it must resolve
+    // before anything is deducted — no shield drain, no combo reset, no
+    // damage-taken statistic. Rolling it after mitigation would have made a
+    // "dodged" hit still read as damage taken on the death card.
+    if (this.blockChance > 0 && Math.random() < this.blockChance) {
+      this.lastDamageTaken = 0;
+      this.lastDamageSource = source;
+      this.onBlocked?.(source);
+      return;
+    }
     // Challenge wager first: the multiplier is part of the contract the player
     // signed up for, so it applies before armor and the shield.
-    const incoming = amount * this.incomingDamageMul;
+    let incoming = amount * this.incomingDamageMul;
+    // Armor cards, in the documented order: flat reduction first (so it is
+    // worth the same against a grunt bolt and a boss slam), then the fraction,
+    // then the sprint-only bonus. A negative reduction (Delicate Watch, Dual
+    // Edge) is an AMPLIFIER and lands here too, which is why the floor is
+    // applied after the multiply rather than trusting the modifier to be sane.
+    if (this.flatArmor > 0) incoming = Math.max(0, incoming - this.flatArmor);
+    const reduction = clamp(
+      this.damageReduction + (this.sprinting ? this.sprintArmor : 0),
+      -2,
+      0.6,
+    );
+    if (reduction !== 0) incoming = Math.max(0, incoming * (1 - reduction));
     // Shield soaks first, then health. The split is applied before the shake
     // and the HUD flash so an absorbed hit still reads as a hit.
     let remaining = incoming;
@@ -453,6 +481,9 @@ export class Player {
     if (this.health <= 0) this.dead = true;
   }
 
+  /** Fires when Tougher Times eats a hit whole, so the owner can answer it. */
+  public onBlocked: ((source: string) => void) | null = null;
+
   /** Tick the invulnerability window. Called by `Game` inside the fixed step. */
   public tickInvulnerable(dt: number): void {
     if (this.invulnT > 0) this.invulnT = Math.max(0, this.invulnT - dt);
@@ -461,6 +492,54 @@ export class Player {
   public heal(amount: number): void {
     if (this.dead) return;
     this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+
+  /**
+   * Continuous health drain from a card's own upkeep (Bloody Hand).
+   *
+   * Deliberately NOT `damage()`: routing a per-frame bleed through the damage
+   * funnel fired `onDamaged` sixty times a second, which flashed the screen,
+   * shook the camera, reset the kill combo and re-armed the "hurt by" label
+   * every tick — a card that reads as "you lose 1 HP a second" would have
+   * looked like being shot by an invisible enemy forever. A drain is a cost,
+   * not a hit, so it moves health and nothing else.
+   */
+  public drain(amount: number): void {
+    if (this.dead || !(amount > 0)) return;
+    this.health = Math.max(0, this.health - amount);
+    if (this.health <= 0) this.dead = true;
+  }
+
+  /** Death Defiance charges left this run. Set by the owner from the cards. */
+  private revives = 0;
+
+  /** Arm the revive budget (Death Defiance stacks). Called on every run start
+   *  and whenever the card pool changes. */
+  public setRevives(count: number): void {
+    this.revives = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  }
+
+  /** Revives still banked, for the HUD readout. */
+  public get revivesLeft(): number {
+    return this.revives;
+  }
+
+  /**
+   * Spend one revive if the player is down and has one banked.
+   *
+   * The card was previously inert: `apply` was an empty function and the
+   * "see Player.tryRevive" comment pointed at a method that did not exist, so
+   * a legendary pick did nothing at all. Returns true when the revive fired, so
+   * the orchestrator can play the effect and skip the death screen.
+   */
+  public tryRevive(): boolean {
+    if (!this.dead || this.revives <= 0) return false;
+    this.revives -= 1;
+    this.dead = false;
+    this.health = Math.max(1, Math.round(this.maxHealth * 0.5));
+    this.shield = 0;
+    this.invulnT = Math.max(this.invulnT, 1.2);
+    return true;
   }
 
   /** Grant an absorbing shield (kiosk purchase). */
@@ -487,6 +566,41 @@ export class Player {
    * blasts, burn ticks, hazards — goes through exactly one place.
    */
   public incomingDamageMul = 1;
+
+  /**
+   * Damage mitigation from the run's upgrade cards, pushed in by the owner
+   * whenever the card pool changes (see Game.applyRunMods).
+   *
+   * These live on the player, not in Run.mods, because Player.damage is the
+   * single funnel every damage source passes through — bolts, splash, affix
+   * burn, hazards, and the player's own blast. Applying them here is what makes
+   * "you take less damage" mean ALL damage rather than only the sources that
+   * happened to remember to ask.
+   */
+  private flatArmor = 0;
+  private damageReduction = 0;
+  private sprintArmor = 0;
+  private blockChance = 0;
+
+  /** Flat reduction per hit (Plate Carrier). */
+  public setFlatArmor(value: number): void {
+    this.flatArmor = Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  /** Fraction of incoming damage ignored, before the shield (0..0.6). */
+  public setDamageReduction(value: number): void {
+    this.damageReduction = Number.isFinite(value) ? clamp(value, -2, 0.6) : 0;
+  }
+
+  /** Extra damage reduction that only applies while sprinting (Rose Buckler). */
+  public setSprintArmor(value: number): void {
+    this.sprintArmor = Number.isFinite(value) ? clamp(value, 0, 0.6) : 0;
+  }
+
+  /** Chance to ignore a hit entirely (Tougher Times). */
+  public setBlockChance(value: number): void {
+    this.blockChance = Number.isFinite(value) ? clamp(value, 0, 0.6) : 0;
+  }
 
   /** External slow applied by the Glacial affix (0 = none, 1 = fully slowed). */
   public setSlow(fraction: number): void {
@@ -567,6 +681,10 @@ export class Player {
     // launcher must not slide as far as a pistol, or the loadout would have no
     // cost and the choice would collapse to "most damage".
     speed *= this.weaponMoveMul;
+    // Card speed stacks on top of the weapon weight. Both are applied to every
+    // ground speed for the same reason: a card that only worked while walking
+    // would be a card the player never sees working.
+    speed *= this.cardMoveMul;
     this.adsT = damp(this.adsT, input.aimHeld && !canSprint ? 1 : 0, 10, dt);
 
     const accel = this.grounded ? (this.slideTimer > 0 ? 2.2 : 14) : 5.5;

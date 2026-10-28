@@ -24,7 +24,8 @@ export type UpgradeId =
   | 'armorPiercing' | 'runaldBand' | 'behemoth' | 'highConfidence'
   | 'deathDefiance' | 'doubleStrike' | 'greekFire' | 'ricochet' | 'focus'
   | 'explosiveShells' | 'ninjaInvincibility' | 'dualEdge' | 'midairStrike'
-  | 'blackContract' | 'overclock' | 'superReload' | 'dieselSoaked' | 'bloodyHand';
+  | 'blackContract' | 'overclock' | 'superReload' | 'dieselSoaked' | 'bloodyHand'
+  | 'vultureEye' | 'fuelInjector';
 
 export type Rarity = 'common' | 'rare' | 'legendary';
 
@@ -166,7 +167,10 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   armorPiercing: {
     id: 'armorPiercing', name: 'Armor-Piercing Rounds', rarity: 'rare',
     description: '+18% damage, and warden shields break 2 blocks sooner.',
-    apply: (m) => { m.damageMul *= 1.18; },
+    // The shield half of this card used to be copy only: `apply` raised
+    // damage and nothing touched the guard meter, so the card was a plain
+    // +18% with a promise attached.
+    apply: (m) => { m.damageMul *= 1.18; m.shieldBreakBonus += 2; },
   },
   runaldBand: {
     id: 'runaldBand', name: "Runald's Band", rarity: 'rare',
@@ -199,12 +203,17 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   greekFire: {
     id: 'greekFire', name: 'Greek Fire', rarity: 'legendary',
-    description: 'Kills always ignite nearby enemies for heavy burn.',
-    maxStacks: 3,
+    // Every kill ignites; extra stacks buy nothing, so the cap is 1 and the
+    // card is honest about being a one-off unlock rather than a stack.
+    description: 'Every kill sets nearby enemies alight.',
+    maxStacks: 1,
     apply: (m) => { m.igniteOnKill = 1; },
   },
   ricochet: {
-    id: 'ricochet', name: 'Ricochet', rarity: 'rare',
+    // Renamed from "Ricochet": the rail is the only weapon with bouncing
+    // rounds, and this card never granted any, so the name sold a mechanic the
+    // card does not have. It is a plain fire-rate/damage line and now says so.
+    id: 'ricochet', name: 'Ripper Rounds', rarity: 'rare',
     description: '+8% fire rate, +10% damage.',
     apply: (m) => { m.fireRateMul *= 1.08; m.damageMul *= 1.1; },
   },
@@ -234,7 +243,10 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   midairStrike: {
     id: 'midairStrike', name: 'Midair Strike', rarity: 'common',
-    description: '+0.4 s of dash recharge rate.',
+    // The old line quoted a flat number of seconds for a field that is a
+    // MULTIPLIER, so the card promised four-tenths of a second and delivered a
+    // 12% speedup. The line now states the effect it applies.
+    description: '+12% dash recharge rate.',
     apply: (m) => { m.dashRechargeMul *= 1.12; },
   },
   blackContract: {
@@ -255,7 +267,10 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   dieselSoaked: {
     id: 'dieselSoaked', name: 'Diesel Soaked', rarity: 'rare',
-    description: 'Kills leave a burning patch behind.',
+    // "Leaves a burning patch behind" described a ground-fire system that does
+    // not exist. What the card actually does is chain a burn onto the
+    // neighbours of a kill, so it now says that.
+    description: 'Kills have a 50% chance to set nearby enemies alight.',
     maxStacks: 2,
     apply: (m) => { m.igniteOnKill = Math.min(1, m.igniteOnKill + 0.5); },
   },
@@ -264,6 +279,34 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
     description: '6% lifesteal, but you take 1 damage per second.',
     maxStacks: 3,
     apply: (m) => { m.lifesteal += 0.06; m.regen -= 1; },
+  },
+
+  // ---------- Two cards that use ONLY fields the systems already read.
+  //
+  // The draft pool is the cheapest place to add gameplay depth that cannot
+  // silently break, because a card is a one-line mutation of the aggregate
+  // modifier object and the systems read it. What made the earlier pool a trap
+  // was cards promising fields nobody read; these deliberately reuse live ones.
+  //
+  // Vulture Eye rewards the fight you are already winning. Full-health kills
+  // are worth more, which turns the common "I am at 100%, should I play safe?"
+  // stall into a scored decision. It composes with High Confidence rather than
+  // replacing it: High Confidence scores being at full health, Vulture Eye
+  // scores the kill that happens while you are.
+  vultureEye: {
+    id: 'vultureEye', name: 'Vulture Eye', rarity: 'rare',
+    description: 'Kills while at full health score 35% more.',
+    maxStacks: 3,
+    apply: (m) => { m.fullHpScoreMul *= 1.35; },
+  },
+  // Fuel Injector is Overclock's mirror: a slower gun paid for with a bigger
+  // hit and a bigger magazine, which makes "how do I spend my fire rate" a live
+  // decision instead of one right answer.
+  fuelInjector: {
+    id: 'fuelInjector', name: 'Fuel Injector', rarity: 'rare',
+    description: '+12% damage and +6% magazine size, -10% fire rate.',
+    maxStacks: 3,
+    apply: (m) => { m.damageMul *= 1.12; m.magMul *= 1.06; m.fireRateMul *= 0.9; },
   },
 };
 

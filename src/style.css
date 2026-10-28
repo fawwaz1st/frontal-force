@@ -2388,8 +2388,56 @@ kbd {
   color: var(--accent);
   background: rgba(124, 231, 255, 0.18);
 }
+/* The three ability buttons read a step warmer than the four utility buttons so
+   a thumb can tell "this one bursts" from "this one toggles" without a label. */
+.hud__tbtn--ability {
+  border-color: var(--warn-line, #4a4033);
+  background: rgba(38, 30, 20, 0.5);
+  color: var(--warn, #ffcf6b);
+}
+.hud__tbtn--ability.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(124, 231, 255, 0.22);
+}
 .hud__tbtn .ic { width: 45%; height: 45%; }
 
+/* Charge pips under the ability buttons: filled while held, dim while spent.
+   The two-pip shape is chosen because both abilities have a 2-charge cap, so
+   the pip row is the same shape as the resource it reports. */
+.hud__tpips {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(14px + var(--safe-b));
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  pointer-events: none;
+}
+.hud__tpip {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.hud__tpip i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+/* Filled while held, dim while spent: the row reads as "how many do I have"
+   without asking the player to count anything. */
+.hud__tpip i.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.hud__tpip.is-full i {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 /* Touch mode gives the thumbs their corners back. */
 .hud--touch .hud__bottom { margin-bottom: calc(20px + var(--safe-b)); }
 .hud--touch .hud__radar { margin-top: calc(18px + var(--safe-t)); margin-right: calc(18px + var(--safe-r)); }

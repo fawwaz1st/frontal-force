@@ -63,6 +63,11 @@ export interface PlayerMods {
   blastRadiusMul: number;
   /** Extra percentage points of splash damage. */
   blastDamageMul: number;
+  /**
+   * How many guard blocks a warden's shield loses from its break threshold
+   * (Armor-Piercing Rounds). 0 = the authored 6-block meter.
+   */
+  shieldBreakBonus: number;
   /** Multiplier on headshot damage. */
   headshotMul: number;
   /** Extra i-frames on dash, in seconds. */
@@ -106,6 +111,7 @@ export function identityMods(): PlayerMods {
     comboWindowBonus: 0,
     blastRadiusMul: 1,
     blastDamageMul: 1,
+    shieldBreakBonus: 0,
     headshotMul: 1,
     dashInvulnBonus: 0,
     blockChance: 0,

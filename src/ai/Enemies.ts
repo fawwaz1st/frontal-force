@@ -131,6 +131,8 @@ export interface Enemy {
   /** Remaining burn stacks (damage over time). */
   burnT: number;
   burnDps: number;
+  /** True when a player card lit this fire, so a burn kill credits the player. */
+  burnFromPlayer: boolean;
   /** Slow applied by the Glacial affix, in seconds. */
   slowT: number;
   /** Boss phase 1..3; 0 for non-bosses. */
@@ -651,7 +653,7 @@ export class EnemyManager {
     for (const candidate of this.targets) {
       if (!candidate.targetable) continue;
       const distance = enemy.group.position.distanceTo(candidate.position);
-      const maxDistance = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 34 : 28;
+      const maxDistance = this.sightRangeOf(enemy);
       const inSight = distance <= maxDistance
         && this.hasLineOfSight(enemy.group.position, candidate.position);
       // A target we can see scores full; one we only remember scores a fraction.
@@ -817,6 +819,7 @@ export class EnemyManager {
       ccImmune,
       burnT: 0,
       burnDps: 0,
+      burnFromPlayer: false,
       slowT: 0,
       phase: isBoss ? 1 : 0,
       enrageT: isBoss ? BOSS_ENRAGE_TIME : Number.POSITIVE_INFINITY,
@@ -1243,7 +1246,10 @@ export class EnemyManager {
       enemy.shieldHitT = this.simTime;
       enemy.shieldBlocks += 1;
     }
-    if (enemy.shieldBlocks >= WARDEN_SHIELD_BREAK) {
+    // Armor-Piercing Rounds lowers the number of blocks needed to break a
+    // plate. Floored at 1 so the card can never make the meter unwinnable.
+    const breakAt = Math.max(1, WARDEN_SHIELD_BREAK - this.shieldBreakBonus);
+    if (enemy.shieldBlocks >= breakAt) {
       enemy.shieldBlocks = 0;
       enemy.staggerT = WARDEN_STAGGER;
       this.effects.ring(point, enemy.def.color, 3.2, 0.3);
@@ -1443,8 +1449,14 @@ export class EnemyManager {
       if (enemy.burnT > 0) {
         enemy.burnT -= dt;
         const at = enemy.group.position.clone().setY(enemy.group.position.y + 1);
-        this.damageEnemy(enemy, enemy.burnDps * dt, at, undefined, false, -1);
-        if (enemy.burnT <= 0) enemy.burnDps = 0;
+        // A burn the PLAYER started is the player's kill when it finishes:
+        // crediting it to the environment meant Greek Fire could burn a wave
+        // down and pay no score, no combo and no salvage for any of it.
+        this.damageEnemy(enemy, enemy.burnDps * dt, at, undefined, enemy.burnFromPlayer, -1);
+        if (enemy.burnT <= 0) {
+          enemy.burnDps = 0;
+          enemy.burnFromPlayer = false;
+        }
         if (enemy.dead) continue;
       }
       if (enemy.slowT > 0) enemy.slowT = Math.max(0, enemy.slowT - dt);
@@ -1518,6 +1530,35 @@ export class EnemyManager {
         this.effects.burst(attacker.group.position.clone().setY(attacker.group.position.y + 1), 0x5aa8ff, 6, 1.8);
       }
     }
+  }
+
+  /**
+   * Set enemies inside `radius` of `center` alight, for the player's
+   * ignite-on-kill cards (Gasoline, Diesel Soaked, Greek Fire).
+   *
+   * The card pool has always described this effect, and the old call site drew
+   * a ring and a burst and then applied nothing: the burn timer, the damage
+   * tick and the on-fire visuals all existed, but no code ever started one. It
+   * reads as the single most disappointing legendary in the game — you take
+   * Greek Fire, kills flash orange, and every enemy walks away unhurt.
+   *
+   * Burn is credited to the player (`byPlayer`), because the card is the
+   * player's: a burn tick that finishes a target is that card killing it.
+   */
+  public igniteArea(center: THREE.Vector3, radius: number, dps: number, seconds: number): number {
+    let lit = 0;
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      if (enemy.group.position.distanceTo(center) > radius) continue;
+      // Refresh rather than stack: stacking DoTs on a 24-enemy wave turns the
+      // card into an uncapped damage amplifier, and a refreshed timer is what
+      // a player expects from "sets them on fire" anyway.
+      enemy.burnT = Math.max(enemy.burnT, seconds);
+      enemy.burnDps = Math.max(enemy.burnDps, dps);
+      enemy.burnFromPlayer = true;
+      lit += 1;
+    }
+    return lit;
   }
 
   /** Seconds of burn left on the player (Blazing affix). */
@@ -1640,7 +1681,7 @@ export class EnemyManager {
     const distance = enemy.group.position.distanceTo(victim.position);
     // Two radii (sight vs keep-sight) kill the boundary flicker that a single
     // threshold produces when a target strafes in and out of cover.
-    const maxDistance = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 34 : 28;
+    const maxDistance = this.sightRangeOf(enemy);
     const acquire = distance <= maxDistance;
     const keep = distance <= maxDistance * 1.2;
     const inSight = (enemy.targetVisible ? keep : acquire)
@@ -2763,7 +2804,31 @@ export class EnemyManager {
    * warden did nothing.
    */
   public shieldsDisabled: ((point: THREE.Vector3) => boolean) | null = null;
+  /**
+   * Enemy sight-range multiplier from the arena mutation (1 = normal).
+   *
+   * The mutation table has always published a `sightMul` and the HUD has always
+   * promised it ("Enemies see 30% less far"), but nothing read it: every
+   * mutation was pure atmosphere and the stated benefit was a lie. It is
+   * applied to BOTH perception radii so the keep-sight band scales with the
+   * acquisition radius instead of collapsing the two into one threshold.
+   */
+  public sightMul = 1;
+  /** Guard blocks shaved off the warden break threshold (Armor-Piercing). */
+  public shieldBreakBonus = 0;
   private readonly tmpSmokeProbe = new THREE.Vector3();
+
+  /**
+   * One source of truth for how far an agent can see. Acquisition and
+   * perception BOTH read it, so the mutation multiplier can never scale one
+   * and not the other — that mismatch is what makes an enemy walk toward a
+   * target it is no longer allowed to perceive.
+   */
+  private sightRangeOf(enemy: Enemy): number {
+    const base = enemy.kind === 'gunner' || enemy.kind === 'warden' ? 34 : 28;
+    const mul = Number.isFinite(this.sightMul) ? Math.max(0.1, this.sightMul) : 1;
+    return base * mul;
+  }
 
   private raySphere(origin: THREE.Vector3, dir: THREE.Vector3, center: THREE.Vector3, radius: number): number | null {
     const offset = this.tmp2.copy(origin).sub(center);

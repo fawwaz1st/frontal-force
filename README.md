@@ -62,6 +62,8 @@ Four fixed structures, and every one of them does a job:
 
 Everything removed was scenery that changed no fight: six berms, four target frames, seven painted stripes, and three lamp poles standing in empty space. The rule is **if a thing cannot be used, it is not built**, and every structure registers its own cover spots so the AI can claim it. Those spots live in a separate list, because the run's generated layout clears its own spots on every rebuild.
 
+**A mutation changes the light, and only the light — but its stated benefit is real.** Every mutation advertises a sight reduction, and that number is fed to the enemy roster's perception radii, so a sandstorm genuinely shortens how far the AI can acquire and keep a target. Atmosphere that lies about a mechanical advantage is worse than no atmosphere: it teaches the player to distrust the HUD.
+
 Cover density varies by theme: RUST WORKS is crowded, FROST LINE is sparse with long sight lines.
 
 ## Game feel
@@ -78,7 +80,8 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 195 logic regression tests, no browser needed
+npm run check:self  # 206 wiring regression tests, no browser needed
+npm run check:runtime # 28 behavioural tests that execute the real modules
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -114,7 +117,7 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | V | Melee: 42 damage, executes below 15 % health for an 18 HP heal |
 | Esc / P | Pause |
 
-**Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and 10 on-screen buttons cover the actions — FIRE, AIM and JUMP in the main cluster, DASH, GRENADE and MELEE flanking FIRE, with SPRINT, CROUCH, RELOAD and the grenade CYCLE on the left. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.
+**Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and 10 on-screen buttons cover every action — FIRE, JUMP, AIM, MELEE, DASH and GRENADE in a right-hand action grid, SPRINT, CROUCH, RELOAD and CYCLE in a left-hand utility row. The placement is solved from the viewport rather than hand-tuned: the button size shrinks only as far as a 61 px tap floor, and both clusters are derived from the same cell geometry, so no phone gets an overlap or a button you cannot reach. Dash and grenade charges show as pips under the grid, fed from the same readout the desktop footer uses. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.
 
 ## Reading the screen
 
@@ -202,7 +205,7 @@ From wave 4, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloadi
 - **Squad tactics.** Three cheap mechanisms turn a roster of individuals into a squad. **Fire teams** of three share ONE victim, so a group concentrates instead of spreading; focus fire is a 1.6x score bonus rather than a hard override, because forcing the team target made squads walk past targets in front of them. **Bounding overwatch** advances one member at a time: the others hold a firing position, and holding gives up only the approach (a holding agent still shoots, strafes and dodges). **Suppression** keeps an agent firing on a shorter cadence once it has held a position, so breaking line of sight is a contested move rather than an off switch. Melee and support archetypes are excluded from holding: a rusher that stops to cover is just a slow rusher.
 - **Agility.** Three short committed bursts punctuate the walk cycle instead of replacing it: a **dodge** (0.32 s, x2.35 speed) fired reactively the moment an agent takes fire, aimed to whichever side of the shot line it already occupies so it never runs into the stream; a **juke** (0.26 s, x2.1) that breaks a straight approach on a staggered 1.4-3.6 s cadence; and a **slide** (0.55 s, x2.9) used only by rushers and exploders, only inside a 9 m commit window.
 - **Obstacle handling.** An agent whose step produces almost no displacement commits to a lateral detour for 0.6 s, so it walks around a crate instead of grinding against it. The side is picked once, because alternating every frame vibrates in place instead of committing.
-- **Stickiness.** 0.25 s staggered re-score, 1.25x switch hysteresis, 1.5 s minimum commitment, two perception radii to stop boundary flicker, 6 s alerted memory, and a squad alert that propagates on damage in O(n).
+- **Stickiness.** 0.25 s staggered re-score, 1.25x switch hysteresis, 1.5 s minimum commitment, two perception radii to stop boundary flicker, 6 s alerted memory, and a squad alert that propagates on damage in O(n). Both radii scale with the arena mutation's sight multiplier.
 - **Projectile ownership.** A bolt carries the id of the friendly it was aimed at, so a stray round never hits a bystander.
 - **Escorts are INDEPENDENT.** There is no leash. Each bot owns a half of the arena, split on whichever axis the enemy cloud is more spread along, and its objective is the enemy cluster inside its own sector. An empty sector falls back to reinforcing the other one, then to a patrol of its own centroid. A respawn walks in from its own sector edge, never from the player. The bot's `update` signature still accepts the player position and explicitly discards it (`void ownerPos`), so any future edit that reaches for the player has to change the signature to do it.
 - **Obstacle handling (escorts).** `moveToward` probes the direct line and two 55-degree detours, so a bot that meets a crate walks around it. The old version stopped dead on any hit within 1.4 m, which is what "the bot is stuck on a box" looked like from the player's side.
@@ -263,7 +266,7 @@ Accuracy is treated as a system, not a stat:
 
 ## Progression
 
-- **40 upgrade cards** across three rarities (common, rare, legendary) with stacking caps, including on-kill, on-crit, lifesteal, blast, ricochet, and movement modifiers.
+- **42 upgrade cards** across three rarities (common, rare, legendary) with stacking caps, including on-kill, on-crit, lifesteal, blast, and movement modifiers. Every card's stated effect is wired: damage mitigation (flat armor, fractional reduction, sprint-only armor, full-dodge) resolves inside `Player.damage`, which is the one funnel every damage source passes through, and card movement speed multiplies the same ground speed the weapon weight does.
 - **35 achievements** with lifetime counters persisted across sessions: headshot counts, accuracy bests, kill streaks, no-hit waves, barrel kills, melee kills, dash kills, daily runs, and style ranks.
 - **Style rank D to SSS**, ULTRAKILL-style: kill rate and headshot accuracy raise it, taking damage demotes it.
 - **Kill combo** with an x8 cap, refreshed per kill and decaying after a 3 s window.

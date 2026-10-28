@@ -110,9 +110,13 @@ export const MUTATIONS: Record<MutationId, MutationDef> = {
     id: 'sandstorm', name: 'Sandstorm', description: 'Dense haze. Enemies see 45% less far. +25% score.',
     fogMul: 2.6, sunMul: 0.7, ambientMul: 0.9, sightMul: 0.55, scoreMul: 1.25,
   },
+  // Overgrowth used to advertise "cover regrows faster", which described a
+  // system that does not exist — the arena has no regrowing cover, so the line
+  // was a promise the game could not keep. It now names the thing it actually
+  // does: a hazy green canopy that shortens how far the roster can see.
   overgrowth: {
-    id: 'overgrowth', name: 'Overgrowth', description: 'Cover regrows faster. +10% score.',
-    fogMul: 1, sunMul: 0.95, ambientMul: 1, sightMul: 1, scoreMul: 1.1,
+    id: 'overgrowth', name: 'Overgrowth', description: 'Green haze. Enemies see 25% less far. +10% score.',
+    fogMul: 1.4, sunMul: 0.8, ambientMul: 0.95, sightMul: 0.75, scoreMul: 1.1,
   },
   rain: {
     id: 'rain', name: 'Downpour', description: 'Wet ground, heavier haze. Enemies see 20% less far. +15% score.',

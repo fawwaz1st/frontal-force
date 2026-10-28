@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
-    "check:self": "node --experimental-strip-types scripts/self-check.ts"
+    "check:self": "node --experimental-strip-types scripts/self-check.ts",
+    "check:runtime": "node --experimental-strip-types scripts/runtime-check-run.ts"
   },
   "dependencies": {
     "three": "^0.186.1"
