@@ -1,6 +1,16 @@
 import { clamp } from '../core/math';
 import { TouchControls } from './TouchControls';
 
+/**
+ * A grenade keypress shorter than this never throws; it cycles the kind.
+ *
+ * The G key is hold-to-cook / release-to-throw, the contract every other shooter
+ * uses and the one TouchControls always had. Without a tap threshold, a player
+ * who just wants to swap frag for smoke would spend a grenade charge on a
+ * zero-cook dud at their own feet, so the tap case has to resolve first.
+ */
+const TAP_CYCLE_MS = 220;
+
 export interface InputFrame {
   moveX: number;
   moveZ: number;
@@ -21,6 +31,13 @@ export interface InputFrame {
   grenadeHeld: boolean;
   /** Cycle frag / smoke / EMP. */
   grenadeCyclePressed: boolean;
+  /**
+   * True when the grenade key was TAPPED, not held. A tap cycles the kind and
+   * must not throw: even a 60 ms press starts cooking (Game increments the
+   * cook every tick), so without this flag the release branch fires a dud and
+   * spends a charge the player meant to spend on a cycle.
+   */
+  grenadeTap: boolean;
   /** Quick melee / execution. */
   meleePressed: boolean;
   locked: boolean;
@@ -50,6 +67,10 @@ export class Input {
   private wheelSteps = 0;
   private dashPressed = false;
   private grenadeHeld = false;
+  /** When the G press started, so a tap can be told from a cook. */
+  private grenadeHeldAt = 0;
+  /** True on the tick a G press is recognised as a tap (see InputFrame). */
+  private grenadeTapped = false;
   private grenadeCyclePressed = false;
   private meleePressed = false;
   private locked = false;
@@ -132,6 +153,7 @@ export class Input {
     this.wheelSteps = 0;
     this.dashPressed = false;
     this.grenadeHeld = false;
+    this.grenadeTapped = false;
     this.grenadeCyclePressed = false;
     this.meleePressed = false;
     this.touch.reset();
@@ -198,6 +220,8 @@ export class Input {
       firePressed: touchFrame ? touchFrame.fireHeld && !this.prevTouchFire : this.firePressed,
       aimHeld: touchFrame ? touchFrame.aimHeld : this.aimHeld,
       jumpPressed: touchFrame ? touchFrame.jumpPressed : this.jumpPressed,
+      // Both Shift keys sprint. Only Q dashes -- see onKeyDown for why ShiftRight
+      // no longer triggers a dash.
       sprintHeld: touchFrame ? touchFrame.sprintHeld : (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')),
       crouchHeld: touchFrame ? touchFrame.crouchHeld : (this.keys.has('ControlLeft') || this.keys.has('KeyC')),
       reloadPressed: touchFrame ? touchFrame.reloadPressed : this.reloadPressed,
@@ -205,6 +229,7 @@ export class Input {
       wheelSteps: touchFrame ? touchFrame.cycleSteps : this.wheelSteps,
       dashPressed: touchFrame ? touchFrame.dashPressed : this.dashPressed,
       grenadeHeld: touchFrame ? touchFrame.grenadeHeld : this.grenadeHeld,
+      grenadeTap: this.grenadeTapped,
       grenadeCyclePressed: touchFrame ? touchFrame.grenadeCyclePressed : this.grenadeCyclePressed,
       meleePressed: touchFrame ? touchFrame.meleePressed : this.meleePressed,
       // Touch needs no lock: report engaged so the weapon/reload paths run.
@@ -223,6 +248,7 @@ export class Input {
     this.wheelSteps = 0;
     this.dashPressed = false;
     this.grenadeCyclePressed = false;
+    this.grenadeTapped = false;
     this.meleePressed = false;
     return frame;
   }
@@ -265,9 +291,21 @@ export class Input {
     this.keys.add(e.code);
     if (e.code === 'Space') this.jumpPressed = true;
     if (e.code === 'KeyR') this.reloadPressed = true;
-    // Shift is sprint; Shift-tap during a sprint is handled by the dash path.
-    if (e.code === 'KeyQ' || e.code === 'ShiftRight') this.dashPressed = true;
-    if (e.code === 'KeyG') this.grenadeCyclePressed = true;
+    // Shift is sprint ONLY. ShiftRight used to trigger a dash too, which made
+    // the dash fire by accident whenever a player tapped either Shift key --
+    // the classic 'my weapon/dash went off by itself' complaint. Q is the one
+    // dash key, matching the README, and nothing else can trigger it.
+    if (e.code === 'KeyQ') this.dashPressed = true;
+    // G is a THREE-WAY key: hold to cook, release to throw, tap to cycle kind.
+    // The old binding made it cycle-only, so the entire grenade subsystem --
+    // cooking, frag/smoke/EMP, the throw arc -- was unreachable with a keyboard.
+    // Touch already did hold/release (TouchControls.ts:469); the desktop scheme
+    // was the one with nothing. The press is timestamped so a short tap can fall
+    // back to cycling without firing a dud.
+    if (e.code === 'KeyG') {
+      this.grenadeHeld = true;
+      this.grenadeHeldAt = performance.now();
+    }
     if (e.code === 'KeyF') this.meleePressed = true;
     if (e.code === 'KeyV') this.meleePressed = true;
     if (e.code === 'Escape' || e.code === 'KeyP') this.onPauseKey?.();
@@ -279,6 +317,17 @@ export class Input {
 
   private onKeyUp = (e: KeyboardEvent): void => {
     this.keys.delete(e.code);
+    // Releasing G throws what was cooked. A tap shorter than TAP_CYCLE_MS never
+    // becomes a throw, so cycling grenade kind stays possible from the keyboard
+    // without spending a charge on a dud.
+    if (e.code === 'KeyG') {
+      const held = performance.now() - this.grenadeHeldAt;
+      this.grenadeHeld = false;
+      if (held < TAP_CYCLE_MS) {
+        this.grenadeCyclePressed = true;
+        this.grenadeTapped = true;
+      }
+    }
   };
 
   private onMouseMove = (e: MouseEvent): void => {

@@ -11,10 +11,15 @@ const JUMP_SPEED = 6.1;
 const WALK_SPEED = 4.5;
 const SPRINT_MULT = 1.7;
 const CROUCH_MULT = 0.5;
-const SLIDE_SPEED = 5.5; // decays across SLIDE_TIME
-/** Added on top of the decaying slide speed, so entry is a burst. */
-const SLIDE_ENTRY_BONUS = 3;
-const SLIDE_TIME = 0.65;
+// Slide is MOMENTUM, not a decay curve. The old numbers (5.5 target over 0.65 s
+// at accel 2.2) made the slide slower than sprint for almost its whole duration,
+// which is why it felt like a stutter: you pressed a dodge button and slowed down.
+// Entry carries sprint speed forward instead of replacing it, so a slide is
+// always faster than the sprint it came from.
+const SLIDE_SPEED = 8.2;
+/** Added on top of the carried sprint speed, so entry is a real burst. */
+const SLIDE_ENTRY_BONUS = 2.4;
+const SLIDE_TIME = 0.85;
 const COYOTE_TIME = 0.1;
 const JUMP_BUFFER_TIME = 0.14;
 const STAND_RADIUS = 0.45;
@@ -687,7 +692,10 @@ export class Player {
     speed *= this.cardMoveMul;
     this.adsT = damp(this.adsT, input.aimHeld && !canSprint ? 1 : 0, 10, dt);
 
-    const accel = this.grounded ? (this.slideTimer > 0 ? 2.2 : 14) : 5.5;
+    // Slide accel 9 (was 2.2): with the old value the velocity only crawled toward
+    // the target, so the slide spent most of its 0.85 s BELOW sprint speed. This is
+    // the single number that turned the slide from a dodge into a stutter.
+    const accel = this.grounded ? (this.slideTimer > 0 ? 9 : 14) : 5.5;
     // The Glacial affix scales the TARGET speed, not the acceleration: a slowed
     // player still reaches a stable speed rather than sliding into a wall.
     const slowK = 1 - this.slowFraction;
@@ -713,11 +721,20 @@ export class Player {
 
     this.coyoteTimer = this.grounded ? COYOTE_TIME : Math.max(0, this.coyoteTimer - dt);
     this.jumpBuffer = input.jumpPressed ? JUMP_BUFFER_TIME : Math.max(0, this.jumpBuffer - dt);
-    if (this.jumpBuffer > 0 && this.coyoteTimer > 0 && !this.crouched) {
+    // SLIDE-CANCEL: jumping out of a slide keeps the horizontal momentum.
+    // This is the movement-tech hook that makes the slide worth mastering:
+    // slide at a wall, cancel into a jump, carry the burst upward. The old
+    // code blocked jumping while crouched, which switched the whole chain off.
+    const canCancel = this.slideTimer > 0;
+    const jumpAllowed = !this.crouched || canCancel;
+    if (this.jumpBuffer > 0 && this.coyoteTimer > 0 && jumpAllowed) {
       this.velocity.y = JUMP_SPEED;
       this.coyoteTimer = 0;
       this.jumpBuffer = 0;
       this.grounded = false;
+      // Ending the slide here preserves momentum: the slide's damped target
+      // would otherwise pull the airspeed straight back down to walk speed.
+      if (canCancel) this.slideTimer = 0;
     }
     this.velocity.y = Math.max(this.velocity.y - GRAVITY * dt, -32);
 

@@ -621,7 +621,12 @@ export class Game {
       }
     };
     this.waves.onWaveStart = (wave) => {
-      this.hud.showBanner(`WAVE ${wave}`, '');
+      // ROTATION swaps the weapon on every kill. Without naming that on the
+      // banner, a player who tried ROTATOR for the first time read the swap as
+      // a bug -- 'my weapon changes by itself'. This is the disclosure the mode
+      // was missing.
+      const rotLabel = this.waves.isRotator ? 'ROTATION: WEAPON SWAPS ON EVERY KILL' : '';
+      this.hud.showBanner(`WAVE ${wave}`, rotLabel);
       this.audio.waveStart();
       this.lastCountdown = -1;
       // Per-wave stat reset: the medal and the accuracy achievements are all
@@ -1671,7 +1676,13 @@ export class Game {
           : 'frag';
       this.audio.weaponSwitch();
     }
-    if (frame.grenadeHeld && this.grenadeCharges > 0 && this.dashT <= 0) {
+    // A tap never throws. Even a 60 ms press starts cooking (the cook grows
+    // every tick), so without this branch the release path would fire a dud
+    // and spend a charge the player meant to spend on a cycle. Zeroing the
+    // cook is what disarms the release branch below.
+    if (frame.grenadeTap) {
+      this.grenadeCook = 0;
+    } else if (frame.grenadeHeld && this.grenadeCharges > 0 && this.dashT <= 0) {
       // Cooking is what turns a throw into an aimed weapon: hold to build
       // power, release to commit. A tap drops it at your feet.
       this.grenadeCook = Math.min(1, this.grenadeCook + dt / 1.1);

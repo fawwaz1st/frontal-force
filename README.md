@@ -111,10 +111,9 @@ The base path is read from `GITHUB_REPOSITORY`, so renaming the repository does 
 | C / Ctrl | Crouch. Press while sprinting to **slide** |
 | R | Reload |
 | 1-3 / wheel | Switch weapon (your three slots) |
-| Shift+W / double-tap W | Dash (2 charges, 0.12 s invulnerability) |
-| G (hold to cook, release to throw) | Grenade: frag, smoke, or EMP |
-| F | Cycle grenade kind |
-| V | Melee: 42 damage, executes below 15 % health for an 18 HP heal |
+| Q | Dash (2 charges, 0.12 s invulnerability) |
+| G | Grenade: **hold to cook, release to throw**. A quick tap cycles frag / smoke / EMP |
+| F or V | Melee: 42 damage, executes below 15 % health for an 18 HP heal |
 | Esc / P | Pause |
 
 **Touch:** the left 45 % of the screen is a floating stick, dragging the right side looks around (slowed to 45 % while aiming), and 10 on-screen buttons cover every action — FIRE, JUMP, AIM, MELEE, DASH and GRENADE in a right-hand action grid, SPRINT, CROUCH, RELOAD and CYCLE in a left-hand utility row. The placement is solved from the viewport rather than hand-tuned: the button size shrinks only as far as a 61 px tap floor, and both clusters are derived from the same cell geometry, so no phone gets an overlap or a button you cannot reach. Dash and grenade charges show as pips under the grid, fed from the same readout the desktop footer uses. The layout respects safe-area insets on notched phones and the HUD switches to a touch layout on first contact.

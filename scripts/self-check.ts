@@ -403,10 +403,33 @@ check('slide: the slide direction is committed, not steered', () => {
   assert.match(playerSrc, /this\.slideDir\.copy\(this\.tmpMove\)/);
   assert.match(playerSrc, /this\.velocity\.x = damp\(this\.velocity\.x, this\.slideDir\.x \* speed \* slowK, accel, dt\)/);
 });
-check('slide: entry speed is the decaying speed plus a fixed bonus', () => {
-  assert.equal(literal(playerSrc, 'SLIDE_SPEED'), 5.5);
-  assert.equal(literal(playerSrc, 'SLIDE_ENTRY_BONUS'), 3);
-  assert.equal(literal(playerSrc, 'SLIDE_TIME'), 0.65);
+check('slide: entry carries sprint momentum instead of decaying below it', () => {
+  // The old numbers (5.5 target over 0.65 s at accel 2.2) made the slide
+  // SLOWER than sprint for almost its whole duration: entry target 8.5 m/s
+  // only beat sprint (4.5 x 1.7 = 7.65) for ~0.2 s, then fell below it.
+  // A dodge button that slows you down is a stutter, not a dodge.
+  const speed = literal(playerSrc, 'SLIDE_SPEED');
+  const bonus = literal(playerSrc, 'SLIDE_ENTRY_BONUS');
+  const time = literal(playerSrc, 'SLIDE_TIME');
+  // Entry target must beat sprint speed, and stay above it for most of the
+  // slide rather than decaying straight through it.
+  const sprint = 4.5 * 1.7;
+  assert.ok(speed > sprint + 0.3, `SLIDE_SPEED ${speed} must clearly beat sprint ${sprint}`);
+  assert.equal(bonus, 2.4);
+  assert.equal(time, 0.85);
+  // The slide acceleration must be high enough to actually REACH the target:
+  // 2.2 crawled, which is what made the old slide a stutter.
+  const accel = /slideTimer > 0 \? ([\d.]+) : 14/.exec(playerSrc);
+  assert.ok(accel, 'slide accel branch not found');
+  assert.ok(Number(accel[1]) >= 9, `slide accel ${accel[1]} is too low to reach the target`);
+});
+
+check('slide: jumping out of a slide cancels it and keeps momentum', () => {
+  // The old code blocked jumping while crouched, which switched the whole
+  // slide->jump chain off. The cancel is the movement-tech hook.
+  assert.match(playerSrc, /const canCancel = this\.slideTimer > 0;/);
+  assert.match(playerSrc, /const jumpAllowed = !this\.crouched \|\| canCancel;/);
+  assert.match(playerSrc, /jumpAllowed\) \{[\s\S]{0,400}if \(canCancel\) this\.slideTimer = 0;/);
 });
 check('crouch: the stand-up probe uses the STANDING radius', () => {
   // The probe used to be built from whatever radius the collider had at the
