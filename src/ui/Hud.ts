@@ -1710,6 +1710,10 @@ export class Hud {
     } else if (s.phase === 'intermission') {
       html = `${icon('crate')}`;
       tone = '';
+    } else if (s.grenadeCook > 0) {
+      // Live cook tell under the crosshair: the bar is filling, release now.
+      html = `${icon('grenade')}<kbd>RELEASE</kbd>`;
+      tone = 'hud__hint--warn';
     }
     if (html) {
       if (this.hint.dataset.sig !== html) {

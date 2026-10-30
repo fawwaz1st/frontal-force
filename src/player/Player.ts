@@ -861,7 +861,11 @@ private updateCrouch(wantsCrouch: boolean): void {
     // player needs while sprinting is "what is around me", not "what is far"
     // — but aim wins over sprint, or a scoped walk would fight its own zoom.
     const aimFov = 75 + (this.adsFov - 75) * this.adsT;
-    const targetFov = sprinting && this.adsT < 0.02 ? 82 : aimFov;
+    // Dash FOV kick: widening the FOV by 6 degrees while dashing is the
+    // classic speed-line cue (Apex / Doom) that turns a position shift into
+    // a burst you FEEL in your peripheral vision.
+    const dashFovBonus = this.dashRemaining > 0 ? 6 : 0;
+    const targetFov = (sprinting && this.adsT < 0.02 ? 82 : aimFov) + dashFovBonus;
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov = damp(this.camera.fov, targetFov, 8, dt);
       this.camera.updateProjectionMatrix();

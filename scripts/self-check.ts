@@ -942,17 +942,28 @@ check('audio: no call site computes its own pan any more', () => {
 // ---------- environment (src/world/World.ts) ----------
 check('world: every fixed structure registers cover the AI can claim', () => {
   // A structure the AI cannot use is scenery. The bunker, the towers, the
-  // nests and the tarps all register spots now.
-  const m = /private buildRangeDetails\(\): void \{([\s\S]*?)\n  \}/.exec(worldSrc);
-  assert.ok(m, 'buildRangeDetails not found');
-  const marks = (m[1].match(/this\.markStructureCover\(/g) ?? []).length;
+  // nests and the tarps all register spots now -- into the per-seed list,
+  // because the layout is rebuilt from the run seed.
+  const m = /private buildStructures\(rnd: \(\) => number\): void \{([\s\S]*?)\n  \}/.exec(worldSrc);
+  assert.ok(m, 'buildStructures not found');
+  const marks = (m[1].match(/this\.markStructureCoverInto\(/g) ?? []).length;
   assert.ok(marks >= 4, `expected >= 4 structures registering cover, found ${marks}`);
+  // Layout archetype is seed-driven: mirror + layout + platform rolls.
+  assert.match(m[1], /const mirror = rnd\(\) < 0\.5 \? -1 : 1;/);
+  assert.match(m[1], /const layoutRoll = rnd\(\);/);
+  assert.match(m[1], /const hasPlatform = platformRoll < 0\.34;/);
 });
-check('world: fixed cover survives a rebuild', () => {
-  // generateCover clears coverSpots, so the fixed ones live in their own list
-  // and are re-attached on every rebuild.
-  assert.match(worldSrc, /private readonly fixedCoverSpots: CoverSpotData\[\] = \[\];/);
-  assert.match(worldSrc, /this\.coverSpots\.push\(\.\.\.this\.fixedCoverSpots\);/);
+check('world: structure cover survives a rebuild and follows the seed', () => {
+  // generateCover clears coverSpots, so the structure spots live in their own
+  // list, are REBUILT with the seed's layout, and re-attached after. A stale
+  // spot pointing at a bunker from a previous run would have an AI claim
+  // standing in the open.
+  assert.match(worldSrc, /private readonly layoutCoverSpots/);
+  assert.match(worldSrc, /this\.coverSpots\.push\(\.\.\.this\.layoutCoverSpots\);/);
+  // The old structures group must be cleared before the new one is built, or
+  // every run would stack a second arena on top of the last.
+  assert.match(worldSrc, /this\.structures\.clear\(\);/);
+  assert.match(worldSrc, /this\.layoutCoverSpots\.length = 0;/);
 });
 check('world: the decorative-only props are gone', () => {
   // Berms, target frames, painted stripes and lamp poles changed nothing.

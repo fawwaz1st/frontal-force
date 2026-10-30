@@ -534,6 +534,11 @@ export class Game {
       this.hud.showBanner(name, 'BOSS INBOUND');
       this.audio.bossSpawn();
     };
+    // Run modifier banner: TLOU2 No Return style rules change per block.
+    this.waves.onModifier = (mod) => {
+      this.hud.showBanner(mod.name, mod.description);
+      this.audio.record();
+    };
     this.hazards.onDestroyed = (_hazard, byPlayer) => {
       void _hazard;
       // `barrelKills` is already incremented from the blast's real kill count
@@ -635,6 +640,10 @@ export class Game {
       this.waveStartT = this.run.stats.timeSurvived;
     };
     this.waves.onWaveClear = (wave) => {
+      // Slow-motion beat on wave clear: the rhythm release. Giving the player
+      // a third of a second of near-frozen time is what makes a clear feel like
+      // a victory rather than like a timer resetting.
+      this.hitstopT = Math.max(this.hitstopT, 0.32);
       this.audio.waveClear();
       const bonus = Math.round(
         wave * 250 * this.waves.scoreMult * this.run.mods.scoreMul *
@@ -1782,6 +1791,8 @@ export class Game {
     }
     const damage = MELEE_DAMAGE * this.run.mods.meleeMul * this.waves.damageScale;
     this.enemies.damageEnemy(target, damage, at, forward, true, PLAYER_TARGET_ID);
+    // 35 ms hitstop on a connecting swing: the 'I connected' beat.
+    this.hitstopT = Math.max(this.hitstopT, 0.035);
     this.effects.impact(at, forward.clone().negate());
     this.audio.slashHit();
     // Lunge: the melee closes the last metre so it connects on a moving target.

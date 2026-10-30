@@ -126,6 +126,59 @@ export const MUTATIONS: Record<MutationId, MutationDef> = {
 
 /** Waves between arena mutations. */
 const MUTATION_EVERY = 4;
+/** Waves between run-modifier rolls. Shorter than mutations on purpose: a
+ *  modifier changes HOW you fight (which the draft also does), so it should
+ *  come up often enough to shape a run rather than decorate it. */
+const MODIFIER_EVERY = 3;
+
+/**
+ * Run modifiers, rolled every MODIFIER_EVERY waves. Each one is a real buff
+ * PAIRED WITH a real cost, in the shape TLOU2's No Return used: the modifier
+ * is a situation to answer, not a difficulty knob. Every field maps onto a
+ * system that already exists, so adding one is a data change.
+ */
+export interface WaveModifier {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  /** Enemy speed multiplier. */
+  readonly enemySpeedMul: number;
+  /** Player fire-rate multiplier. */
+  readonly playerFireRateMul: number;
+  /** Enemy fire-rate multiplier. */
+  readonly enemyFireRateMul: number;
+  /** Grenade recharge multiplier. */
+  readonly grenadeRechargeMul: number;
+  /** Score multiplier from surviving this modifier. */
+  readonly scoreMul: number;
+}
+
+export const WAVE_MODIFIERS: readonly WaveModifier[] = [
+  {
+    id: 'blitz-pace', name: 'BLITZ PACE',
+    description: 'Everything moves and shoots 15% faster. +20% score.',
+    enemySpeedMul: 1.15, playerFireRateMul: 1.15, enemyFireRateMul: 1.15,
+    grenadeRechargeMul: 1, scoreMul: 1.2,
+  },
+  {
+    id: 'supply-line', name: 'SUPPLY LINE',
+    description: 'Grenades recharge twice as fast. Enemies close 10% faster.',
+    enemySpeedMul: 1.1, playerFireRateMul: 1, enemyFireRateMul: 1,
+    grenadeRechargeMul: 2, scoreMul: 1.1,
+  },
+  {
+    id: 'heavy-hands', name: 'HEAVY HANDS',
+    description: 'Your guns cycle 20% faster. Enemy bolts are 10% faster too.',
+    enemySpeedMul: 1, playerFireRateMul: 1.2, enemyFireRateMul: 1.1,
+    grenadeRechargeMul: 1, scoreMul: 1.15,
+  },
+  {
+    id: 'long-night', name: 'LONG NIGHT',
+    description: 'Enemies move 12% faster. Grenades recharge 30% slower.',
+    enemySpeedMul: 1.12, playerFireRateMul: 1, enemyFireRateMul: 1,
+    grenadeRechargeMul: 0.7, scoreMul: 1.15,
+  },
+];
 /** Mutations that can be rolled (clear is the "no mutation" baseline). */
 const ROLLABLE: readonly MutationId[] = ['night', 'blackout', 'sandstorm', 'overgrowth', 'rain'];
 
@@ -141,6 +194,8 @@ export class WaveManager {
   public onMutation: ((def: MutationDef) => void) | null = null;
   /** Fired when a boss wave begins, so the HUD can announce it. */
   public onBoss: ((name: string) => void) | null = null;
+  /** Fired when a run modifier rolls, so the HUD announces the new rule. */
+  public onModifier: ((mod: WaveModifier) => void) | null = null;
 
   private mode: GameMode = 'standard';
   private queue: SpawnEntry[] = [];
@@ -149,6 +204,8 @@ export class WaveManager {
   /** Enemy count multiplier contributed by the run's curse cards. */
   private curseCountMul = 1;
   private curseHpMul = 1;
+  /** The live run modifier, or null between rolls. See WAVE_MODIFIERS. */
+  private modifier: WaveModifier | null = null;
   /** Opt-in challenge modifiers (see game/Challenges.ts). Identity by default. */
   private challengeCountMul = 1;
   private challengeHpMul = 1;
@@ -197,7 +254,13 @@ export class WaveManager {
 
   /** Score multiplier for the active mode (kill points + wave bonus). */
   public get scoreMult(): number {
-    return MODES[this.mode].scoreMultiplier * this.mutation.scoreMul;
+    const modScore = this.modifier ? this.modifier.scoreMul : 1;
+    return MODES[this.mode].scoreMultiplier * this.mutation.scoreMul * modScore;
+  }
+
+  /** Live run modifier, read by Game for ability/fire-rate scaling. */
+  public get activeModifier(): WaveModifier | null {
+    return this.modifier;
   }
 
   /** Gun-game mode: weapon rotates on every kill. */
@@ -249,6 +312,7 @@ export class WaveManager {
     this.timer = Math.min(3, this.config().intermissionSeconds);
     this.queue = [];
     this.mutation = MUTATIONS.clear;
+    this.modifier = null;
   }
 
   public update(dt: number, playerPos: THREE.Vector3): void {
@@ -327,6 +391,7 @@ export class WaveManager {
   private startWave(): void {
     this.wave += 1;
     this.rollMutation();
+    this.rollModifier();
     this.queue = this.buildWave(this.wave);
     this.phase = 'spawning';
     this.spawnTimer = 0.2;
@@ -335,6 +400,21 @@ export class WaveManager {
 
   /** Pick a new arena mutation every MUTATION_EVERY waves. Never repeats the
    *  current one, so the change is always visible. */
+  private rollModifier(): void {
+    // Roll on every N waves from wave 2. A modifier holds for MODIFIER_EVERY
+    // waves, then clears, so a run cycles between vanilla and modified.
+    if (this.wave < 2) { this.modifier = null; return; }
+    if (this.wave % MODIFIER_EVERY === 2) {
+      const options = WAVE_MODIFIERS.filter((m) => m.id !== this.modifier?.id);
+      const next = options[Math.floor(this.random() * options.length)] ?? WAVE_MODIFIERS[0]!;
+      this.modifier = next;
+      this.onModifier?.(next);
+    } else if (this.wave % MODIFIER_EVERY === 1) {
+      // Clear between modifier blocks: vanilla wave to breathe.
+      this.modifier = null;
+    }
+  }
+
   private rollMutation(): void {
     if (this.wave <= 1 || this.wave % MUTATION_EVERY !== 1) return;
     const options = ROLLABLE.filter((id) => id !== this.mutation.id);

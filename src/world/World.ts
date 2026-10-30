@@ -121,7 +121,7 @@ export class World {
    * run's spots on every rebuild: the fixed ones are built once in `build()`
    * and would otherwise be wiped by the first run.
    */
-  private readonly fixedCoverSpots: CoverSpotData[] = [];
+
   public readonly playerSpawn = new THREE.Vector3(0, 0, 30);
   private readonly coverGroup = new THREE.Group();
   private coverMerged: THREE.Mesh[] = [];
@@ -239,13 +239,25 @@ export class World {
     }
   }
 
+  /**
+   * Anchored structures (bunker, towers, nests, tarps) live in their own group
+   * so rebuild() can tear them down and rebuild them from the run seed. Before
+   * this, the arena was built ONCE and every seed shared the same landmark
+   * positions -- which is the whole reason the maps felt identical.
+   */
+  private readonly structures = new THREE.Group();
+  /** Cover spots owned by the CURRENT structure layout, rebuilt per seed. */
+  private readonly layoutCoverSpots: Array<{ center: THREE.Vector3; left: THREE.Vector3; right: THREE.Vector3 }> = [];
+
   public build(scene: THREE.Scene): void {
     this.scene = scene;
     this.group.add(this.coverGroup);
     this.buildFloor();
     this.buildWalls();
-    this.buildRangeDetails();
     this.buildLights(scene);
+    // Structures are built per-seed in rebuild(), not here: the whole point
+    // of the layout archetypes is that a new seed can put the bunker somewhere
+    // else. Building them once here would pin every run to one skyline.
     this.buildDust();
     this.buildSky(scene);
     scene.add(this.group);
@@ -271,11 +283,18 @@ export class World {
     // that can guarantee they match the theme.
     this.applyTheme(this.theme, changed);
     const rnd = mulberry32(seed);
+    // Layout archetype is part of the seed, like the theme is. Three hand-
+    // authored anchors with different silhouettes, mirrored 50/50 so the
+    // same layout can face either way, plus a raised platform roll for
+    // verticality. Together with the theme roll this multiplies the number
+    // of genuinely different arenas a seed can produce.
+    this.buildStructures(rnd);
     this.generateCover(rnd);
-    // Re-attach the fixed structures' cover spots. The generated layout owns
-    // the first half of the list; the arena's landmarks are appended after it
-    // so a claim can use either.
-    this.coverSpots.push(...this.fixedCoverSpots);
+    // Re-attach the structure cover spots. The generated layout owns the first
+    // half of the list; the landmarks are appended after it so a claim can use
+    // either. layoutCoverSpots is rebuilt by buildStructures() for THIS seed,
+    // so a claim never points at a structure from a previous run.
+    this.coverSpots.push(...this.layoutCoverSpots);
     this.markPoints(rnd);
     this.coverMerged = this.mergeDirectMeshes(this.coverGroup, true);
     this.octree.clear();
@@ -401,7 +420,7 @@ export class World {
    * own cover spots so the AI can claim it. That is the whole rule: if a thing
    * cannot be used, it is not built.
    */
-  private buildRangeDetails(): void {
+  private buildStructures(rnd: () => number): void {
     const masonry = new THREE.MeshStandardMaterial({ color: this.theme.wall.body, roughness: 0.96, metalness: 0.01 });
     const concrete = new THREE.MeshStandardMaterial({ color: this.theme.wall.cap, roughness: 0.9, metalness: 0.03 });
     const steel = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.58, metalness: 0.72 });
@@ -410,61 +429,103 @@ export class World {
     const dark = new THREE.MeshStandardMaterial({ color: this.theme.cover.dark, roughness: 0.86, metalness: 0.08 });
     this.rangeMaterials.push(masonry, concrete, steel, fabric, accent, dark);
 
-    // ---------------------------------------------------------------------
-    // 1. CENTRAL BUNKER. A hard two-sided anchor at the far end of the arena,
-    //    which is the one place a player is guaranteed to need cover from.
-    //    Two faces means it works from both sides, so it is a landmark rather
-    //    than a one-way trap.
-    // ---------------------------------------------------------------------
-    this.solid(new THREE.BoxGeometry(9, 3.2, 4.4), concrete, 0, 1.6, -28);
-    this.solid(new THREE.BoxGeometry(10, 0.35, 5.2), dark, 0, 3.3, -28);
-    // A lit sill on the player-facing wall: the read that this is cover.
-    this.solid(new THREE.BoxGeometry(7.2, 0.18, 0.18), accent, 0, 2.5, -25.65);
-    this.markStructureCover(0, -28, 4.5, 2.2);
+    // Reset per-seed state: the old structure group is torn down entirely, and
+    // the cover spots that belonged to it are dropped. A stale spot would point
+    // at a bunker that no longer exists, and an AI claim on it would stand in
+    // the open.
+    this.structures.clear();
+    this.layoutCoverSpots.length = 0;
 
-    // ---------------------------------------------------------------------
-    // 2. WATCHTOWERS. Two, mirrored, at the mid-lines. Tall enough to break a
-    //    long sight line and thin enough to fight around, which is the shape
-    //    that makes a lane interesting.
-    // ---------------------------------------------------------------------
-    for (const [x, z] of [[-21, 0], [21, 0]] as Array<[number, number]>) {
-      this.solid(new THREE.BoxGeometry(2.6, 4.6, 2.6), masonry, x, 2.3, z);
-      this.solid(new THREE.BoxGeometry(3.2, 0.3, 3.2), dark, x, 4.75, z);
-      this.solid(new THREE.BoxGeometry(3.0, 0.16, 0.16), accent, x, 4.1, z - 1.3);
-      this.markStructureCover(x, z, 1.7, 1.7);
+    // ---- Layout archetype, from the seed. Three silhouettes with genuinely
+    // different movement reads, mirrored 50/50 so a layout can face either
+    // direction, plus an independent platform roll for verticality. The rolls
+    // use the run's own stream, so a seed code reproduces the exact arena.
+    const mirror = rnd() < 0.5 ? -1 : 1;
+    const layoutRoll = rnd();
+    const platformRoll = rnd();
+    // Bunker anchor: centre-far (classic), split-side, or forward. The bunker
+    // is the arena's landmark, so MOVING it is what makes a layout read as a
+    // different place rather than a recoloured one.
+    const bunkerZ = layoutRoll < 0.34 ? -28 : layoutRoll < 0.67 ? 0 : 14;
+    const towerZ = layoutRoll < 0.34 ? 0 : layoutRoll < 0.67 ? -14 : 18;
+    // Raised platform: one in three seeds gets a stage the player can climb,
+    // which is the cheapest possible verticality and the thing the flat 94m
+    // box never had. It registers as cover like everything else.
+    const hasPlatform = platformRoll < 0.34;
+
+    // The arena's geometry previously lived in this.group, built ONCE. Every
+    // mesh now parents to this.structures, which rebuild() clears each run.
+    const parent = this.structures;
+    const place = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, ry = 0): void => {
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, y, z);
+      mesh.rotation.y = ry;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    };
+
+    // 1. CENTRAL BUNKER. Two-sided anchor; its Z position is the layout roll.
+    place(new THREE.BoxGeometry(9, 3.2, 4.4), concrete, 0, 1.6, bunkerZ);
+    place(new THREE.BoxGeometry(10, 0.35, 5.2), dark, 0, 3.3, bunkerZ);
+    place(new THREE.BoxGeometry(7.2, 0.18, 0.18), accent, 0, 2.5, bunkerZ + 2.35 * mirror);
+    this.markStructureCoverInto(this.layoutCoverSpots, 0, bunkerZ, 4.5, 2.2);
+
+    // 2. WATCHTOWERS. Two, mirrored on X; Z from the layout roll. x is negated
+    // by the mirror so the same layout can face either way.
+    for (const sx of [-21, 21] as const) {
+      const x = sx * mirror;
+      place(new THREE.BoxGeometry(2.6, 4.6, 2.6), masonry, x, 2.3, towerZ);
+      place(new THREE.BoxGeometry(3.2, 0.3, 3.2), dark, x, 4.75, towerZ);
+      place(new THREE.BoxGeometry(3.0, 0.16, 0.16), accent, x, 4.1, towerZ - 1.3);
+      this.markStructureCoverInto(this.layoutCoverSpots, x, towerZ, 1.7, 1.7);
     }
 
-    // ---------------------------------------------------------------------
-    // 3. SANDBAG NESTS. Four, on the diagonals, low enough to shoot over when
-    //    crouched and low enough to be worth crouching behind. This is the
-    //    structure that makes the crouch key matter outside the slide.
-    // ---------------------------------------------------------------------
+    // 3. SANDBAG NESTS. Four on the diagonals, mirrored.
     const bag = new THREE.BoxGeometry(1.3, 0.34, 0.55);
-    for (const [x, z, ry] of [[-14, -14, 0.4], [14, -14, -0.4], [-14, 14, -0.4], [14, 14, 0.4]] as Array<[number, number, number]>) {
+    const nestZ = layoutRoll < 0.34 ? 14 : layoutRoll < 0.67 ? -14 : 4;
+    for (const [sx, sz, ry] of [[-14, nestZ, 0.4], [14, nestZ, -0.4], [-14, -nestZ, -0.4], [14, -nestZ, 0.4]] as Array<[number, number, number]>) {
+      const x = sx * mirror;
       for (let row = 0; row < 2; row++) {
         for (let col = 0; col < 3; col++) {
           const along = (col - 1) * 1.35;
-          this.solid(bag, fabric, x + Math.cos(ry) * along, 0.17 + row * 0.34, z - Math.sin(ry) * along, ry);
+          place(bag, fabric, x + Math.cos(ry) * along, 0.17 + row * 0.34, sz - Math.sin(ry) * along, ry);
         }
       }
-      this.markStructureCover(x, z, 2.2, 1.0);
+      this.markStructureCoverInto(this.layoutCoverSpots, x, sz, 2.2, 1.0);
     }
 
-    // ---------------------------------------------------------------------
-    // 4. OVERHEAD TARPS. Two, replacing the old decorative pair. They now
-    //    stand where they can block a sight line from the towers, so they are
-    //    the one piece of cover that works from above as well as the side.
-    // ---------------------------------------------------------------------
+    // 4. OVERHEAD TARPS. Two, mirrored; they block the tower sight lines.
     const tarp = new THREE.BoxGeometry(6.5, 0.08, 3.4);
-    for (const [x, z, ry] of [[-15, -9, 0], [15, 6, Math.PI / 2]] as Array<[number, number, number]>) {
-      this.solid(tarp, fabric, x, 3.8, z, ry);
+    for (const [sx, sz, ry] of [[-15, -9, 0], [15, 6, Math.PI / 2]] as Array<[number, number, number]>) {
+      const x = sx * mirror;
+      place(tarp, fabric, x, 3.8, sz, ry);
       const cos = Math.cos(ry);
       const sin = Math.sin(ry);
       for (const side of [-1, 1]) {
-        this.solid(new THREE.BoxGeometry(0.16, 3.8, 0.16), steel, x + cos * side * 3.1, 1.9, z - sin * side * 3.1, ry);
+        place(new THREE.BoxGeometry(0.16, 3.8, 0.16), steel, x + cos * side * 3.1, 1.9, sz - sin * side * 3.1, ry);
       }
-      this.markStructureCover(x, z, 3.4, 1.8);
+      this.markStructureCoverInto(this.layoutCoverSpots, x, sz, 3.4, 1.8);
     }
+
+    // 5. RAISED PLATFORM. One seed in three. Climbable from the ramp, tall
+    // enough to break a crouch sight line, and it registers as cover so the
+    // AI will claim it too -- which is what makes it a tactical object rather
+    // than scenery.
+    if (hasPlatform) {
+      const px = 22 * mirror;
+      const pz = bunkerZ === 0 ? -18 : 0;
+      place(new THREE.BoxGeometry(8, 2.2, 8), concrete, px, 1.1, pz);
+      place(new THREE.BoxGeometry(8, 0.3, 8), dark, px, 2.35, pz);
+      // Ramp: the only way up. Sloped geometry is faked with steps, which the
+      // capsule collider and the octree both handle honestly.
+      for (let step = 0; step < 5; step++) {
+        place(new THREE.BoxGeometry(4, 0.44, 1.6), masonry, px - 5.2 * mirror, 0.22 + step * 0.44, pz + 4.2 - step * 1.7);
+      }
+      this.markStructureCoverInto(this.layoutCoverSpots, px, pz, 4.0, 4.0);
+    }
+
+    this.group.add(this.structures);
   }
 
   /**
@@ -473,7 +534,10 @@ export class World {
    * fixed structures are not all the same size, and it registers on BOTH the
    * long and the short axis so a corner is a valid fighting position.
    */
-  private markStructureCover(x: number, z: number, halfX: number, halfZ: number): void {
+  private markStructureCoverInto(
+    list: Array<{ center: THREE.Vector3; left: THREE.Vector3; right: THREE.Vector3 }>,
+    x: number, z: number, halfX: number, halfZ: number,
+  ): void {
     const reach = 1.3;
     const peek = 2.4;
     // Two faces per axis: the structure is cover from either side, which is
@@ -484,7 +548,7 @@ export class World {
       // Peek points sit to either side of the stand point, along the face.
       const tx = nz === 0 ? 0 : 1;
       const tz = nx === 0 ? 0 : 1;
-      this.fixedCoverSpots.push({
+      list.push({
         center: new THREE.Vector3(cx, 0, cz),
         left: new THREE.Vector3(cx + tx * peek, 0, cz + tz * peek),
         right: new THREE.Vector3(cx - tx * peek, 0, cz - tz * peek),

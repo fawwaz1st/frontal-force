@@ -99,6 +99,14 @@ export interface Enemy {
   legR: THREE.Group;
   armL: THREE.Group;
   armR: THREE.Group;
+  /**
+   * Head pivot, a child of the torso. Tracked toward the current victim so an
+   * agent visibly LOOKS at what it is about to shoot -- the cheapest possible
+   * 'the AI is thinking' read, and the one a player notices first.
+   */
+  head: THREE.Group;
+  /** Torso counter-rotation pivot (the body twists against the hips). */
+  torsoPivot: THREE.Group;
   walkPhase: number;
   /** Attack windup already announced (charge sfx/visor spike once per attack) */
   telegraphed: boolean;
@@ -811,6 +819,7 @@ export class EnemyManager {
       kind, def, health: def.health, group,
       body: model.body, eye: model.eye,
       legL: model.legL, legR: model.legR, armL: model.armL, armR: model.armR,
+      head: model.head, torsoPivot: model.torsoPivot,
       walkPhase: Math.random() * Math.PI * 2,
       collider,
       affixes,
@@ -2237,6 +2246,21 @@ export class EnemyManager {
         BODY_EMISSIVE + (enemy.flashT / 0.14) * 3.2;
     }
 
+    // --- Aim torsion: torso twists toward the victim, head looks harder.
+    // This is the single cheapest 'the AI is thinking' read. The hips face
+    // travel; the torso adds a twist on top when a target is held, and the
+    // head turns further still, so windup reads as the WHOLE body committing.
+    // Both are damped, so a target swap is a turn, not a snap.
+    const aimTwist = enemy.animAim * 0.45;
+    const lean = enemy.kind === 'sniper' ? 0.6 : enemy.kind === 'flyer' ? 0.35 : 0.45;
+    enemy.torsoPivot.rotation.y = damp(
+      enemy.torsoPivot.rotation.y, aimTwist * lean, 8, dt);
+    // Head tracks further: the visor swings to the victim before the gun does,
+    // which is the telegraph a player reads and reacts to.
+    const headTwist = enemy.animAim * 0.85 + windup * 0.04;
+    enemy.head.rotation.y = damp(
+      enemy.head.rotation.y, headTwist, 10, dt);
+
     const moving = !playerDead && (enemy.kind === 'gunner'
       ? Math.abs(distance - enemy.def.attackRange * 0.5) > 0.5
       : distance > enemy.def.attackRange * 0.6);
@@ -2305,6 +2329,8 @@ export class EnemyManager {
     legR: THREE.Group;
     armL: THREE.Group;
     armR: THREE.Group;
+    head: THREE.Group;
+    torsoPivot: THREE.Group;
   } {
     const g = this.armorGeos;
     const root = new THREE.Group();
@@ -2323,9 +2349,16 @@ export class EnemyManager {
     // one design in ten colours.
     const dark = this.getArmorMat(kind);
 
+    // Torso pivot: the counter-rotation joint. The hips (root) face travel
+    // direction; the torso twists a few degrees toward the target on top of
+    // that, which is what separates 'a box that slides' from 'a body that
+    // turns to aim'. The head hangs off this pivot so looking and aiming
+    // read as one motion.
+    const torsoPivot = new THREE.Group();
+    torsoPivot.position.y = 1.25 * scaleK;
+    root.add(torsoPivot);
     const torso = new THREE.Mesh(g.torso, bodyMat);
-    const torsoY = 1.25 * scaleK;
-    s(torso, 0, torsoY);
+    s(torso, 0, 0, 0, torsoPivot);
     // Proportion per kind. Scaling the torso is not enough on its own: the
     // shoulder width, the limb thickness and the head size all have to move
     // together or every kind reads as "the same robot, resized".
@@ -2434,9 +2467,16 @@ export class EnemyManager {
       torso.add(core);
     }
 
-    const head = new THREE.Mesh(g.head, dark);
-    head.scale.setScalar(look.head);
-    s(head, 0, 0.38 * scaleK, 0, torso);
+    // Head is a PIVOT group, not a bare mesh: look-at rotates the group, and
+    // the mesh + visor + antenna ride inside it. The mesh keeps its own local
+    // scale so look.head still sizes it.
+    const head = new THREE.Group();
+    head.position.set(0, 0.38 * scaleK, 0);
+    torso.add(head);
+    const headMesh = new THREE.Mesh(g.head, dark);
+    headMesh.scale.setScalar(look.head);
+    headMesh.castShadow = true;
+    head.add(headMesh);
     const eye = new THREE.Mesh(g.visor, eyeMat);
     // Head geo is unscaled (fixed 0.15 half-depth) — don't scale this offset or
     // rushers sink the visor inside the head and gunners float it proud.
@@ -2532,7 +2572,7 @@ export class EnemyManager {
     const legL = makeLeg(-1);
     const legR = makeLeg(1);
 
-    return { root, body: torso, eye, legL, legR, armL, armR };
+    return { root, body: torso, eye, legL, legR, armL, armR, head, torsoPivot };
   }
 
   private fireProjectile(enemy: Enemy, victim: CombatTarget, victimVel?: THREE.Vector3): void {
