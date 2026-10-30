@@ -605,6 +605,38 @@ export class World {
     this.solid(buttressGeometry, wallMaterial, -(ARENA_HALF - 0.2), 1.9, t, Math.PI / 2);
     this.solid(buttressGeometry, wallMaterial, ARENA_HALF - 0.2, 1.9, t, Math.PI / 2);
   }
+  // ---------------------------------------------------------------------
+  // Perimeter detail. Four bare 4.8 m slabs made the arena read as a box
+  // with a floor: nothing at eye level gave the eye a distance cue, so the
+  // far wall looked as close as the near one. Two additions fix that and
+  // cost no collision (both are shallow decals against the wall face):
+  //   1. PILASTERS between the buttresses, which break the wall into bays
+  //      and give a countable rhythm the player can use to judge distance.
+  //   2. An EMISSIVE ACCENT STRIP at 1.4 m, which is the one element bright
+  //      enough to survive a night or blackout mutation and still read as a
+  //      horizon line across the arena.
+  // ---------------------------------------------------------------------
+  const pilasterGeometry = new THREE.BoxGeometry(0.42, 4.4, 0.34);
+  const accentGeometry = new THREE.BoxGeometry(6.4, 0.09, 0.08);
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0f1c,
+    emissive: this.theme.cover.glow,
+    emissiveIntensity: 1.15,
+    roughness: 0.45,
+  });
+  this.runMaterials.push(accentMat);
+  for (let t = -28; t <= 28; t += 8) {
+    // North / south walls: pilaster faces the arena, strip between pilasters.
+    this.solid(pilasterGeometry, wallMaterial, t, 2.2, -(ARENA_HALF - 0.05));
+    this.solid(pilasterGeometry, wallMaterial, t, 2.2, ARENA_HALF - 0.05);
+    this.solid(accentGeometry, accentMat, t + 4, 1.4, -(ARENA_HALF - 0.02));
+    this.solid(accentGeometry, accentMat, t + 4, 1.4, ARENA_HALF - 0.02);
+    // East / west walls: same treatment rotated a quarter turn.
+    this.solid(pilasterGeometry, wallMaterial, -(ARENA_HALF - 0.05), 2.2, t, Math.PI / 2);
+    this.solid(pilasterGeometry, wallMaterial, ARENA_HALF - 0.05, 2.2, t, Math.PI / 2);
+    this.solid(accentGeometry, accentMat, -(ARENA_HALF - 0.02), 1.4, t + 4, Math.PI / 2);
+    this.solid(accentGeometry, accentMat, ARENA_HALF - 0.02, 1.4, t + 4, Math.PI / 2);
+  }
 }
 
   /** Star dome above the walls — fog-free so it survives FogExp2. */
@@ -869,11 +901,42 @@ export class World {
     // Three work lamps, hung on the structures that actually exist. Each one
     // sits above a fixed landmark, so the light and the thing you fight around
     // are the same object: a lamp in empty space is decoration.
+    //
+    // Each lamp now carries a VISIBLE housing. A bare PointLight lit the arena
+    // from nowhere: the ground brightened under a structure with no fixture on
+    // it, which reads as a rendering bug rather than as a lamp. The housing is
+    // a bracket + shade + emissive lens, so the light has a source the player
+    // can see and shoot past.
+    const housingMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1f26, roughness: 0.62, metalness: 0.72,
+    });
+    const lensMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0f1c,
+      emissive: this.theme.cover.glow,
+      emissiveIntensity: 2.4,
+      roughness: 0.3,
+    });
+    this.runMaterials.push(housingMat, lensMat);
+    const shadeGeo = new THREE.ConeGeometry(0.62, 0.5, 10, 1, true);
+    const bracketGeo = new THREE.BoxGeometry(0.1, 0.1, 1.5);
+    const lensGeo = new THREE.BoxGeometry(0.5, 0.08, 0.5);
     for (const [x, y, z] of [[-21, 5.2, 0], [21, 5.2, 0], [0, 4.4, -26]] as Array<[number, number, number]>) {
       const light = new THREE.PointLight(this.theme.cover.glow, 26, 26, 2);
       light.position.set(x, y, z);
       this.rangeLamps.push(light);
       scene.add(light);
+      // Housing hangs BELOW the light so the shade never occludes the source.
+      const shade = new THREE.Mesh(shadeGeo, housingMat);
+      shade.position.set(x, y + 0.34, z);
+      shade.rotation.x = Math.PI;
+      shade.castShadow = false;
+      this.group.add(shade);
+      const lens = new THREE.Mesh(lensGeo, lensMat);
+      lens.position.set(x, y + 0.1, z);
+      this.group.add(lens);
+      const bracket = new THREE.Mesh(bracketGeo, housingMat);
+      bracket.position.set(x, y + 0.62, z);
+      this.group.add(bracket);
     }
   }
 

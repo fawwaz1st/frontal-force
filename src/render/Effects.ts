@@ -162,15 +162,22 @@ export class Effects {
     if (len < 0.01) return;
     t.mesh.material = this.getTracerMat(color);
     t.mesh.position.copy(from).addScaledVector(dir, 0.5);
-    t.mesh.scale.set(0.03, 0.03, len * 0.5);
+    // Thicker and longer-lived than the first pass (0.03 / 0.07 s): at those
+    // values a tracer was a single-frame hairline that vanished before the eye
+    // could follow it, so a firefight read as enemies taking damage from
+    // nothing. 0.05 / 0.1 s is still short enough to read as a bullet.
+    t.mesh.scale.set(0.05, 0.05, len * 0.5);
     t.mesh.lookAt(to);
     t.mesh.visible = true;
-    t.life = 0.07;
+    t.life = 0.1;
   }
 
   public impact(point: THREE.Vector3, normal: THREE.Vector3): void {
     const mat = this.getSparkMat(0xffc46b);
-    for (let i = 0; i < 4; i++) {
+    // 7 sparks instead of 4: an impact is the most frequent read in the game
+    // and four dots was below the threshold where the eye registers a hit on
+    // a wall. The extra three cost nothing (pooled, same material).
+    for (let i = 0; i < 7; i++) {
       const s = this.sparks[this.sparkCursor];
       this.sparkCursor = (this.sparkCursor + 1) % SPARK_POOL;
       if (!s) continue;

@@ -350,9 +350,14 @@ export class Viewmodel {
 
   private accentMat(color: number): THREE.MeshStandardMaterial {
     // ei 1.6 clipped to white under the 2.2 ACES exposure — even 0.6 still
-    // reaches ~1.0 after exposure, so keep it low enough to stay saturated.
+    // reaches ~1.0 after exposure, so keep it below that to stay saturated.
+    //
+    // Raised from 0.25 to 0.42: at 0.25 the accent strips vanished against the
+    // arena's dark walls, so the weapon read as a silhouette with no detail and
+    // every gun looked like the same black shape. 0.42 keeps the hue (it is the
+    // per-weapon accent that distinguishes them) while surviving the exposure.
     return new THREE.MeshStandardMaterial({
-      color: 0x0a0f1c, emissive: color, emissiveIntensity: 0.25, roughness: 0.4,
+      color: 0x0a0f1c, emissive: color, emissiveIntensity: 0.42, roughness: 0.4,
     });
   }
 

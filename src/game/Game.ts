@@ -401,8 +401,14 @@ export class Game {
     });    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.autoClear = false;
     this.renderer.shadowMap.enabled = this.quality.shadows;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 2.2;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Exposure 2.2 washed the arena out: ACES already lifts mid-tones, so
+    // doubling it flattened the floor, the walls and the fog into one pale
+    // grey band and killed the contrast the lighting was built for. 1.35
+    // keeps the highlights from clipping while letting the shadows stay
+    // genuinely dark, which is what makes the emissive accents read.
+    this.renderer.toneMappingExposure = 1.35;
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
     // The draft and kiosk are separate overlays, not part of the HUD tree, so
