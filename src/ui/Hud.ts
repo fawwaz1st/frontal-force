@@ -375,6 +375,8 @@ export class Hud {
   private readonly allyN: HTMLElement;
   private lastAllyN = -1;
   private readonly pops: HTMLElement[] = [];
+  /** Killfeed host: the last four named kills. */
+  private readonly killfeed: HTMLElement;
   private popCursor = 0;
   private bannerTimer = 0;
   private dmgCursor = 0;
@@ -570,6 +572,10 @@ export class Hud {
         <div class="hud__scope-ticks"></div>
       </div>
       <div class="hud__pops" data-pops></div>
+      <!-- Killfeed: the last few kills, named. Over-communicating is what
+           Overwatch credits for its revitalisation -- the player should never
+           have to guess what just died or what killed it. -->
+      <div class="hud__killfeed" data-killfeed aria-live="polite"></div>
       <div class="hud__banner" data-banner>
         <div class="hud__banner-title" data-banner-title>WAVE 1</div>
         <div class="hud__banner-sub" data-banner-sub></div>
@@ -932,6 +938,7 @@ export class Hud {
     this.buildLoadoutScreen();
     this.buildTabs();
     const popsEl = q('[data-pops]');
+    this.killfeed = q('[data-killfeed]') as HTMLElement;
     for (let i = 0; i < 6; i++) {
       const pop = document.createElement('div');
       pop.className = 'hud__pop';
@@ -2248,6 +2255,34 @@ export class Hud {
     el.classList.remove('show');
     void el.offsetWidth; // restart animation
     el.classList.add('show');
+  }
+
+  /**
+   * Push a named kill onto the killfeed. `victim` is the enemy label,
+   * `weapon` the weapon that killed it. The feed keeps the last four and
+   * drops the oldest, so it never grows without bound.
+   *
+   * Overwatch's team credits 'over-communicating' for the game's
+   * revitalisation, and a killfeed is the cheapest form of it: the player
+   * always knows what just died and what did it, without reading a log.
+   */
+  public pushKill(victim: string, weapon: string, elite = false): void {
+    const row = document.createElement('div');
+    row.className = 'hud__kf-row' + (elite ? ' is-elite' : '');
+    row.innerHTML = `<b></b><i></i>`;
+    const nameEl = row.querySelector('b');
+    const weaponEl = row.querySelector('i');
+    if (nameEl) nameEl.textContent = victim;
+    if (weaponEl) weaponEl.textContent = weapon;
+    this.killfeed.prepend(row);
+    while (this.killfeed.children.length > 4) {
+      const last = this.killfeed.lastElementChild;
+      if (!last) break;
+      last.remove();
+    }
+    // Retire the row after a beat so the feed is a recent-history read,
+    // not a permanent list.
+    window.setTimeout(() => row.remove(), 5200);
   }
 
   public syncSettings(

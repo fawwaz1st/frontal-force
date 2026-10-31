@@ -230,6 +230,8 @@ export class Game {
   private grenadeCook = 0;
   private grenadeKind: GrenadeKind = 'frag';
   private meleeT = 0;
+  /** Alternates per swing so consecutive melees never read the same way. */
+  private meleeSwingSide: 1 | -1 = 1;
   /** Per-wave stats for the medal + achievement counters. */
   private waveTookDamage = false;
   private waveStartT = 0;
@@ -469,9 +471,16 @@ export class Game {
         }
         this.hud.hitmarkerFlash(kind === 'headshot' ? 'headshot' : 'hit');
         this.audio.hitmarker(kind === 'headshot');
-        // A headshot gets a shorter, punchier freeze than a kill: it is the
-        // "that one counted" beat, and it must not compete with the kill.
-        if (kind === 'headshot') this.hitstopT = Math.max(this.hitstopT, 0.035);
+        // Hit-stop scales with the WEAPON, not just the hit. Avowed's team
+        // found a uniform freeze made every swing feel identical; a shotgun
+        // pellet and a rail round should not land with the same weight. The
+        // freeze is derived from the shot's damage, so the heaviest weapon in
+        // the kit has the heaviest beat.
+        const wDef = this.weapons.current.def;
+        // 0.018 s per 10 damage, floored at 0.02 and capped at 0.075 so a
+        // rail (130) reads as a real stop without freezing the game.
+        const stop = clamp(0.018 * (wDef.damage / 10), 0.02, 0.075);
+        this.hitstopT = Math.max(this.hitstopT, kind === 'headshot' ? stop * 0.6 : stop);
       },
     );
     this.weapons.onFired = (weapon) => this.viewmodel.kick(0.025 + weapon.def.recoil * 0.8);
@@ -517,6 +526,14 @@ export class Game {
       const len = Math.hypot(dx, dz) || 1;
       const yaw = this.player.yawAngle;
       return Math.max(-1, Math.min(1, (dx / len) * Math.cos(yaw) - (dz / len) * Math.sin(yaw)));
+    };
+    // HOT ZONE death-grenade: spawn a short-fuse frag where the enemy fell.
+    this.enemies.onDeathGrenade = (at) => {
+      const eye = at.clone();
+      const dir = new THREE.Vector3(0, 0.35, 0);
+      this.grenades.throwGrenade('frag', eye, dir, 0.15);
+      this.effects.ring(at, 0xff8a3c, 2.2, 0.3);
+      this.audio.blastAt(at.x, at.z);
     };
     this.enemies.interceptors.push(...this.ally.bots);
     // Enemy AI scores this registry instead of hard-coding "the player", so a
@@ -1536,6 +1553,8 @@ export class Game {
     // sight reduction ("Enemies see 30% less far") and this is what makes that
     // true rather than atmospheric copy.
     this.enemies.sightMul = this.waves.sightMul;
+    // HOT ZONE: killed enemies drop live grenades while the modifier is up.
+    this.enemies.deathGrenades = this.waves.activeModifier?.deathGrenades === true;
     this.enemies.shieldBreakBonus = this.run.mods.shieldBreakBonus;
     this.enemies.playerYaw = this.player.yawAngle;
     this.enemies.update(
@@ -1671,6 +1690,10 @@ export class Game {
       this.dashDir.copy(this.dashInputDirection(frame));
       this.player.startDash(this.dashDir, DASH_SPEED, DASH_TIME);
       this.effects.ring(this.player.position, 0xff9f1c, 2.6, 0.3);
+      // The dash sweeps the weapon across the screen, so it gets a trail too.
+      // Swing direction alternates so two swings never read the same way -- the
+    // 'oomph' Apex's animators chase.
+    this.viewmodel.swingTrail(this.meleeSwingSide);
       this.audio.dash();
       this.pendingDashKill = true;
     }
@@ -1769,7 +1792,13 @@ export class Game {
       best = enemy;
     });
 
+    // Alternate the swing direction: two identical swings in a row read as a
+    // single repeated animation, which is the 'one sample forever' tell.
+    this.meleeSwingSide = this.meleeSwingSide === 1 ? -1 : 1;
     this.audio.swing();
+    // Motion trail along the swing: the eye follows the arc, so the hit
+    // reads as a sweep rather than a jump cut (Avowed's lesson).
+    this.viewmodel.swingTrail(this.meleeSwingSide);
     if (!best) {
       this.effects.burst(eye.clone().addScaledVector(forward, 1.4), 0xded2aa, 4, 1.2);
       return;
@@ -1893,6 +1922,15 @@ export class Game {
     }
     if (enemy.elite) this.eliteKills += 1;
     if (enemy.kind === 'wardenPrime') this.bossKills += 1;
+    // Killfeed: name the kill. Only player kills -- an escort farming the
+    // arena would flood the feed with rows the player did not earn.
+    if (byPlayer) {
+      this.hud.pushKill(
+        enemy.def.label,
+        this.weapons.current.def.name,
+        enemy.elite,
+      );
+    }
     // Salvage: the run's currency. Elites and bosses pay a premium, which is
     // what makes hunting them a real economic decision. The challenge salvage
     // multiplier applies on top, so a hard run is also a richer one.

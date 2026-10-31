@@ -428,6 +428,14 @@ export class EnemyManager {
   public onEnemyKilled: ((enemy: Enemy, byPlayer: boolean) => void) | null = null;
   /** Player yaw for the current frame — lets enemy sfx pan to their screen side. */
   public playerYaw = 0;
+  /**
+   * True when the active run modifier makes a killed enemy drop a live
+   * grenade (HOT ZONE). The TLOU2 No Return lesson: a rule that forces the
+   * player to change behaviour beats a stat tweak every time.
+   */
+  public deathGrenades = false;
+  /** Fired when a death-grenade is dropped, so the owner can spawn it. */
+  public onDeathGrenade: ((at: THREE.Vector3) => void) | null = null;
   /** Escort bots that intercept bolts before they reach the player. */
   public readonly interceptors: Interceptor[] = [];
   /**
@@ -1081,6 +1089,12 @@ export class EnemyManager {
       this.effects.burst(at, 0xff9f1c, 26, 3);
       this.audio.blastAt(at.x, at.z);
       this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
+    }
+    // HOT ZONE: a killed enemy leaves a live grenade behind. The player must
+    // back out of the kill or catch the blast, which rewrites the approach to
+    // every engagement while the modifier is up.
+    if (this.deathGrenades && enemy.kind !== 'wardenPrime') {
+      this.onDeathGrenade?.(at);
     }
     this.onEnemyKilled?.(enemy, byPlayer);
   }

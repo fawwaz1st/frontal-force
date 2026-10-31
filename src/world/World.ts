@@ -855,6 +855,59 @@ export class World {
       }
     }
 
+
+    // ---- ORGANIC LOW COVER.
+    //
+    // Crossfire's team moved away from 'rectilinear' arenas that signpost
+    // cover with obvious chest-high walls, toward cover the player FINDS in
+    // the terrain. The generated props above are all boxes on a grid; these
+    // are scattered at arbitrary angles and arbitrary low heights, so the
+    // arena reads as a place rather than as a layout. Every one registers a
+    // cover spot, so the AI claims them too -- organic cover the AI cannot
+    // use is just clutter.
+    const barrier = new THREE.BoxGeometry(2.2, 0.85, 0.5);
+    const pipe = new THREE.CylinderGeometry(0.34, 0.34, 2.6, 10);
+    const rubble = new THREE.BoxGeometry(1.1, 0.55, 0.9);
+    const barrierCap = new THREE.BoxGeometry(2.3, 0.07, 0.6);
+    let organic = 0;
+    for (let tries = 0; tries < 90 && organic < 14; tries++) {
+      const x = (rnd() - 0.5) * (ARENA_HALF * 2 - 8);
+      const z = (rnd() - 0.5) * (ARENA_HALF * 2 - 8);
+      // Reject anything overlapping an existing footprint, the centre, or
+      // the player's spawn approach.
+      if (this.footprints.some((f) => (f.x - x) * (f.x - x) + (f.z - z) * (f.z - z) < (f.r + 2.4) * (f.r + 2.4))) continue;
+      if (x * x + z * z < 100) continue;
+      const ry = rnd() * Math.PI * 2;
+      const kind = Math.floor(rnd() * 3);
+      if (kind === 0) {
+        // Jersey barrier: low, long, rotated off-axis.
+        add(barrier, darkMat, x, 0.42, z, ry);
+        add(barrierCap, glowMat, x, 0.87, z, ry);
+        mark(x, z, 1.6);
+        markCover(x, z, ry + Math.PI);
+      } else if (kind === 1) {
+        // Fallen pipe: a cylinder on its side, rolled along X.
+        const mesh = new THREE.Mesh(pipe, crateMat);
+        mesh.position.set(x, 0.34, z);
+        mesh.rotation.z = Math.PI / 2;
+        mesh.rotation.y = ry;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        cg.add(mesh);
+        mark(x, z, 1.5);
+        markCover(x, z, ry + Math.PI);
+      } else {
+        // Rubble cluster: three chunks at different heights and angles.
+        for (let c = 0; c < 3; c++) {
+          const ox = x + (rnd() - 0.5) * 1.8;
+          const oz = z + (rnd() - 0.5) * 1.8;
+          add(rubble, c % 2 === 0 ? crateMat : darkMat, ox, 0.27, oz, rnd() * Math.PI);
+        }
+        mark(x, z, 2.1);
+        markCover(x, z, rnd() * Math.PI);
+      }
+      organic += 1;
+    }
   }
 
   private disposeCoverRun(): void {

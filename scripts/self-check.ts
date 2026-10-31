@@ -95,6 +95,7 @@ check('Waves.ts still contains the endless formulas + constants', () => {
 
 // ---------- combo tiers (src/game/Game.ts) ----------
 const gameSrc = readSrc('game/Game.ts');
+const viewmodelSrc = readSrc('render/Viewmodel.ts');
 const pickupSrc = readSrc('world/Pickups.ts');
 const hudSrc = readSrc('ui/Hud.ts');
 const comboMult = (streak: number): number => Math.min(1 + Math.floor(streak / 2), 8);
@@ -1101,8 +1102,47 @@ check('juice: hitstop is never a full freeze', () => {
 check('juice: a bigger kill freezes longer', () => {
   assert.match(gameSrc, /enemy\.kind === 'wardenPrime' \? 0\.16\n\s+: enemy\.elite \? 0\.1 : 0\.06/);
 });
-check('juice: the freeze is driven by real events, not a timer', () => {
-  assert.match(gameSrc, /if \(kind === 'headshot'\) this\.hitstopT = Math\.max\(this\.hitstopT, 0\.035\);/);
+check('juice: the freeze scales with the weapon, not a fixed number', () => {
+  // Avowed's lesson: a uniform hit-stop makes every swing feel identical.
+  // The freeze is now derived from the shot's damage, floored and capped so
+  // a rail reads as a real stop without freezing the game.
+  assert.match(gameSrc, /const stop = clamp\(0\.018 \* \(wDef\.damage \/ 10\), 0\.02, 0\.075\);/);
+  assert.match(gameSrc, /kind === 'headshot' \? stop \* 0\.6 : stop/);
+});
+
+check('juice: a melee swing fires a motion trail', () => {
+  // The trail is what makes the eye follow the arc instead of seeing a jump
+  // cut (Avowed's motion trails). The swing side alternates so two swings
+  // never read as the same animation.
+  assert.match(gameSrc, /this\.viewmodel\.swingTrail\(this\.meleeSwingSide\);/);
+  assert.match(gameSrc, /this\.meleeSwingSide = this\.meleeSwingSide === 1 \? -1 : 1;/);
+  assert.match(viewmodelSrc, /public swingTrail\(axis: 1 \| -1 = 1\): void \{/);
+  assert.match(viewmodelSrc, /private updateSwingTrail\(dt: number\): void \{/);
+});
+
+check('juice: HOT ZONE drops a live grenade on every kill', () => {
+  // The TLOU2 No Return lesson: a rule that forces a behaviour change beats
+  // a stat tweak. Killing an enemy now has a spatial cost.
+  assert.match(wavesSrc, /deathGrenades: true/);
+  assert.match(gameSrc, /this\.enemies\.deathGrenades = this\.waves\.activeModifier\?\.deathGrenades === true;/);
+  assert.match(enemiesSrc, /if \(this\.deathGrenades && enemy\.kind !== 'wardenPrime'\) \{/);
+});
+
+check('juice: the killfeed names every player kill', () => {
+  // Over-communicating: the player never has to guess what just died.
+  assert.match(gameSrc, /this\.hud\.pushKill\(/);
+  assert.match(hudSrc, /public pushKill\(victim: string, weapon: string, elite = false\): void \{/);
+  assert.match(hudSrc, /data-killfeed/);
+});
+
+check('world: organic low cover is generated off the grid', () => {
+  // Crossfire's lesson: rectilinear signposted cover reads as a layout, not
+  // as a place. These props are scattered at arbitrary angles and heights,
+  // and every one registers a cover spot so the AI claims them too.
+  assert.match(worldSrc, /ORGANIC LOW COVER/);
+  assert.match(worldSrc, /const barrier = new THREE\.BoxGeometry\(2\.2, 0\.85, 0\.5\);/);
+  assert.match(worldSrc, /const pipe = new THREE\.CylinderGeometry\(0\.34, 0\.34, 2\.6, 10\);/);
+  assert.match(worldSrc, /for \(let tries = 0; tries < 90 && organic < 14; tries\+\+\)/);
 });
 check('juice: a hit flinches the body, scaled by the damage fraction', () => {
   assert.match(enemiesSrc, /const weight = clamp\(dealt \/ enemy\.def\.health, 0, 1\);/);

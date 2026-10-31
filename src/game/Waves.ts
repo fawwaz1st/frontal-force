@@ -151,6 +151,8 @@ export interface WaveModifier {
   readonly grenadeRechargeMul: number;
   /** Score multiplier from surviving this modifier. */
   readonly scoreMul: number;
+  /** True when a killed enemy drops a live grenade at its feet. */
+  readonly deathGrenades: boolean;
 }
 
 export const WAVE_MODIFIERS: readonly WaveModifier[] = [
@@ -158,25 +160,36 @@ export const WAVE_MODIFIERS: readonly WaveModifier[] = [
     id: 'blitz-pace', name: 'BLITZ PACE',
     description: 'Everything moves and shoots 15% faster. +20% score.',
     enemySpeedMul: 1.15, playerFireRateMul: 1.15, enemyFireRateMul: 1.15,
-    grenadeRechargeMul: 1, scoreMul: 1.2,
+    grenadeRechargeMul: 1, scoreMul: 1.2, deathGrenades: false,
   },
   {
     id: 'supply-line', name: 'SUPPLY LINE',
     description: 'Grenades recharge twice as fast. Enemies close 10% faster.',
     enemySpeedMul: 1.1, playerFireRateMul: 1, enemyFireRateMul: 1,
-    grenadeRechargeMul: 2, scoreMul: 1.1,
+    grenadeRechargeMul: 2, scoreMul: 1.1, deathGrenades: false,
   },
   {
     id: 'heavy-hands', name: 'HEAVY HANDS',
     description: 'Your guns cycle 20% faster. Enemy bolts are 10% faster too.',
     enemySpeedMul: 1, playerFireRateMul: 1.2, enemyFireRateMul: 1.1,
-    grenadeRechargeMul: 1, scoreMul: 1.15,
+    grenadeRechargeMul: 1, scoreMul: 1.15, deathGrenades: false,
   },
   {
     id: 'long-night', name: 'LONG NIGHT',
     description: 'Enemies move 12% faster. Grenades recharge 30% slower.',
     enemySpeedMul: 1.12, playerFireRateMul: 1, enemyFireRateMul: 1,
-    grenadeRechargeMul: 0.7, scoreMul: 1.15,
+    grenadeRechargeMul: 0.7, scoreMul: 1.15, deathGrenades: false,
+  },
+  {
+    // The TLOU2 No Return lesson: an encounter modifier that FORCES a
+    // behaviour change is worth more than a stat tweak. Naughty Dog's team
+    // described the moment an enemy dropped a pipe bomb on death -- 'you have
+    // to attack and then back out'. That single rule rewrote how their
+    // designer played the encounter, and it costs almost nothing to build.
+    id: 'hot-zone', name: 'HOT ZONE',
+    description: 'Killed enemies drop a live grenade. Back out or catch it.',
+    enemySpeedMul: 1, playerFireRateMul: 1, enemyFireRateMul: 1,
+    grenadeRechargeMul: 1, scoreMul: 1.3, deathGrenades: true,
   },
 ];
 /** Mutations that can be rolled (clear is the "no mutation" baseline). */

@@ -67,6 +67,21 @@ export class Viewmodel {
 
   // Muzzle flash (reparented to the active weapon's muzzle)
   private readonly flashGroup = new THREE.Group();
+  /**
+   * Motion trail: a thin quad that streaks along the weapon's swing arc.
+   *
+   * Avowed's combat team spent real time on 'motion trails' -- subtle geometry
+   * that follows the weapon through its attack -- and it is the cheapest
+   * readable-oomph trick in the book. Without it a fast swing is a jump cut;
+   * with it the eye follows the arc and the hit lands harder.
+   *
+   * One pooled quad, additive, alpha-faded over ~0.09 s. It is scaled along
+   * the swing axis so it reads as an arc segment rather than a line.
+   */
+  private readonly trail: THREE.Mesh;
+  private trailT = 0;
+  private trailAxis: 1 | -1 = 1;
+  private readonly TRAIL_LIFE = 0.09;
   private readonly flashPlane: THREE.Mesh;
   private readonly flashLight: THREE.PointLight;
 
@@ -78,6 +93,20 @@ export class Viewmodel {
   private readonly sleeveMat: THREE.MeshStandardMaterial;
 
   public constructor() {
+    this.trail = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.5, 0.05),
+      new THREE.MeshBasicMaterial({
+        color: 0xbfe9ff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.trail.visible = false;
+    this.trail.frustumCulled = false;
+    this.rig.add(this.trail);
     this.scene.add(this.rig);
     this.rig.scale.setScalar(MODEL_SCALE);
     // RoomEnvironment + the 2.2 world exposure blew pale parts to white.
@@ -174,6 +203,22 @@ export class Viewmodel {
   }
 
   /** Recoil kick — instant impulse, critically-damped settle in update(). */
+  /**
+   * Fire a motion trail along the weapon's swing arc. Called by the owner on
+   * a melee swing and on a dash, where the weapon sweeps fastest.
+   *
+   * `axis` is the swing direction in rig space (1 = right-to-left, -1 = the
+   * reverse). The trail is a quad rotated onto that axis, so the eye follows
+   * the same path the weapon took instead of seeing a jump cut.
+   */
+  public swingTrail(axis: 1 | -1 = 1): void {
+    this.trailT = this.TRAIL_LIFE;
+    this.trailAxis = axis;
+    this.trail.visible = true;
+    const mat = this.trail.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0.5;
+  }
+
   public kick(power: number): void {
     this.kickZ = Math.min(this.kickZ + power, 0.14);
     this.flashT = 0.045;
@@ -221,6 +266,36 @@ export class Viewmodel {
     this.applyRigPose(switchPose);
     this.updateReloadProps(f);
     this.updateMuzzleFlash(dt);
+    this.updateSwingTrail(dt);
+  }
+
+  /**
+   * Fade and retire the motion trail. The quad sits at the weapon's mid-
+   * body, rotated onto the swing axis, and shrinks as it fades so the arc
+   * reads as a sweep rather than as a bar sliding across the screen.
+   */
+  private updateSwingTrail(dt: number): void {
+    if (this.trailT <= 0) {
+      if (this.trail.visible) this.trail.visible = false;
+      return;
+    }
+    this.trailT = Math.max(0, this.trailT - dt);
+    const k = this.trailT / this.TRAIL_LIFE;
+    const mat = this.trail.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0.5 * k;
+    // Sit just in front of the hip, on the swing axis, tilted to read as an arc.
+    this.trail.position.set(
+      this.trailAxis * 0.16 * (1 - k),
+      -0.02,
+      -0.34,
+    );
+    this.trail.rotation.set(
+      -0.5,
+      this.trailAxis * 0.9,
+      this.trailAxis * 0.35 * (1 - k),
+    );
+    this.trail.scale.set(0.7 + 0.5 * (1 - k), 1, 1);
+    if (this.trailT <= 0) this.trail.visible = false;
   }
 
   private updateMotionState(dt: number, f: ViewmodelFrame): number {

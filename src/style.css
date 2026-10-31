@@ -191,6 +191,50 @@ body {
   100% { opacity: 0; }
 }
 
+/* ---------- Killfeed ---------- */
+/* Top-right, under the radar. Four rows max, oldest retired. Named kills
+   only: the player should never have to guess what just died. */
+.hud__killfeed {
+  position: absolute;
+  top: calc(64px + var(--safe-t));
+  right: calc(18px + var(--safe-r));
+  z-index: 2;
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  pointer-events: none;
+}
+.hud__kf-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  background: rgba(10, 14, 18, 0.72);
+  border-right: 2px solid var(--line-strong);
+  animation: kfin 0.18s ease-out;
+}
+.hud__kf-row b {
+  font-weight: 700;
+  color: var(--text);
+}
+.hud__kf-row i {
+  font-style: normal;
+  color: var(--text-faint);
+}
+/* An elite kill is worth calling out: gold rail, same meaning as elsewhere. */
+.hud__kf-row.is-elite {
+  border-right-color: var(--gold);
+}
+.hud__kf-row.is-elite b { color: var(--gold); }
+@keyframes kfin {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
+
 /* ---------- Damage direction arcs ---------- */
 .hud__dmg-container {
   position: absolute;
