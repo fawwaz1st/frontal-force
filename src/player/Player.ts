@@ -695,7 +695,10 @@ export class Player {
       // The slide keeps its own direction, so steering mid-slide does not
       // curve the path: a slide is a committed movement, which is what makes
       // it a dodge rather than a speed boost.
-      speed = SLIDE_SPEED * (this.slideTimer / SLIDE_TIME) + SLIDE_ENTRY_BONUS;
+      // Floor the speed at sprint so the tail never drops below it: the
+      // audit found the slide was slower than sprint for ~36% of its
+      // duration, which read as a stutter instead of a dodge.
+      speed = Math.max(WALK_SPEED * SPRINT_MULT, SLIDE_SPEED * (this.slideTimer / SLIDE_TIME) + SLIDE_ENTRY_BONUS);
     } else if (canSprint && !wantsCrouch) speed = WALK_SPEED * SPRINT_MULT;
     else if (wantsCrouch) speed = WALK_SPEED * CROUCH_MULT;
     if (input.moveX !== 0 && this.slideTimer <= 0) speed *= input.moveZ === 0 ? 0.85 : 0.93;

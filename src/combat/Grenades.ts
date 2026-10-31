@@ -53,7 +53,7 @@ export const GRENADE_DEFS: Record<GrenadeKind, GrenadeDef> = {
   },
 };
 
-const POOL = 6;
+const POOL = 12;
 const GRAVITY = 19;
 const RESTITUTION = 0.42;
 const DRAG = 0.12;
