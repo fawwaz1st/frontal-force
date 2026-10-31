@@ -480,7 +480,15 @@ export class Game {
         // 0.018 s per 10 damage, floored at 0.02 and capped at 0.075 so a
         // rail (130) reads as a real stop without freezing the game.
         const stop = clamp(0.018 * (wDef.damage / 10), 0.02, 0.075);
-        this.hitstopT = Math.max(this.hitstopT, kind === 'headshot' ? stop * 0.6 : stop);
+        // Only KILLS freeze. A hit-stop on every hit (the previous behaviour)
+        // scaled time dilation with accuracy: a beam player (20 hits/s) ran
+        // the whole sim at 0.74x, which made every encounter 26% easier and
+        // desynced audio. A hit is feedback; a kill is a beat.
+        // Only KILLS freeze. A hit-stop on every hit scaled time dilation
+        // with accuracy: a beam player (20 hits/s) ran the whole sim at
+        // 0.74x, which made every encounter 26% easier and desynced audio.
+        // A hit is feedback; a kill is a beat.
+        if (kind === 'kill') this.hitstopT = Math.max(this.hitstopT, stop);
       },
     );
     this.weapons.onFired = (weapon) => this.viewmodel.kick(0.025 + weapon.def.recoil * 0.8);
@@ -535,6 +543,10 @@ export class Game {
       this.effects.ring(at, 0xff8a3c, 2.2, 0.3);
       this.audio.blastAt(at.x, at.z);
     };
+    // HOT ZONE: the grenade must be able to hurt the PLAYER too, otherwise
+    // the modifier is a free +30% score. The detonate callback now also
+    // calls player.damage via a sink with radius 3.6 m, floor 0.45, cap 35.
+    // (See Grenades.ts detonate.)
     this.enemies.interceptors.push(...this.ally.bots);
     // Enemy AI scores this registry instead of hard-coding "the player", so a
     // downed human does not make the whole roster go passive.
@@ -1513,6 +1525,7 @@ export class Game {
     // Player, so Player never has to know weapons exist.
     this.player.adsFov = this.weapons.adsFov();
     this.player.weaponMoveMul = this.weapons.moveMul;
+    this.player.recoilRecoveryMul = this.weapons.recoilRecoveryMul;
     this.player.update(dt, frame, this.dashT > 0 ? this.dashDir : null);
     // The damage-source label fades after a couple of seconds: it must describe
     // the hit the player just felt, not linger as a permanent banner.
@@ -1579,6 +1592,15 @@ export class Game {
       // lifesteal applies to it exactly as it does to a bullet.
       if (result.dealt > 0) this.onDamageDealt(result.dealt, false);
       return result;
+    }, (point, radius, damage, source) => {
+      // HOT ZONE self-damage: the detonate callback now also calls player.
+      // damage via the hazard sink pattern (falloff + cap), so a modifier
+      // that promised 'back out or catch it' actually hurts you.
+      if (this.player.dead) return;
+      const distance = this.player.position.distanceTo(point);
+      if (distance > radius) return;
+      const falloff = Math.max(0.45, 1 - distance / radius);
+      this.player.damage(Math.min(35, damage * falloff), point, source);
     });
     this.ally.update(dt, this.player.position, this.enemies, this.waves.damageScale);
     // Affix riders on the player: burn damage and the Glacial slow. The burn

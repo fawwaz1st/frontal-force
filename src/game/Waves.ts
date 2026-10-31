@@ -35,6 +35,38 @@ const ENDLESS_ALIVE_CAP = 24;
 /** A boss wave is every N waves in every mode. */
 const BOSS_EVERY = 5;
 
+/**
+ * Wave pacing: PEAKS and VALLEYS.
+ *
+ * Research (2026 wave-survival design): constant chaos degrades readability --
+ * the brain stops processing individual cues and defaults to panic-evading.
+ * 'If a game is 100% high-intensity action all the time, the brain normalizes
+ * it, and tension flattens into fatigue.' The rhythm has to come from CONTRAST:
+ * the violent micro-decision chaos of a peak wave versus a shorter, lighter
+ * valley wave that lets the player decompress and re-read the arena.
+ *
+ * The pattern repeats every 4 waves, offset so a boss wave (every 5) is never
+ * also a valley -- the peak must be a peak.
+ *   wave % 4 === 2  ->  VALLEY  (lighter, shorter: the breath)
+ *   wave % 4 === 0  ->  PEAK    (heavier: the punch)
+ *   otherwise       ->  normal ramp
+ */
+const PACING_CYCLE = 4;
+
+/**
+ * Enemy-count multiplier for this wave, from the peak/valley rhythm.
+ * Returns 1 for a normal wave, so the existing ramp is untouched.
+ */
+export function pacingCountMul(wave: number): number {
+  if (wave <= 1) return 1;
+  // A boss wave is always a peak; never let it land on a valley slot.
+  if (wave % BOSS_EVERY === 0) return 1.35;
+  const slot = wave % PACING_CYCLE;
+  if (slot === 2) return 0.62;
+  if (slot === 0) return 1.3;
+  return 1;
+}
+
 const MODES: Record<GameMode, ModeConfig> = {
   standard: {
     intermissionSeconds: 6, spawnDelayMultiplier: 1, countMultiplier: 1, countBonus: 0,
@@ -439,7 +471,11 @@ export class WaveManager {
   private buildWave(wave: number): SpawnEntry[] {
     const entries: SpawnEntry[] = [];
     const config = this.config();
-    const countMul = config.countMultiplier * this.curseCountMul * this.challengeCountMul;
+    // Pacing shapes the whole wave: a valley wave is a real breath, a peak
+    // wave is a real punch. Applied to the count multiplier so every
+    // archetype scales together instead of only the grunts.
+    const pacing = pacingCountMul(wave);
+    const countMul = config.countMultiplier * this.curseCountMul * this.challengeCountMul * pacing;
     const grunts = Math.round((3 + wave * 1.2) * countMul) + config.countBonus;
     const rushers = wave >= 2 ? Math.round(wave * 0.8 * countMul) : 0;
     const gunners = wave >= config.gunnerFromWave ? Math.round((wave - 1) * 0.6 * countMul) : 0;

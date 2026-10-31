@@ -985,8 +985,13 @@ check('world: the arena is sized to the engagement ranges', () => {
   assert.ok(Number(shadow[1]) > half, 'shadow camera must be wider than the arena');
 });
 check('world: the work lamps sit on the structures they light', () => {
-  const m = /for \(const \[x, y, z\] of \[\[-21, 5\.2, 0\]/.exec(worldSrc);
-  assert.ok(m, 'lamps are not attached to the towers');
+  // Lamps are now built in rebuild() from the layout roll, so their
+  // coordinates are computed rather than hardcoded. The test asserts the
+  // computed form instead of the old fixed-tower form.
+  assert.match(worldSrc, /const towerZ = layoutRoll < 0\.34 \? 0 : layoutRoll < 0\.67 \? -14 : 18;/);
+  assert.match(worldSrc, /const bunkerZ = layoutRoll < 0\.34 \? -28 : layoutRoll < 0\.67 \? 0 : 14;/);
+  assert.match(worldSrc, /const lampPositions/);
+  assert.match(worldSrc, /this\.buildLights\(this\.scene!\);/);
 });
 
 // ---------- squad tactics (src/ai/Enemies.ts) ----------
@@ -1107,7 +1112,9 @@ check('juice: the freeze scales with the weapon, not a fixed number', () => {
   // The freeze is now derived from the shot's damage, floored and capped so
   // a rail reads as a real stop without freezing the game.
   assert.match(gameSrc, /const stop = clamp\(0\.018 \* \(wDef\.damage \/ 10\), 0\.02, 0\.075\);/);
-  assert.match(gameSrc, /kind === 'headshot' \? stop \* 0\.6 : stop/);
+  // Hit-stop now only fires on kills, so a beam player's 20 hits per second
+  // can no longer hold the sim in permanent slow motion.
+  assert.match(gameSrc, /if \(kind === 'kill'\) this\.hitstopT = Math\.max\(this\.hitstopT, stop\);/);
 });
 
 check('juice: a melee swing fires a motion trail', () => {
@@ -1767,5 +1774,62 @@ check('touch: charge pips report the ability resources, off the same snapshot', 
   assert.match(touchCss, /\.hud__tpip i\.on/);
 });
 
+// ---------- 2026 game-feel research: weapon weight differentiation ----------
+//
+// The research (gamedev.net / researchgate 2026) names five FPS game-feel
+// pillars. Three of them were flat across the whole roster: every gun
+// breathed at the same rate, every gun kicked the same on shot 1, and every
+// gun settled at the same speed. A roster where weight is invisible is a
+// roster of one gun in ten colours.
+
+check('feel: resting mass is derived from the weapon weight', () => {
+  // Heavy weapons breathe slower and further; light ones nearly hold still.
+  assert.match(viewmodelSrc, /private restMass = 0\.5;/);
+  assert.match(viewmodelSrc, /const move = model\.def\.moveMul \?\? 1;/);
+  assert.match(viewmodelSrc, /this\.restMass = clamp\(\(1\.12 - move\) \/ 0\.3, 0, 1\);/);
+  assert.match(viewmodelSrc, /const breathHz = 0\.55 \+ 0\.5 \* \(1 - this\.restMass\);/);
+  assert.match(viewmodelSrc, /const breathAmp = 0\.0012 \+ 0\.0028 \* this\.restMass;/);
+});
+
+check('feel: the first shot of a group hits harder than the rest', () => {
+  // 'The first shot should always surprise the shooter slightly, establishing
+  // the weapon raw power.' A flat pattern makes shot 1 and shot 9 identical.
+  assert.match(playerSrc, /const impulse = i === 0 \? 1\.55 : 1;/);
+  assert.match(playerSrc, /this\.recoilPitch \+= amount \* \(RECOIL_PATTERN_Y\[i\] \?\? 1\) \* impulse;/);
+});
+
+check('feel: recoil recovery is per weapon, not global', () => {
+  // 'Recoil recovery dictates whether a weapon feels crisp or floaty.' A
+  // single rate made an LMG settle exactly like a pistol.
+  assert.match(playerSrc, /public recoilRecoveryMul = 1;/);
+  assert.match(playerSrc, /const recovery = RECOIL_RECOVERY \* this\.recoilRecoveryMul;/);
+  assert.match(wcSrc, /public get recoilRecoveryMul\(\): number \{/);
+  assert.match(wcSrc, /return 0\.55 \+ \(this\.moveMul - 0\.82\) \* 1\.8;/);
+  assert.match(gameSrc, /this\.player\.recoilRecoveryMul = this\.weapons\.recoilRecoveryMul;/);
+});
+// ---------- Wave pacing: peaks and valleys (2026 research) ----------
+//
+// 'If a game is 100% high-intensity action all the time, the brain normalizes
+// it, and tension flattens into fatigue.' The wave count now breathes.
+check('pacing: peaks and valleys are a pure function of the wave number', () => {
+  // pacingCountMul must be deterministic and never touch the RNG, so a shared
+  // seed still reproduces its arena's rhythm.
+  const mul = /export function pacingCountMul\(wave: number\): number \{([\s\S]*?)\n\}/.exec(wavesSrc);
+  assert.ok(mul, 'pacingCountMul not found');
+  assert.match(wavesSrc, /if \(wave % BOSS_EVERY === 0\) return 1\.35;/);
+  assert.match(wavesSrc, /if \(slot === 2\) return 0\.62;/);
+  assert.match(wavesSrc, /if \(slot === 0\) return 1\.3;/);
+  assert.match(wavesSrc, /const PACING_CYCLE = 4;/);
+  assert.match(wavesSrc, /const pacing = pacingCountMul\(wave\);/);
+});
+check('pacing: wave 1 is never a valley', () => {
+  // Wave 1 is the tutorial beat: it must not be the breath.
+  assert.match(wavesSrc, /if \(wave <= 1\) return 1;/);
+});
+check('pacing: a boss wave is always a peak', () => {
+  // A boss arriving on a valley wave would read as a quiet moment, which is
+  // the opposite of what a boss is.
+  assert.match(wavesSrc, /if \(wave % BOSS_EVERY === 0\) return 1\.35;/);
+});
 console.log(`self-check: ${passed}/${passed + failed} passed`);
 if (failed > 0) process.exitCode = 1;

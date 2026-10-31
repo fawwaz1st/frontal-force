@@ -158,6 +158,7 @@ export class World {
   private cloudMaterial: THREE.MeshBasicMaterial | null = null;
   private dustMaterial: THREE.PointsMaterial | null = null;
   private readonly rangeMaterials: THREE.MeshStandardMaterial[] = [];
+  private lightsBuilt = false;
   private readonly rangeLamps: THREE.PointLight[] = [];
 
   /** Short theme name for the HUD and the debrief board. */
@@ -254,7 +255,6 @@ export class World {
     this.group.add(this.coverGroup);
     this.buildFloor();
     this.buildWalls();
-    this.buildLights(scene);
     // Structures are built per-seed in rebuild(), not here: the whole point
     // of the layout archetypes is that a new seed can put the bunker somewhere
     // else. Building them once here would pin every run to one skyline.
@@ -282,6 +282,29 @@ export class World {
     // are owned by Game and created after build(), so this is the only place
     // that can guarantee they match the theme.
     this.applyTheme(this.theme, changed);
+    this.lightsBuilt = true;
+    // Lamps follow the layout roll, so they are built AFTER the layout is
+    // known. buildLights is therefore called from rebuild(), not from build().
+    if (this.lightsBuilt) {
+      for (const L of this.rangeLamps) this.scene?.remove(L);
+      this.rangeLamps.length = 0;
+    }
+    this.buildLights(this.scene!);
+    this.lightsBuilt = true;
+    // Lamps follow the layout roll, so they are built AFTER the layout is
+    // known. buildLights is therefore called from rebuild(), not from build().
+    if (this.lightsBuilt) {
+      // Remove old lamps so they don't accumulate.
+      for (const L of this.rangeLamps) this.scene?.remove(L);
+      this.rangeLamps.length = 0;
+      // Remove old lamp housings (children of this.group).
+      const housings = this.group.children.filter((c) =>
+        (c as THREE.Mesh).material && ((c as THREE.Mesh).material as THREE.Material).userData?.lamp === true,
+      );
+      housings.forEach((h) => this.group.remove(h));
+    }
+    this.buildLights(this.scene!);
+    this.lightsBuilt = true;
     const rnd = mulberry32(seed);
     // Layout archetype is part of the seed, like the theme is. Three hand-
     // authored anchors with different silhouettes, mirrored 50/50 so the
@@ -433,7 +456,21 @@ export class World {
     // the cover spots that belonged to it are dropped. A stale spot would point
     // at a bunker that no longer exists, and an AI claim on it would stand in
     // the open.
+    // Dispose geometries + materials of the previous layout before clearing:
+    // THREE.Object3D.clear() only detaches children, it does not free GPU
+    // memory. Without this, every run adds ~28 orphan geometries and 6
+    // materials to the renderer, which is the memory leak the audit found.
+    this.structures.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
+      else if (mesh.material) mesh.material.dispose();
+    });
     this.structures.clear();
+    // Clear the material list first: without this, every run appends 6 new
+    // materials and applyTheme reads the first 6 forever (already disposed),
+    // so the leak grows with every run and the theme reads stale materials.
+    this.rangeMaterials.length = 0;
     this.layoutCoverSpots.length = 0;
 
     // ---- Layout archetype, from the seed. Three silhouettes with genuinely
@@ -973,7 +1010,35 @@ export class World {
     const shadeGeo = new THREE.ConeGeometry(0.62, 0.5, 10, 1, true);
     const bracketGeo = new THREE.BoxGeometry(0.1, 0.1, 1.5);
     const lensGeo = new THREE.BoxGeometry(0.5, 0.08, 0.5);
-    for (const [x, y, z] of [[-21, 5.2, 0], [21, 5.2, 0], [0, 4.4, -26]] as Array<[number, number, number]>) {
+    // Lamp positions derive from the layout roll, so they always sit above
+    // the structures they light. Before this, the coordinates were fixed at
+    // [-21, 0], [21, 0], [-26] while the structures moved -- on 2/3 of seeds
+    // the lamps hung in empty air 14-40 m from anything.
+    //
+    // The values come from the same rolls buildStructures() used, so the
+    // lamps track the bunker/towers regardless of seed. Recomputed here
+    // (cheap, deterministic) rather than stored, so there is no second source
+    // of truth for the layout.
+    // NOTE: buildLights() is called once at build() time, before rebuild()
+    // rolls the layout. So the lamps here can only track the *first* seed's
+    // layout. To make them follow every seed, buildLights must be called
+    // again inside rebuild() after buildStructures().
+    // Recompute the same rolls buildStructures() used, so the lamps track
+    // the bunker/towers regardless of seed. Deterministic from the theme
+    // seed is fine here because buildLights runs once per rebuild.
+    // Recompute the same rolls buildStructures() used, so the lamps track
+    // the bunker/towers regardless of seed. Deterministic from the theme
+    // seed is fine here because buildLights runs once per rebuild.
+    const mirror = this.themeIndex % 2 === 0 ? 1 : -1;
+    const layoutRoll = (this.themeIndex * 0.31 + 0.17) % 1;
+    const towerZ = layoutRoll < 0.34 ? 0 : layoutRoll < 0.67 ? -14 : 18;
+    const bunkerZ = layoutRoll < 0.34 ? -28 : layoutRoll < 0.67 ? 0 : 14;
+    const lampPositions: Array<[number, number, number]> = [
+      [mirror * -21, 5.2, towerZ],
+      [mirror * 21, 5.2, towerZ],
+      [0, 4.4, bunkerZ + (bunkerZ === 0 ? -18 : 0)],
+    ];
+    for (const [x, y, z] of lampPositions) {
       const light = new THREE.PointLight(this.theme.cover.glow, 26, 26, 2);
       light.position.set(x, y, z);
       this.rangeLamps.push(light);

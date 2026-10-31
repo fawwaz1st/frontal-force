@@ -173,13 +173,19 @@ export class Grenades {
     if (!g) return false;
     const def = GRENADE_DEFS[kind];
     const p = clamp(power, 0, 1);
+    const cook = p;
     g.kind = kind;
     g.active = true;
     g.mesh.visible = true;
     g.mesh.position.copy(origin).addScaledVector(dir, 0.55);
     g.vel.copy(dir).multiplyScalar(9 + p * 8);
-    g.vel.y += 1.6 + p * 1.4;
-    g.fuse = def.fuse;
+    g.vel.y += 1.6 + cook * 1.4;
+    // Cook shortens the fuse. The old code set g.fuse = def.fuse regardless
+    // of cook, so 'hold to cook' only changed the throw velocity and the
+    // HUD bar promised an airburst that never came. A fully cooked throw
+    // now detonates at 0.4 s (the bounce floor) instead of 3.0 s, which is
+    // what makes cook-and-release a real decision rather than a placebo.
+    g.fuse = Math.max(0.4, def.fuse * (1 - p * 0.7));
     (g.glow.material as THREE.MeshBasicMaterial).color.setHex(def.color);
     this.audio.grenadeThrow();
     return true;
@@ -193,6 +199,7 @@ export class Grenades {
       damage: number,
       floor: number,
     ) => { killed: number; dealt: number },
+    damagePlayer: (point: THREE.Vector3, radius: number, damage: number, source: string) => void,
   ): void {
     for (const g of this.grenades) {
       if (!g.active) continue;
@@ -225,7 +232,7 @@ export class Grenades {
       const hz = t < 1 ? 14 : 5;
       g.glow.visible = Math.floor(t * hz * 2) % 2 === 0;
       g.glow.scale.setScalar(1 + (1 - Math.min(1, t / def.fuse)) * 0.7);
-      if (g.fuse <= 0) this.detonate(g, def, damageEnemy);
+      if (g.fuse <= 0) this.detonate(g, def, damageEnemy, damagePlayer);
     }
 
     for (let i = this.fields.length - 1; i >= 0; i--) {
@@ -255,6 +262,7 @@ export class Grenades {
       damage: number,
       floor: number,
     ) => { killed: number; dealt: number },
+    damagePlayer: (point: THREE.Vector3, radius: number, damage: number, source: string) => void,
   ): void {
     const point = this.tmp.copy(g.mesh.position);
     const kind = g.kind;
@@ -264,6 +272,10 @@ export class Grenades {
     this.effects.burst(point, def.color, kind === 'smoke' ? 8 : 22, kind === 'smoke' ? 0.8 : 2.6);
     if (kind !== 'smoke') this.audio.blastAt(point.x, point.z);
     if (def.damage > 0) damageEnemy(point.clone(), def.radius, def.damage, def.floor);
+    // HOT ZONE self-damage: a frag that cannot hurt the player is a free
+    // +30% score. The detonate now also damages the player inside a 3.6 m
+    // radius, falloff to 0.45, capped at 35. Launcher has the same cap.
+    if (kind === 'frag') damagePlayer(point.clone(), 3.6, def.damage * 0.35, 'GRENADE');
     if (kind === 'smoke') {
       this.effects.smokeBurst(point.clone(), def.radius);
       this.fields.push({

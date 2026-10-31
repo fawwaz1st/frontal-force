@@ -143,6 +143,17 @@ export class Player {
   /** Shot index within the current trigger group — drives the pattern. */
   private recoilIndex = 0;
   private recoilResetT = 0;
+  /**
+   * Recoil recovery rate multiplier, set per weapon by the owner.
+   *
+   * Research (2026 FPS game feel): 'recoil recovery — how smoothly the gun
+   * settles back to zero after you stop firing — dictates whether a weapon
+   * feels crisp or floaty.' A single global rate made every gun settle at
+   * the same speed, so an LMG recovered like a pistol and the roster lost
+   * its weight differentiation at exactly the moment the player feels it
+   * most: the instant they stop shooting.
+   */
+  public recoilRecoveryMul = 1;
   private bobPhase = 0;
   private bobAmp = 0;
   /** Current eye height above the capsule end — crouch lowers it. */
@@ -398,8 +409,14 @@ export class Player {
     // Aim-affecting recoil: deterministic pattern, indexed by shot number.
     if (this.recoilResetT <= 0) this.recoilIndex = 0;
     const i = Math.min(this.recoilIndex, RECOIL_PATTERN_Y.length - 1);
-    this.recoilPitch += amount * (RECOIL_PATTERN_Y[i] ?? 1);
-    this.recoilYaw += amount * (RECOIL_PATTERN_X[i] ?? 0);
+    // IMPULSE vs SUSTAINED (2026 FPS game-feel research): the first shot of a
+    // group must hit HARDER than the ones after it, so pulling the trigger
+    // always surprises the shooter slightly and re-establishes the weapon's
+    // raw power. A flat pattern makes shot 1 and shot 9 identical, which is
+    // why a spray can feel like holding a hose rather than firing a gun.
+    const impulse = i === 0 ? 1.55 : 1;
+    this.recoilPitch += amount * (RECOIL_PATTERN_Y[i] ?? 1) * impulse;
+    this.recoilYaw += amount * (RECOIL_PATTERN_X[i] ?? 0) * impulse;
     this.recoilIndex += 1;
     this.recoilResetT = RECOIL_RESET_TIME;
   }
@@ -832,8 +849,9 @@ private updateCrouch(wantsCrouch: boolean): void {
     // Aim recoil recovers toward the pre-fire aim point. The player's own pull
     // is subtracted implicitly: `pitch`/`yaw` hold the input aim, and the
     // offset is added on top, so pulling down cancels the climb.
-    this.recoilPitch = damp(this.recoilPitch, 0, RECOIL_RECOVERY, dt);
-    this.recoilYaw = damp(this.recoilYaw, 0, RECOIL_RECOVERY, dt);
+    const recovery = RECOIL_RECOVERY * this.recoilRecoveryMul;
+    this.recoilPitch = damp(this.recoilPitch, 0, recovery, dt);
+    this.recoilYaw = damp(this.recoilYaw, 0, recovery, dt);
     this.recoilResetT = Math.max(0, this.recoilResetT - dt);
 
     const jx = this.shake > 0.002 ? (Math.random() - 0.5) * this.shake * 0.07 : 0;

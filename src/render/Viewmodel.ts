@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
-import type { WeaponId } from '../combat/weapons';
+import { WEAPONS, type WeaponDef, type WeaponId } from '../combat/weapons';
 
 export interface ViewmodelFrame {
   /** Player horizontal speed (m/s) — drives weapon bob */
@@ -26,6 +26,8 @@ const BOB_HZ = 9.5;
 interface WeaponModel {
   group: THREE.Group;
   muzzle: THREE.Object3D;
+  /** The weapon's own definition, for weight-derived presentation. */
+  def: WeaponDef;
   mag: THREE.Mesh | null;
   magRest: THREE.Vector3;
   magRot: THREE.Euler;
@@ -63,6 +65,17 @@ export class Viewmodel {
   private switchT = 1;
   private flashT = 0;
   private breathT = 0;
+  /**
+   * Resting mass 0..1, derived from the equipped weapon's moveMul.
+   *
+   * Research (2026 FPS game feel): a heavy weapon at rest should show
+   * low-frequency breathing and sway, 'something you are actively
+   * struggling to keep steady', while an SMG snaps to a near-laser.
+   * Before this, every gun breathed at the same 0.9 Hz / 0.0022 amplitude,
+   * so a 100-round LMG and a pistol had identical resting behaviour and the
+   * whole roster felt weightless.
+   */
+  private restMass = 0.5;
   private adsT = 0;
 
   // Muzzle flash (reparented to the active weapon's muzzle)
@@ -196,6 +209,10 @@ export class Viewmodel {
     if (this.current) this.current.group.visible = false;
     this.current = model;
     model.group.visible = true;
+    // Resting mass from the weapon's own movement weight: a 0.82 (LMG) is
+    // heavy, a 1.12 (pistol) is light. Normalised so 0 = lightest, 1 = heaviest.
+    const move = model.def.moveMul ?? 1;
+    this.restMass = clamp((1.12 - move) / 0.3, 0, 1);
     // Reparent flash to this weapon's muzzle (local space already correct)
     this.flashGroup.position.set(0, 0, 0);
     this.flashGroup.rotation.set(0, 0, 0);
@@ -327,10 +344,15 @@ export class Viewmodel {
   private applyRigPose(switchPose: number): void {
     const bob = this.bobAmp;
     const breath = 1 - bob;
+    // Breathing is per-weapon now: a heavy gun breathes slower and further,
+    // a light one almost holds still. This is the 'resting mass' read --
+    // the gun is something you are holding UP, not a sprite on the camera.
+    const breathHz = 0.55 + 0.5 * (1 - this.restMass);
+    const breathAmp = 0.0012 + 0.0028 * this.restMass;
     const hipX = REST_POS.x + this.swayX + Math.cos(this.bobT) * 0.01 * bob
-      + Math.cos(this.breathT * 0.9) * 0.0022 * breath;
+      + Math.cos(this.breathT * breathHz) * breathAmp * breath;
     const hipY = REST_POS.y + this.swayY + Math.sin(this.bobT * 2) * 0.007 * bob
-      + Math.sin(this.breathT * 1.4) * 0.0035 * breath
+      + Math.sin(this.breathT * breathHz * 1.55) * breathAmp * 1.6 * breath
       - this.reloadPose * 0.07 - this.sprintPose * 0.06 - switchPose * 0.28;
     const hipZ = REST_POS.z + this.kickZ + this.reloadPose * 0.05;
     const aim = this.adsT;
@@ -450,6 +472,7 @@ export class Viewmodel {
     this.models.set(id, {
       group,
       muzzle,
+      def: WEAPONS[id],
       mag,
       pump,
       magRest: mag ? mag.position.clone() : new THREE.Vector3(),

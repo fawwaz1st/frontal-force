@@ -158,7 +158,7 @@ export class WeaponController {
     private readonly world: World,
     private readonly effects: Effects,
     private readonly audio: GameAudio,
-    private readonly onHitFeedback: (kind: 'hit' | 'headshot' | 'blocked') => void,
+    private readonly onHitFeedback: (kind: 'hit' | 'headshot' | 'kill' | 'blocked') => void,
   ) {}
 
   public get current(): WeaponState {
@@ -373,6 +373,19 @@ export class WeaponController {
   /** Movement speed multiplier for the equipped weapon (heavy guns slow you). */
   public get moveMul(): number {
     return this.current.def.moveMul ?? 1;
+  }
+
+  /**
+   * Recoil recovery rate multiplier for the equipped weapon.
+   *
+   * Derived from the same weight signal as movement: a heavy weapon (low
+   * moveMul) settles SLOWER, so it stays 'floaty' after a burst, while a
+   * pistol snaps back to zero. This is what the 2026 research calls the
+   * crisp-vs-floaty axis, and it is free -- it reuses a number the weapon
+   * table already carries rather than adding a new tuning knob.
+   */
+  public get recoilRecoveryMul(): number {
+    return 0.55 + (this.moveMul - 0.82) * 1.8;
   }
 
   public update(frame: InputFrame, dt: number): void {
@@ -624,8 +637,12 @@ export class WeaponController {
     // by EnemyManager.onEnemyKilled and must not be overwritten by hit feedback.
     // A blocked shot gets its own marker so the player never reads "my gun is
     // weak" when a warden's plate is eating their damage.
+    // Kill reads as its own beat: the freeze that follows a kill belongs to
+    // the kill, not to the hit, so a beam player's 20 hits per second cannot
+    // hold the sim in permanent slow motion.
     if (blockedAny && !killedAny) this.onHitFeedback('blocked');
-    else if (hitAny && !killedAny) this.onHitFeedback(headshotAny ? 'headshot' : 'hit');
+    else if (killedAny) this.onHitFeedback('kill');
+    else if (hitAny) this.onHitFeedback(headshotAny ? 'headshot' : 'hit');
     // Brass ejects sideways/up; a smoke puff trails each shot (pooled physics props)
     const side = this.tmpNormal.crossVectors(this.tmpDir, UP);
     const k = 1.3 + Math.random() * 0.9;
