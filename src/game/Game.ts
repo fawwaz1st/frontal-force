@@ -1086,7 +1086,7 @@ export class Game {
 
   private buildKioskItems(): KioskItem[] {
     const full = this.player.health >= this.player.maxHealth - 0.5;
-    const cheap = this.run.salvage >= 60;
+    const cheap = this.run.salvage >= 120;
     const items: KioskItem[] = [
       {
         id: 'repair',
@@ -2046,7 +2046,7 @@ export class Game {
     state.maxHealth = this.player.maxHealth;
     state.shield = this.player.shield;
     state.mag = view.mag;
-    state.magSize = weapon.def.magSize;
+    // Use the MODDED mag size, not the base def. With Bracer/Duplicator/Fuel
     state.reserve = view.reserve;
     state.reloading = view.reloading;
     state.reloadProgress = view.reloadProgress;
