@@ -49,7 +49,7 @@ A drop you cannot use right now stays on the ground. Walking over a health drop 
 
 ## The arena
 
-The play space is 74 x 74 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so the old 94 m box was mostly dead ground that only ever produced long walks.
+The play space is 94 x 94 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so the old 94 m box was mostly dead ground that only ever produced long walks.
 
 Four fixed structures, and every one of them does a job:
 
@@ -196,7 +196,7 @@ Every kind carries its own **armour look**: plate tint, roughness, metalness, bo
 
 ### Affixes
 
-From wave 4, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloading, Glacial, Mending, Juggernaut, Hasted, Gilded, Splitting, Vampiric, Volatile, Regenerating, Armored, Shrouded, Charged. Each one changes how a fight has to be fought: Splitting copies split on death, Volatile explodes, Glacial slows, Blazing burns, and Armored trades flat reduction for a slower, tankier target.
+From wave 3, elites spawn with 1 to 3 affixes rolled from 14: Blazing, Overloading, Glacial, Mending, Juggernaut, Hasted, Gilded, Splitting, Vampiric, Volatile, Regenerating, Armored, Shrouded, Charged. Each one changes how a fight has to be fought: Splitting copies split on death, Volatile explodes, Glacial slows, Blazing burns, and Armored trades flat reduction for a slower, tankier target.
 
 ## AI
 
