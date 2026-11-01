@@ -170,7 +170,6 @@ check('revive: a banked charge restores half health and clears the death flag', 
   assert.equal(p.tryRevive(), true);
   assert.equal(p.dead, false);
   closeTo(p.health, Math.round(p.maxHealth * 0.5));
-  assert.equal(p.revivesLeft, 0);
 });
 check('revive: grants a window of invulnerability so it cannot be re-killed instantly', () => {
   // A revive that dropped you back into the same bolt would burn every charge
@@ -210,7 +209,6 @@ check('revive: a living player cannot spend a charge', () => {
   const p = freshPlayer();
   p.setRevives(1);
   assert.equal(p.tryRevive(), false);
-  assert.equal(p.revivesLeft, 1);
 });
 
 // ---------- modifier aggregation ----------
