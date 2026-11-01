@@ -418,22 +418,6 @@ export class Game {
     // genuinely dark, which is what makes the emissive accents read.
     this.renderer.toneMappingExposure = 1.35;
 
-    // Post-processing: bloom on emissive + soft vignette. The emissive
-    // accents (lamp housings, wall strips, viewmodel accent) finally read as
-    // light instead of flat colour. Bloom is gated by the quality preset so
-    // low-tier devices skip it.
-    const scenePass = pass(this.scene, this.player.camera);
-    const scenePassColor = scenePass.getTextureNode('output');
-    const bloomPass = bloom(scenePassColor, 0.6, 0.4, 0.85);
-    // Soft vignette: darkens the corners without obscuring the centre.
-    const vignetteNode = Fn(() => {
-      const centered = uv().sub(0.5);
-      const dist = length(centered);
-      const v = smoothstep(0.35, 0.9, dist);
-      return scenePassColor.mul(mix(1.0, 0.68, v));
-    })();
-    this.renderPipeline = new RenderPipeline(this.renderer);
-    this.renderPipeline.outputNode = fxaa(renderOutput(vignetteNode.add(bloomPass)));
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
     // The draft and kiosk are separate overlays, not part of the HUD tree, so
@@ -478,6 +462,20 @@ export class Game {
   private createSystems(): void {
     this.world.build(this.scene);
     this.player = new Player(this.world.octree);
+
+    // Post-processing: bloom on emissive + soft vignette + FXAA. Built here
+    // (not in configureRenderer) because pass() needs the live player camera.
+    const scenePass = pass(this.scene, this.player.camera);
+    const scenePassColor = scenePass.getTextureNode('output');
+    const bloomPass = bloom(scenePassColor, 0.6, 0.4, 0.85);
+    const vignetteNode = Fn(() => {
+      const centered = uv().sub(0.5);
+      const dist = length(centered);
+      const v = smoothstep(0.35, 0.9, dist);
+      return scenePassColor.mul(mix(1.0, 0.68, v));
+    })();
+    this.renderPipeline = new RenderPipeline(this.renderer);
+    this.renderPipeline.outputNode = fxaa(renderOutput(vignetteNode.add(bloomPass)));
     this.player.setSensitivity(this.save.sensitivity);
     this.playerTarget = new PlayerTarget(this.player);
     this.scene.add(this.player.camera, this.player.body);
