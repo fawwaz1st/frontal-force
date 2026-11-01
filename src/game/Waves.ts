@@ -517,16 +517,21 @@ export class WaveManager {
     }
 
     // Fisher-Yates with the run stream so a shared seed reproduces the order.
-    for (let i = entries.length - 1; i > 0; i--) {
+    // The boss entry is appended LAST and excluded from the shuffle so it
+    // walks in after the escort has already engaged, as the comment above
+    // promises (a boss arriving mid-wave reads as a glitch, not a beat).
+    const boss = entries.filter((e) => e.boss);
+    const rest = entries.filter((e) => !e.boss);
+    for (let i = rest.length - 1; i > 0; i--) {
       const j = Math.floor(this.random() * (i + 1));
-      const a = entries[i];
-      const b = entries[j];
+      const a = rest[i];
+      const b = rest[j];
       if (a && b) {
-        entries[i] = b;
-        entries[j] = a;
+        rest[i] = b;
+        rest[j] = a;
       }
     }
-    return entries;
+    return [...rest, ...boss];
   }
 
   private pickSpawnPoint(playerPos: THREE.Vector3): THREE.Vector3 {

@@ -425,6 +425,8 @@ const ARMOR_LOOK: Record<EnemyKind, ArmorLook> = {
 
 export class EnemyManager {
   private readonly group = new THREE.Group();
+  /** Seeded stream adopted from the run; null falls back to Math.random. */
+  private rng: { next(): number } | null = null;
   public onEnemyKilled: ((enemy: Enemy, byPlayer: boolean) => void) | null = null;
   /** Player yaw for the current frame — lets enemy sfx pan to their screen side. */
   public playerYaw = 0;
@@ -522,6 +524,8 @@ export class EnemyManager {
     private readonly effects: Effects,
     private readonly audio: GameAudio,
   ) {
+    // Adopted from the run's seeded stream so elite/affix rolls reproduce.
+    this.rng = null;
     scene.add(this.group);
     for (let i = 0; i < PROJECTILE_POOL; i++) {
       // Shaped bolt: hot core cylinder along +Z + additive glow shell (recolored per firer)
@@ -751,11 +755,13 @@ export class EnemyManager {
     // would make the fight unreadable.
     const isBoss = kind === 'wardenPrime';
     const affixes: AffixId[] = [];
-    if (!isBoss && eliteAllowed && wave >= 3 && Math.random() < eliteChanceForWave(wave)) {
+    const rng = this.rng;
+    const eliteRoll = rng ? rng.next() : Math.random();
+    if (!isBoss && eliteAllowed && wave >= 3 && eliteRoll < eliteChanceForWave(wave)) {
       const count = affixCountForWave(wave) + Math.max(0, Math.floor(extraAffixes));
       const pool = AFFIX_IDS.slice();
       for (let i = 0; i < count && pool.length > 0; i++) {
-        const idx = Math.floor(Math.random() * pool.length);
+        const idx = Math.floor((rng ? rng.next() : Math.random()) * pool.length);
         const picked = pool.splice(idx, 1)[0];
         if (picked) affixes.push(picked);
       }
@@ -847,7 +853,7 @@ export class EnemyManager {
       // own spawn point and freeze outside perception range forever.
       lastKnown: this.hasPlayerPos ? this.lastPlayerPos.clone() : position.clone(),
       attackTimer: randRange(0.5, def.attackCooldown),
-      strafeSeed: Math.random() * Math.PI * 2,
+      strafeSeed: (this.rng ? this.rng.next() : Math.random()) * Math.PI * 2,
       searchSyncT: randRange(0.4, SEARCH_SYNC_INTERVAL),
       tacticalId: this.nextTacticalId++,
       state: kind === 'rusher' ? 'flank' : kind === 'warden' ? 'suppress' : 'advance',
@@ -1605,6 +1611,11 @@ export class EnemyManager {
   public playerSlowT = 0;
 
   /** Tick the player-affecting affix timers; returns burn damage for this step. */
+  /** Adopt the run's seeded stream so elite/affix rolls reproduce. */
+  public setRng(rng: { next(): number }): void {
+    this.rng = rng;
+  }
+
   public tickPlayerAffixes(dt: number): { burnDamage: number; slowFraction: number } {
     let burnDamage = 0;
     if (this.playerBurnT > 0) {

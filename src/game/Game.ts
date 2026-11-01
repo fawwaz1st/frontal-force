@@ -859,6 +859,7 @@ export class Game {
     // run's weather as this run's.
     this.mutationsSeen.length = 0;
     this.waves.setRng(this.run.rng);
+    this.enemies.setRng(this.run.rng);
     this.resetAbilityState();
     this.resetRunStats();
     this.applyChallenges();
@@ -1558,7 +1559,7 @@ export class Game {
     this.pLast.copy(this.player.position);
     this.comboTimer -= dt;
     if (this.comboTimer <= 0 && this.combo > 0) {
-      this.combo = Math.max(0, this.combo - 2); // one tier per lapse
+      this.combo = Math.max(0, this.combo - 1); // one tier per lapse
       this.comboTimer = this.combo > 0 ? COMBO_DECAY : 0;
     }
     if (this.comboTimer < 0) this.comboTimer = 0;
@@ -2081,7 +2082,10 @@ export class Game {
     state.scoped = weapon.def.scoped;
     state.adsT = this.player.aimFraction;
     state.charge = this.weapons.chargeFraction;
-    state.charging = (weapon.def.chargeTime ?? 0) > 0;
+    // 'charging' is true only while the weapon is ACTUALLY charging, not
+    // merely because it has a chargeTime. The old flag was static and made
+    // the charge ring show permanently for rail/launcher.
+    state.charging = (weapon.def.chargeTime ?? 0) > 0 && this.weapons.chargeFraction > 0 && this.weapons.chargeFraction < 1;
     state.wave = Math.max(1, this.waves.wave);
     state.enemiesLeft = this.enemies.aliveCount;
     state.phase = this.waves.phase;
