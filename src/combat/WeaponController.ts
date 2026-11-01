@@ -770,7 +770,15 @@ export class WeaponController {
       // Damage model: base x charge x headshot x crit x run modifiers. A crit is
       // a separate roll from a headshot so the two stack, which is what makes a
       // crit card meaningful on a precision weapon.
-      const headshotMul = enemyHit.headshot ? 2 * this.mods.headshotMul : 1;
+      // Body-part damage model: head 2.0 (× headshotMul), neck 1.5, torso 1.0,
+      // legs 0.9. A shotgun pellet that clips a leg now does 0.9x instead
+      // of full damage, which is what makes spread meaningful beyond 'did I
+      // hit or not'.
+      const partMul =
+        enemyHit.bodyPart === 'head' ? 2 * this.mods.headshotMul :
+        enemyHit.bodyPart === 'neck' ? 1.5 :
+        enemyHit.bodyPart === 'legs' ? 0.9 : 1;
+      const headshotMul = partMul;
       const crit = this.mods.critChance > 0 && Math.random() < this.mods.critChance;
       const damage = weapon.def.damage * chargeMul * this.damageScale * this.mods.damageMul *
         headshotMul * (crit ? this.mods.critMul : 1);
@@ -795,9 +803,9 @@ export class WeaponController {
       if (weapon.def.blastRadius) this.explode(point, weapon, enemyHit.enemy);
       // Result codes: kill first so the kill feedback always wins, then a
       // blocked non-kill, then the plain head/body hit.
-      if (hit.killed) return enemyHit.headshot ? 3 : 4;
+      if (hit.killed) return enemyHit.bodyPart === 'head' ? 3 : 4;
       if (hit.blocked) return 5;
-      return enemyHit.headshot ? 2 : 1;
+      return enemyHit.bodyPart === 'head' ? 2 : 1;
     } else if (wallHit && wallDist <= weapon.def.range) {
       const normal = wallHit.triangle.getNormal(this.tmpNormal);
       if (normal.dot(dir) > 0) normal.negate();

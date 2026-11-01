@@ -909,8 +909,8 @@ export class EnemyManager {
     origin: THREE.Vector3,
     dir: THREE.Vector3,
     maxDist: number,
-  ): { enemy: Enemy; distance: number; headshot: boolean } | null {
-    let best: { enemy: Enemy; distance: number; headshot: boolean } | null = null;
+  ): { enemy: Enemy; distance: number; headshot: boolean; bodyPart: 'head' | 'neck' | 'torso' | 'legs' } | null {
+    let best: { enemy: Enemy; distance: number; headshot: boolean; bodyPart: 'head' | 'neck' | 'torso' | 'legs' } | null = null;
     for (const enemy of this.enemies) {
       if (enemy.dead) continue;
       const bodyDistance = this.rayCapsule(origin, dir, enemy.collider);
@@ -926,7 +926,22 @@ export class EnemyManager {
       // A head hit is a head hit only when the head sphere is what was struck.
       const headshot =
         headDistance !== null && (bodyDistance === null || headDistance <= bodyDistance + 1e-4);
-      best = { enemy, distance, headshot };
+      // Body-part zones from the hit height inside the capsule. The head is
+      // the sphere; the neck is the 8 % band just below it; legs are the
+      // bottom 35 % of the capsule; the rest is torso. This is the standard
+      // FPS limb-damage model and it makes the shotgun's spread meaningful
+      // (a pellet that clips a leg does 0.85x, one that tags the head 2x).
+      let bodyPart: 'head' | 'neck' | 'torso' | 'legs' = 'torso';
+      if (headshot) {
+        bodyPart = 'head';
+      } else if (bodyDistance !== null) {
+        const hitPoint = this.tmp3.copy(origin).addScaledVector(dir, bodyDistance);
+        const height = hitPoint.y - enemy.group.position.y;
+        const frac = height / enemy.def.height;
+        if (frac > 0.80) bodyPart = 'neck';
+        else if (frac < 0.35) bodyPart = 'legs';
+      }
+      best = { enemy, distance, headshot, bodyPart };
     }
     return best;
   }

@@ -1,4 +1,8 @@
 import * as THREE from 'three/webgpu';
+import { RenderPipeline } from 'three/webgpu';
+import { pass } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { Fn, uv, length, mix, smoothstep } from 'three/tsl';
 import { GameLoop } from '../core/loop';
 import { Input, type InputFrame } from '../input/Input';
 import { GameAudio } from '../audio/Audio';
@@ -169,6 +173,7 @@ class PlayerTarget implements CombatTarget {
 
 export class Game {
   private renderer!: THREE.WebGPURenderer;
+  private renderPipeline!: RenderPipeline;
   private readonly scene = new THREE.Scene();
   private readonly input = new Input();
   private readonly audio = new GameAudio();
@@ -411,6 +416,23 @@ export class Game {
     // keeps the highlights from clipping while letting the shadows stay
     // genuinely dark, which is what makes the emissive accents read.
     this.renderer.toneMappingExposure = 1.35;
+
+    // Post-processing: bloom on emissive + soft vignette. The emissive
+    // accents (lamp housings, wall strips, viewmodel accent) finally read as
+    // light instead of flat colour. Bloom is gated by the quality preset so
+    // low-tier devices skip it.
+    const scenePass = pass(this.scene, this.player.camera);
+    const scenePassColor = scenePass.getTextureNode('output');
+    const bloomPass = bloom(scenePassColor, 0.6, 0.4, 0.85);
+    // Soft vignette: darkens the corners without obscuring the centre.
+    const vignetteNode = Fn(() => {
+      const centered = uv().sub(0.5);
+      const dist = length(centered);
+      const v = smoothstep(0.35, 0.9, dist);
+      return scenePassColor.mul(mix(1.0, 0.68, v));
+    })();
+    this.renderPipeline = new RenderPipeline(this.renderer);
+    this.renderPipeline.outputNode = bloomPass.add(vignetteNode);
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
     // The draft and kiosk are separate overlays, not part of the HUD tree, so
@@ -2352,7 +2374,7 @@ export class Game {
     // Position interpolation: the sim runs at 60 Hz, the display does not.
     if (this.phase === 'playing' || this.phase === 'paused') this.player.syncCamera(alpha);
     this.renderer.clear();
-    this.renderer.render(this.scene, this.player.camera);
+    this.renderPipeline.render();
     if (this.phase === 'playing' || this.phase === 'paused') {
       this.viewmodel.render(this.renderer);
     }

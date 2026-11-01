@@ -298,7 +298,7 @@ check('fire: shot statistics count hits, headshots and kills', () => {
   const headSet = [2, 3];
   assert.deepEqual(hitSet.filter((r) => r >= 1 && r <= 4), [1, 2, 3, 4]);
   assert.deepEqual(headSet, [2, 3]);
-  assert.match(weaponSrc, /if \(hit\.killed\) return enemyHit\.headshot \? 3 : 4;/);
+  assert.match(weaponSrc, /if \(hit\.killed\) return enemyHit\.bodyPart === 'head' \? 3 : 4;/);
   assert.match(weaponSrc, /if \(hit\.blocked\) return 5;/);
 });
 check('fire: damage stats report post-mitigation damage', () => {
