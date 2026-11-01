@@ -158,6 +158,8 @@ export class World {
   private cloudMaterial: THREE.MeshBasicMaterial | null = null;
   private dustMaterial: THREE.PointsMaterial | null = null;
   private readonly rangeMaterials: THREE.MeshStandardMaterial[] = [];
+  /** AABB registry of walkable surfaces for footstep audio + hit decals. */
+  private readonly surfaceSlabs: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; surface: string }> = [];
   private lightsBuilt = false;
   private readonly rangeLamps: THREE.PointLight[] = [];
 
@@ -471,6 +473,7 @@ export class World {
     // materials and applyTheme reads the first 6 forever (already disposed),
     // so the leak grows with every run and the theme reads stale materials.
     this.rangeMaterials.length = 0;
+    this.surfaceSlabs.length = 0;
     this.layoutCoverSpots.length = 0;
 
     // ---- Layout archetype, from the seed. Three silhouettes with genuinely
@@ -505,6 +508,8 @@ export class World {
     // 1. CENTRAL BUNKER. Two-sided anchor; its Z position is the layout roll.
     place(new THREE.BoxGeometry(9, 3.2, 4.4), concrete, 0, 1.6, bunkerZ);
     place(new THREE.BoxGeometry(10, 0.35, 5.2), dark, 0, 3.3, bunkerZ);
+    // Bunker roof is walkable: register as metal (catwalk over concrete).
+    this.surfaceSlabs.push({ minX: -5, maxX: 5, minZ: bunkerZ - 2.6, maxZ: bunkerZ + 2.6, surface: 'metal' });
     place(new THREE.BoxGeometry(7.2, 0.18, 0.18), accent, 0, 2.5, bunkerZ + 2.35 * mirror);
     this.markStructureCoverInto(this.layoutCoverSpots, 0, bunkerZ, 4.5, 2.2);
 
@@ -591,6 +596,23 @@ export class World {
         right: new THREE.Vector3(cx - tx * peek, 0, cz - tz * peek),
       });
     }
+  }
+
+  /**
+   * Resolve the audible/visual surface under a point.
+   *
+   * Walks the same slab registry buildFloor/buildStructures populated, so
+   * the answer always matches the geometry the player sees. The floor is the
+   * default (the arena is a concrete artillery range); raised platforms read
+   * as metal, the bunker's tarps read as wood.
+   */
+  public surfaceAt(x: number, z: number): string {
+    for (const slab of this.surfaceSlabs) {
+      if (x >= slab.minX && x <= slab.maxX && z >= slab.minZ && z <= slab.maxZ) {
+        return slab.surface;
+      }
+    }
+    return 'concrete';
   }
 
   private buildFloor(): void {

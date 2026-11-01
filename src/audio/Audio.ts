@@ -479,8 +479,36 @@ export class GameAudio {
     this.noise({ dur: 0.3, freq: 400, freqEnd: 2600, type: 'bandpass', q: 3, gain: 0.06, pan, attack: 0.01 });
   }
 
-  public step(): void {
-    this.noise({ dur: 0.06, freq: 240 + Math.random() * 70, type: 'bandpass', q: 1.1, gain: 0.11, attack: 0.002 });
+  /**
+   * Surface-aware footstep. The surface is resolved by the owner via
+   * World.surfaceAt so the audio matches what the player sees.
+   *
+   * Procedural per surface: concrete = low thud + grit tail, metal = high
+   * crack + ring, grass = soft lowpass rustle, tile = hard click + slap,
+   * wood = hollow mid band. Variance jitter pitch/filter/gain so a run
+   * never sounds like a metronome.
+   */
+  public step(surface: string = 'concrete', pan = 0): void {
+    const jitter = 0.88 + Math.random() * 0.24;
+    const p = (Math.random() - 0.5) * 0.18;
+    if (surface === 'metal') {
+      this.noise({ dur: 0.05, freq: 4200 * jitter, freqEnd: 1800, type: 'highpass', gain: 0.14, attack: 0.001, pan: p });
+      this.tone({ freq: 1200 * jitter, end: 800, dur: 0.28, type: 'sine', gain: 0.1, attack: 0.002, pan });
+      this.tone({ freq: 1800 * jitter, end: 1100, dur: 0.22, type: 'sine', gain: 0.06, delay: 0.04, attack: 0.002, pan });
+    } else if (surface === 'grass') {
+      this.noise({ dur: 0.09, freq: 600 * jitter, type: 'lowpass', gain: 0.12, attack: 0.004, pan: p });
+      this.noise({ dur: 0.03, freq: 5000, type: 'highpass', gain: 0.05, attack: 0.001, delay: 0.02, pan: p });
+    } else if (surface === 'tile') {
+      this.noise({ dur: 0.03, freq: 3200 * jitter, type: 'bandpass', q: 2.2, gain: 0.16, attack: 0.001, pan: p });
+      this.tone({ freq: 1500 * jitter, end: 900, dur: 0.06, type: 'square', gain: 0.07, attack: 0.002, room: 0.6, pan });
+    } else if (surface === 'wood') {
+      this.noise({ dur: 0.07, freq: 800 * jitter, type: 'bandpass', q: 1.4, gain: 0.13, attack: 0.002, pan: p });
+      this.tone({ freq: 220 * jitter, end: 180, dur: 0.12, type: 'sine', gain: 0.1, attack: 0.003, pan });
+    } else {
+      // concrete (default) + any unknown surface
+      this.noise({ dur: 0.06, freq: 240 * jitter + Math.random() * 70, type: 'bandpass', q: 1.1, gain: 0.11, attack: 0.002, pan: p });
+      this.tone({ freq: 90 * jitter, end: 55, dur: 0.1, type: 'sine', gain: 0.12, attack: 0.003, pan });
+    }
   }
 
   public land(): void {

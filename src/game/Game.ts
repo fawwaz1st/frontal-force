@@ -1650,7 +1650,7 @@ export class Game {
       this.stepAcc += speed * dt;
       if (this.stepAcc >= 2.6) {
         this.stepAcc = 0;
-        this.audio.step();
+        this.audio.step(this.world.surfaceAt(this.player.position.x, this.player.position.z));
       }
     } else {
       this.stepAcc = 0;
