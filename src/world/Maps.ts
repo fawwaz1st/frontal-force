@@ -53,12 +53,23 @@ export interface MapTheme {
   readonly density: number;
   /** Floating dust colour. */
   readonly dust: number;
+  /**
+   * Environmental story beats. Each is a short label + one line the HUD
+   * shows once the player enters the sector. Implicit storytelling: the
+   * arena itself is the narrator, and these fragments tell the player
+   * what happened here without a single cutscene.
+   */
+  readonly story: readonly string[];
 }
 
 export const MAPS: readonly MapTheme[] = [
   {
     id: 'dawn-range',
     name: 'DAWN RANGE',
+    story: [
+      'Sekali unit artileri. Sekarang: sasaran.',
+      'Mereka menembak mundur sampai tidak ada lagi yang menembak.',
+    ],
     tagline: 'cold light, long shadows',
     floor: {
       color: 0x9c9885,
@@ -83,6 +94,10 @@ export const MAPS: readonly MapTheme[] = [
   {
     id: 'night-yard',
     name: 'NIGHT YARD',
+    story: [
+      'Garasi kendaraan militer. Semua sudah dibawa pergi — atau dimakan.',
+      'Yang tersisa: kunci yang tidak ada mobilnya.',
+    ],
     tagline: 'dark, tight, lit by work lamps',
     floor: {
       color: 0x5f6a72,
@@ -111,6 +126,10 @@ export const MAPS: readonly MapTheme[] = [
   {
     id: 'rust-works',
     name: 'RUST WORKS',
+    story: [
+      'Peleburan. Api mati 40 tahun lalu, besi masih panas.',
+      'Ada yang membangun ulang di sini. Bukan manusia.',
+    ],
     tagline: 'hot haze over dead machinery',
     floor: {
       color: 0xa8815f,
@@ -135,6 +154,10 @@ export const MAPS: readonly MapTheme[] = [
   {
     id: 'frost-line',
     name: 'FROST LINE',
+    story: [
+      'Array radar lintas kutub. Masih berputar. Tidak ada yang mendengarkan.',
+      'Kecuali mereka.',
+    ],
     tagline: 'white ground, blue air, no cover for free',
     floor: {
       // Deliberately NOT white. A near-white floor under a bright key light
