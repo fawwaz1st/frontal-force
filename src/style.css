@@ -20,6 +20,8 @@
   /* --- Signal hues (rationed: one meaning each) --- */
   --accent: #7ce7ff;            /* instrument cyan: interactive / current */
   --accent-deep: #1e8fb0;       /* the solid form, for fills and borders */
+  --warn: #ffcf6b;              /* amber, retired — kept for touch ability fallback */
+  --warn-line: #4a4033;         /* amber line, retired */
   --accent-soft: rgba(124, 231, 255, 0.38);
   --accent-wash: rgba(124, 231, 255, 0.1);
   --danger: #ff4d5e;            /* harm: damage, empty, K.I.A. */
@@ -37,7 +39,7 @@
   --line-strong: rgba(150, 178, 198, 0.42);
   --text: #dde7ee;
   --text-dim: rgba(176, 198, 214, 0.62);
-  --text-faint: rgba(176, 198, 214, 0.34);
+  --text-faint: rgba(176, 198, 214, 0.50);
 
   /* --- Type --- */
   --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
@@ -210,7 +212,7 @@ body {
   gap: 7px;
   padding: 3px 8px;
   font-family: var(--font-data);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--text-dim);
   background: rgba(10, 14, 18, 0.72);
@@ -223,7 +225,7 @@ body {
 }
 .hud__kf-row i {
   font-style: normal;
-  color: var(--text-faint);
+  color: var(--text-dim);
 }
 /* An elite kill is worth calling out: gold rail, same meaning as elsewhere. */
 .hud__kf-row.is-elite {
@@ -2435,9 +2437,9 @@ kbd {
 /* The three ability buttons read a step warmer than the four utility buttons so
    a thumb can tell "this one bursts" from "this one toggles" without a label. */
 .hud__tbtn--ability {
-  border-color: var(--warn-line, #4a4033);
-  background: rgba(38, 30, 20, 0.5);
-  color: var(--warn, #ffcf6b);
+  border-color: var(--line-strong, #3a4a5a);
+  background: rgba(20, 30, 40, 0.5);
+  color: var(--accent, #00c8ff);
 }
 .hud__tbtn--ability.active {
   border-color: var(--accent);

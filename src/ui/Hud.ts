@@ -1770,13 +1770,13 @@ export class Hud {
     ctx.save();
     ctx.translate(r, r);
 
-    // Grid rings + sweep wedge
-    ctx.strokeStyle = 'rgba(222, 210, 170, 0.35)';
+    // Grid rings + sweep wedge — instrument cyan per DESIGN.md §110.
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.35)';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(0, 0, r - 2, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(222, 210, 170, 0.15)';
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.15)';
     ctx.beginPath(); ctx.arc(0, 0, (r - 2) * 0.5, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = 'rgba(255, 159, 28, 0.16)';
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.16)';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, r - 2, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55);
@@ -1784,7 +1784,7 @@ export class Hud {
     ctx.fill();
 
     // Player marker
-    ctx.fillStyle = 'rgba(236, 231, 216, 0.95)';
+    ctx.fillStyle = 'rgba(220, 240, 255, 0.95)';
     ctx.beginPath();
     ctx.moveTo(0, -4); ctx.lineTo(3, 3); ctx.lineTo(0, 1.4); ctx.lineTo(-3, 3);
     ctx.closePath(); ctx.fill();
