@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import { RenderPipeline } from 'three/webgpu';
 import { pass } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { Fn, uv, length, mix, smoothstep } from 'three/tsl';
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
+import { Fn, uv, length, mix, renderOutput, smoothstep } from 'three/tsl';
 import { GameLoop } from '../core/loop';
 import { Input, type InputFrame } from '../input/Input';
 import { GameAudio } from '../audio/Audio';
@@ -432,7 +433,7 @@ export class Game {
       return scenePassColor.mul(mix(1.0, 0.68, v));
     })();
     this.renderPipeline = new RenderPipeline(this.renderer);
-    this.renderPipeline.outputNode = bloomPass.add(vignetteNode);
+    this.renderPipeline.outputNode = fxaa(renderOutput(vignetteNode.add(bloomPass)));
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
     // The draft and kiosk are separate overlays, not part of the HUD tree, so
