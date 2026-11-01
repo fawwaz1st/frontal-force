@@ -179,6 +179,8 @@ export class Game {
   private readonly input = new Input();
   private readonly audio = new GameAudio();
   private readonly world = new World();
+  private flashExposure = 1.35;
+  private flashExposureT = 0;
   private player!: Player;
   private effects!: Effects;
   private enemies!: EnemyManager;
@@ -267,7 +269,7 @@ export class Game {
   private meleeKillT = 0;
   private grenadeKillT = 0;
   private readonly pLast = new THREE.Vector3(Number.NaN, 0, 0);
-  private readonly radarBlips: RadarBlip[] = Array.from({ length: 24 }, () => ({
+  private readonly radarBlips: RadarBlip[] = Array.from({ length: 40 }, () => ({
     x: 0,
     z: 0,
     color: 0,
@@ -416,7 +418,13 @@ export class Game {
     // grey band and killed the contrast the lighting was built for. 1.35
     // keeps the highlights from clipping while letting the shadows stay
     // genuinely dark, which is what makes the emissive accents read.
-    this.renderer.toneMappingExposure = 1.35;
+    if (this.flashExposureT > 0) {
+      this.flashExposureT = Math.max(0, this.flashExposureT - 0.016);
+      this.renderer.toneMappingExposure = this.flashExposure;
+      if (this.flashExposureT <= 0) this.renderer.toneMappingExposure = 1.35;
+    } else {
+      this.renderer.toneMappingExposure = 1.35;
+    }
 
     this.container.appendChild(this.renderer.domElement);
     this.container.appendChild(this.hud.root);
@@ -461,6 +469,13 @@ export class Game {
 
   private createSystems(): void {
     this.world.build(this.scene);
+    // Thunder: a brief exposure spike so a lightning flash reads as light,
+    // not as a UI event. Wired here because World.onThunder was declared
+    // but never connected (audit finding).
+    this.world.onThunder = (_delay) => {
+      this.flashExposure = 1.55;
+      this.flashExposureT = 0.1;
+    };
     this.player = new Player(this.world.octree);
 
     // Post-processing: bloom on emissive + soft vignette + FXAA. Built here
@@ -824,7 +839,7 @@ export class Game {
   }
 
   private onPageHide = (): void => {
-    if (this.phase === 'playing' || this.phase === 'paused' || this.phase === 'dead') {
+    if (this.phase === 'playing' || this.phase === 'paused' || this.phase === 'dead' || this.phase === 'draft' || this.phase === 'kiosk') {
       this.recordRun();
     }
   };
