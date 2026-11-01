@@ -698,6 +698,12 @@ export class Game {
       this.waveStartT = this.run.stats.timeSurvived;
     };
     this.waves.onWaveClear = (wave) => {
+      // Surface the map's environmental story fragment on the first clear:
+      // the arena has been read by then, so the banner lands as a beat.
+      if (wave === 1) {
+        const frag = this.world.themeStory[0];
+        if (frag) this.hud.showBanner(this.world.themeName, frag);
+      }
       // Slow-motion beat on wave clear: the rhythm release. Giving the player
       // a third of a second of near-frozen time is what makes a clear feel like
       // a victory rather than like a timer resetting.

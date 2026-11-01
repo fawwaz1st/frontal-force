@@ -173,6 +173,12 @@ export class World {
     return this.theme.tagline;
   }
 
+  /** Environmental story fragments — implicit storytelling. */
+  public get themeStory(): readonly string[] {
+    return this.theme.story;
+  }
+
+
   /**
    * Re-skin the arena for `theme`. Everything here is a material or light
    * property: no geometry is touched, so the collision octree built for this

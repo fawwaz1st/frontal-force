@@ -80,8 +80,8 @@ npm run dev         # dev server on http://localhost:5173/
 npm run build       # typecheck + production build (GitHub Pages base path)
 npm run preview     # serve the production build at /frontal-force/
 npm run check       # typecheck only
-npm run check:self  # 206 wiring regression tests, no browser needed
-npm run check:runtime # 28 behavioural tests that execute the real modules
+npm run check:self  # 222 wiring regression tests, no browser needed
+npm run check:runtime # 30 behavioural tests that execute the real modules
 ```
 
 `npm run preview` serves the same URLs GitHub Pages serves, so a base-path mistake fails locally instead of in production.
@@ -297,7 +297,7 @@ Data flows one way: `Input -> Game -> simulation modules -> HudState -> Hud (DOM
 - **If a thing cannot be used, it is not built.** Every fixed structure registers cover the AI can claim. A structure the AI cannot use is scenery, and scenery is what "less is more" deletes.
 - **An independent agent never reads the player.** The escort's `update` accepts the player position and discards it, so independence is enforced by the signature rather than by a comment.
 - **Every health point is attributable.** Anything that can damage the player passes a source label, and the HUD prints it. "I lost health and I do not know why" is a bug, not a difficulty.
-- **Zero external assets.** Geometry, materials, icons, and audio are generated in code.
+- **Zero external assets except one font.** Geometry, materials, icons, and audio are generated in code; the HUD uses Barlow Condensed from Google Fonts (the only external dependency).
 - **Measured, not guessed.** `scripts/self-check.ts` locks formulas (endless curves, combo tiers, warden cone math, challenge fold math, save schema, fire ordering, **delivered fire rate and charge cycle against the stat block**, slide gating, stand-up probe ordering, theme index range, theme luminance floor and ceiling, loadout sanitising, charge gating, ricochet bounds, drop rolls and expiry, audio ADSR stages, audio layering, listener-frame panning, squad focus fire, bounding holds, ally independence, hitstop scale) and runs in CI before every deploy.
 
 ## Performance
