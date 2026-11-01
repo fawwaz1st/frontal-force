@@ -197,12 +197,6 @@ export class GameAudio {
    * distance-dependent darkness in one place, so no call site has to think
    * about it.
    */
-  public shotAt(kind: ShotSound, x: number, z: number): void {
-    const distance = this.distanceOf(x, z);
-    const pan = this.panOf(x, z);
-    this.setListenerDistance(distance);
-    this.shot(kind, pan, distance);
-  }
 
   public enemyShotAt(x: number, z: number): void {
     const distance = this.distanceOf(x, z);
@@ -638,12 +632,6 @@ export class GameAudio {
     this.tone({ freq: 180, end: 56, dur: 0.14, type: 'triangle', gain: 0.34, attack: 0.002 });
     this.noise({ dur: 0.07, freq: 3400, freqEnd: 1800, type: 'highpass', gain: 0.16, attack: 0.001 });
     this.noise({ dur: 0.12, freq: 700, type: 'lowpass', gain: 0.2, attack: 0.002 });
-  }
-
-  /** Glory-kill window opened: a rising two-note sting. */
-  public stagger(): void {
-    this.tone({ freq: 880, dur: 0.06, type: 'square', gain: 0.14, attack: 0.003 });
-    this.tone({ freq: 1320, dur: 0.14, type: 'square', gain: 0.12, delay: 0.05, attack: 0.003 });
   }
 
   /** Card taken from the draft — a clean two-tone confirm. */

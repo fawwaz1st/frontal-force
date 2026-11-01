@@ -233,12 +233,6 @@ export class WeaponController {
     this.chargeReady = false;
   }
 
-  /** Single source for bullet and crosshair spread. */
-  public spreadFor(moving: boolean, aiming: boolean): number {
-    if (aiming) return this.current.def.spread * 0.6;
-    return moving ? this.current.def.spreadMoving : this.current.def.spread;
-  }
-
   /**
    * The real cone half-angle, in radians, for the NEXT shot. Drives both the
    * bullets and the crosshair gap, so the crosshair is always honest about

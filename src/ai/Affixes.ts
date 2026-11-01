@@ -199,11 +199,6 @@ export function applyAffix(stats: AffixStats, def: AffixDef): void {
   if (def.passive === 'stealth') stats.opacity = Math.min(stats.opacity, 0.42);
 }
 
-/** Human-readable one-line summary of an elite's affixes. */
-export function describeAffixes(ids: readonly AffixId[]): string {
-  return ids.map((id) => AFFIXES[id].name).join(' + ');
-}
-
 /** Shared geometry for the elite tell: a rotating wireframe halo. */
 export function makeEliteHalo(radius: number, color: number): THREE.Mesh {
   const halo = new THREE.Mesh(

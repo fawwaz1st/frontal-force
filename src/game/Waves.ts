@@ -324,9 +324,6 @@ export class WaveManager {
   }
 
   /** True when the wave currently running is a boss wave. */
-  public get isBossWave(): boolean {
-    return this.wave > 0 && this.wave % BOSS_EVERY === 0;
-  }
 
   /** Endless modes ramp enemy HP; the player's damage ramps to match so a
    *  fixed ammo pool cannot become a hard wall. Returns 1 for finite modes. */

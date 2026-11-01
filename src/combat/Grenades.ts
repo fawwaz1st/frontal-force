@@ -120,9 +120,6 @@ export class Grenades {
     }
   }
 
-  public get activeFields(): readonly FieldEffect[] {
-    return this.fields;
-  }
 
   /** True when the point sits inside a live smoke cloud (AI respects this). */
   public isSmoked(point: THREE.Vector3): boolean {

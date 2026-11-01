@@ -541,11 +541,6 @@ export class Player {
     this.revives = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
   }
 
-  /** Revives still banked, for the HUD readout. */
-  public get revivesLeft(): number {
-    return this.revives;
-  }
-
   /**
    * Spend one revive if the player is down and has one banked.
    *
@@ -642,9 +637,6 @@ export class Player {
     this.dashRemaining = 0;
   }
 
-  public get isDashing(): boolean {
-    return this.dashRemaining > 0;
-  }
 
   public update(dt: number, input: InputFrame, dashDir: THREE.Vector3 | null = null): void {
     if (this.dead) {
@@ -823,19 +815,9 @@ private updateCrouch(wantsCrouch: boolean): void {
     this.crouched = false;
   }
 
-  /** True while crouched (HUD + camera use it for the low-posture read). */
-  public get isCrouched(): boolean {
-    return this.crouched;
-  }
-
   /** 0..1 progress into the aim, for the scope overlay fade. */
   public get aimFraction(): number {
     return this.adsT;
-  }
-
-  /** True while a crouch-slide is in progress. */
-  public get isSliding(): boolean {
-    return this.slideTimer > 0;
   }
 
   private updateCamera(dt: number, moveAmount: number, sprinting: boolean): void {

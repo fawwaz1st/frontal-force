@@ -46,11 +46,6 @@ export class GameLoop {
     return this.acc / STEP;
   }
 
-  /** Mean frame time over the last few hundred frames (ms). */
-  public get frameTimeMs(): number {
-    return this.avgFrameMs;
-  }
-
   private frame = (now: number): void => {
     if (!this.running) return;
     // Clamp against tab-switch stalls; the catch-up cap below handles the rest.

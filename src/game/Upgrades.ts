@@ -310,7 +310,6 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
 };
 
-export const UPGRADE_IDS = Object.keys(UPGRADES) as UpgradeId[];
 
 /** Human-readable rarity label for the card frame. */
 export function rarityLabel(rarity: Rarity): string {

@@ -231,9 +231,6 @@ export class Pickups {
   }
 
   /** Live drop count, for diagnostics. */
-  public get dropCount(): number {
-    return this.pickups.reduce((n, p) => n + (p.station ? 0 : 1), 0);
-  }
 
   /**
    * Every ACTIVE drop, for the radar. Stations are excluded on purpose: they

@@ -955,15 +955,6 @@ export class Game {
     this.challengeMods = foldChallenges(this.challenges);
   }
 
-  /** Live payout readout for the menu, so the wager is visible before DEPLOY. */
-  public challengeSummary(): { count: number; scoreMul: number; label: string } {
-    return {
-      count: this.challenges.length,
-      scoreMul: this.challengeMods.scoreMul,
-      label: challengeLabel(this.challenges),
-    };
-  }
-
   /**
    * Equip a loadout from the menu. The kit is persisted, because choosing four
    * weapons and then losing them on reload would make the choice pointless.

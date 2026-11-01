@@ -47,7 +47,6 @@ export type EnemyKind =
   | 'wardenPrime';
 
 /** Kinds that count as "elite" for scoring even without affixes. */
-export const ELITE_KINDS: readonly EnemyKind[] = ['wardenPrime'];
 
 interface EnemyDef {
   health: number;
