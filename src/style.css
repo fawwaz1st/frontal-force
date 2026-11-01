@@ -19,7 +19,7 @@
 :root {
   /* --- Signal hues (rationed: one meaning each) --- */
   --accent: #7ce7ff;            /* instrument cyan: interactive / current */
-  --accent-deep: #1e8fb0;       /* the solid form, for fills and borders */
+
   --warn: #ffcf6b;              /* amber, retired — kept for touch ability fallback */
   --warn-line: #4a4033;         /* amber line, retired */
   --accent-soft: rgba(124, 231, 255, 0.38);
@@ -1014,8 +1014,7 @@ kbd {
   color: var(--accent);
   background: var(--accent-wash);
 }
-.hud__slot--edge { opacity: 0.5; }
-.hud__slot--edge .ic { width: 15px; height: 15px; }
+
 
 .hud__ammo {
   display: flex;
@@ -2470,7 +2469,7 @@ kbd {
   width: 9px;
   height: 9px;
   border: 1px solid var(--line-strong);
-  border-radius: 1px;
+  border-radius: 0;
   background: transparent;
   transition: background 0.12s, border-color 0.12s;
 }
