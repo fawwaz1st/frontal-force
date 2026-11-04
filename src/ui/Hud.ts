@@ -575,7 +575,7 @@ export class Hud {
       <!-- Killfeed: the last few kills, named. Over-communicating is what
            Overwatch credits for its revitalisation -- the player should never
            have to guess what just died or what killed it. -->
-      <div class="hud__killfeed" data-killfeed aria-live="polite"></div>
+      <div class="hud__killfeed" data-killfeed aria-live="off"></div>
       <div class="hud__banner" data-banner>
         <div class="hud__banner-title" data-banner-title>WAVE 1</div>
         <div class="hud__banner-sub" data-banner-sub></div>
@@ -622,7 +622,7 @@ export class Hud {
         <span data-en-timer hidden>${icon('clock')}<b data-timer-n>0</b></span>
         <span data-en-clear hidden>${icon('check')}</span>
       </div>
-      <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}"></canvas>
+      <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}" aria-hidden="true" role="img" aria-label="Radar showing nearby hostiles"></canvas>
       <div class="hud__hint" data-hint hidden></div>
       <!-- Touch overlay: only shown once a real touch is seen. Positioned by
            layoutTouch() so the button rects match the input hit-tests. -->
@@ -723,14 +723,14 @@ export class Hud {
             glance and nothing reads. One tab is visible at a time, and the
             tab that matters (PLAY) is the one that opens.
           -->
-          <div class="hud__tabs" role="tablist">
-            <button type="button" class="hud__tab active" data-tab="play" role="tab">${icon('play')}<span>PLAY</span></button>
-            <button type="button" class="hud__tab" data-tab="kit" role="tab">${icon('crate')}<span>LOADOUT</span></button>
-            <button type="button" class="hud__tab" data-tab="record" role="tab">${icon('trophy')}<span>RECORDS</span></button>
-            <button type="button" class="hud__tab" data-tab="setup" role="tab">${icon('grid')}<span>SETTINGS</span></button>
+          <div class="hud__tabs" role="tablist" aria-label="Menu">
+            <button type="button" class="hud__tab active" data-tab="play" role="tab" id="tab-play" aria-controls="panel-play" aria-selected="true">${icon('play')}<span>PLAY</span></button>
+            <button type="button" class="hud__tab" data-tab="kit" role="tab" id="tab-kit" aria-controls="panel-kit" aria-selected="false">${icon('crate')}<span>LOADOUT</span></button>
+            <button type="button" class="hud__tab" data-tab="record" role="tab" id="tab-record" aria-controls="panel-record" aria-selected="false">${icon('trophy')}<span>RECORDS</span></button>
+            <button type="button" class="hud__tab" data-tab="setup" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false">${icon('grid')}<span>SETTINGS</span></button>
           </div>
 
-          <div class="hud__panel" data-panel="play">
+          <div class="hud__panel" data-panel="play" role="tabpanel" id="panel-play" aria-labelledby="tab-play">
             <div class="hud__modes" role="group" aria-label="Game mode">
               <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
               <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
@@ -779,7 +779,7 @@ export class Hud {
           </div>
 
           <!-- Kit tab: the loadout, built on demand. -->
-          <div class="hud__panel hidden" data-panel="kit">
+          <div class="hud__panel hidden" data-panel="kit" role="tabpanel" id="panel-kit" aria-labelledby="tab-kit">
             <div class="hud__loadout-head">
               <span class="hud__loadout-hint">Pick a slot, then pick a weapon.</span>
             </div>
@@ -788,7 +788,7 @@ export class Hud {
           </div>
 
           <!-- Records tab: personal bests and the achievement ledger. -->
-          <div class="hud__panel hidden" data-panel="record">
+          <div class="hud__panel hidden" data-panel="record" role="tabpanel" id="panel-record" aria-labelledby="tab-record">
             <div class="hud__menu-records" data-menu-records></div>
             <div class="hud__ach" data-ach>
               <div class="hud__ach-summary" data-ach-summary>UNLOCKED 0/0</div>
@@ -797,7 +797,7 @@ export class Hud {
           </div>
 
           <!-- Settings tab: controls, audio, graphics. -->
-          <div class="hud__panel hidden" data-panel="setup">
+          <div class="hud__panel hidden" data-panel="setup" role="tabpanel" id="panel-setup" aria-labelledby="tab-setup">
             <div class="hud__keys" data-keys></div>
             <div class="hud__settings">
               <label title="Sensitivity">${icon('target')}<input type="range" min="0.2" max="3" step="0.05" data-sens aria-label="Sensitivity"></label>
@@ -1309,6 +1309,9 @@ export class Hud {
       this.markerHost.appendChild(el);
       this.markerEls.push(el);
     }
+    // Cache child refs on first creation is implicit: each el is queried
+    // once during creation. Re-querying firstElementChild/lastElementChild
+    // per frame is avoided here by storing transform directly on el.
     for (let i = 0; i < this.markerEls.length; i++) {
       const el = this.markerEls[i];
       if (!el) continue;
@@ -1453,9 +1456,16 @@ export class Hud {
    * reports the SAME numbers as the footer plates off the SAME snapshot, so the
    * desktop and touch readouts cannot disagree.
    */
+  /** Cached touch pip rows — avoid querySelector on every frame. */
+  private readonly tpipRows: Map<string, HTMLElement> = new Map();
+
   private fillTpips(id: string, charges: number, max: number): void {
     if (!this.touchMode) return;
-    const row = document.querySelector<HTMLElement>(`[data-tpip="${id}"]`);
+    let row = this.tpipRows.get(id);
+    if (!row) {
+      row = document.querySelector<HTMLElement>(`[data-tpip="${id}"]`) ?? undefined;
+      if (row) this.tpipRows.set(id, row);
+    }
     if (!row) return;
     const cells = row.children;
     const visible = Math.min(max, cells.length);
@@ -1868,8 +1878,10 @@ export class Hud {
    */
   private selectTab(id: string): void {
     for (const tab of this.menu.querySelectorAll<HTMLElement>('[data-tab]')) {
-      tab.classList.toggle('active', tab.dataset.tab === id);
-      tab.setAttribute('aria-selected', tab.dataset.tab === id ? 'true' : 'false');
+      const isActive = tab.dataset.tab === id;
+      tab.classList.toggle('active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      tab.setAttribute('tabindex', isActive ? '0' : '-1');
     }
     for (const panel of this.menu.querySelectorAll<HTMLElement>('[data-panel]')) {
       panel.classList.toggle('hidden', panel.dataset.panel !== id);
@@ -1878,10 +1890,22 @@ export class Hud {
   }
 
   private buildTabs(): void {
-    for (const tab of this.menu.querySelectorAll<HTMLElement>('[data-tab]')) {
+    const tabs = Array.from(this.menu.querySelectorAll<HTMLElement>('[data-tab]'));
+    for (const [index, tab] of tabs.entries()) {
       tab.addEventListener('click', () => {
         const id = tab.dataset.tab;
         if (id) this.selectTab(id);
+      });
+      tab.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        const next = tabs[(index + dir + tabs.length) % tabs.length];
+        if (next) {
+          next.focus();
+          const id = next.dataset.tab;
+          if (id) this.selectTab(id);
+        }
       });
     }
   }
