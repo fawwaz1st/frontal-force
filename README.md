@@ -267,8 +267,11 @@ Accuracy is treated as a system, not a stat:
 
 - **42 upgrade cards** across three rarities (common, rare, legendary) with stacking caps, including on-kill, on-crit, lifesteal, blast, and movement modifiers. Every card's stated effect is wired: damage mitigation (flat armor, fractional reduction, sprint-only armor, full-dodge) resolves inside `Player.damage`, which is the one funnel every damage source passes through, and card movement speed multiplies the same ground speed the weapon weight does.
 - **36 achievements** with lifetime counters persisted across sessions: headshot counts, accuracy bests, kill streaks, no-hit waves, barrel kills, melee kills, dash kills, daily runs, and style ranks.
-- **Style rank D to SSS**, ULTRAKILL-style: kill rate and headshot accuracy raise it, taking damage demotes it.
+- **Style rank D to SSS**, ULTRAKILL-style: kill rate and headshot accuracy raise it, taking damage demotes it. It is shown live in the HUD, not only on the death card.
 - **Kill combo** with an x8 cap, refreshed per kill and decaying after a 3 s window.
+- **Damage numbers** at the hit point, pooled to a fixed 12 nodes so a 24-enemy wave never allocates. Headshots and kills carry their own colour and size.
+- **Supply level (meta progression)**: the achievement ledger grants a permanent head start -- salvage per level, and a reroll from level 3. The counters are persisted, so the unlocks rebuild every session.
+- **Field guide tab**: every elite affix and run modifier, with its real in-game effect, plus the mechanics a player otherwise learns by dying (warden guard, boss rear core, kiosk/draft rhythm).
 
 ## Architecture
 
@@ -279,7 +282,7 @@ src/
   player/   Player.ts (capsule movement, look, recoil, crouch/slide, dash, shield)
   combat/   weapons.ts (10 defs + 3-slot loadout rules) · WeaponController.ts (fire/reload/switch/charge/ricochet/hitscan/spread) · Combatant.ts (CombatTarget + threat scoring) · Grenades.ts (frag/smoke/EMP)
   ai/       Enemies.ts (AI, fire teams, agility, affix hooks, projectiles, boss phases, radar feed) · Affixes.ts (14 elite modifiers) · Ally.ts (independent escorts) · Tactics.ts (cover claims)
-  game/     Game.ts (orchestrator) · Run.ts (seeded run state + stats) · Waves.ts (modes, mutations, boss cadence) · Challenges.ts (6 difficulty wagers) · Upgrades.ts (40 cards) · Achievements.ts · AchievementCounters.ts
+  game/     Game.ts (orchestrator) · Run.ts (seeded run state + stats) · Waves.ts (modes, mutations, run modifiers, boss cadence) · Challenges.ts (6 difficulty wagers) · Upgrades.ts (42 cards) · Achievements.ts · AchievementCounters.ts
   ui/       Hud.ts (HUD, menu, death card, ledger) · Draft.ts (card picker) · Kiosk.ts (salvage shop) · icons.ts (inline SVG set)
   world/    World.ts (arena, octree, cover) · Maps.ts (4 arena themes) · Hazards.ts (barrels/tesla/vents) · Pickups.ts
   render/   Effects.ts (pooled particles, tracers, decals) · Viewmodel.ts (first-person weapon)
