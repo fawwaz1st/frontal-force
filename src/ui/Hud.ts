@@ -593,12 +593,12 @@ export class Hud {
         <div class="hud__chip" data-upgrades hidden>
           <span class="hud__chip-tag">MOD</span><b data-upgrades-n>0</b>
         </div>
-        <div class="hud__chip hud__chip--mutation" data-mutation hidden>
+        <div class="hud__chip hud__chip--mutation" data-mutation hidden tabindex="0" role="note" aria-label="Arena mutation">
           <b data-mutation-n></b>
         </div>
         <!-- Active wager: only shown when the run was deployed with challenges,
              so a normal run keeps its four-chip row. -->
-        <div class="hud__chip hud__chip--wager" data-wager hidden>
+        <div class="hud__chip hud__chip--wager" data-wager hidden tabindex="0" role="note" aria-label="Active wager">
           <span class="hud__chip-tag">WAGER</span><b data-wager-n></b>
         </div>
         <!-- A real button: the seed is the one chip with an action (copy). -->
@@ -627,16 +627,16 @@ export class Hud {
            layoutTouch() so the button rects match the input hit-tests. -->
       <div class="hud__touch" data-touch hidden>
         <div class="hud__stick" data-stick hidden><i data-stick-nub></i></div>
-        <div class="hud__tbtn" data-tbtn="fire" hidden>${icon('crosshair')}</div>
-        <div class="hud__tbtn" data-tbtn="aim" hidden>${icon('target')}</div>
-        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="dash" hidden>${icon('dash')}</div>
-        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="grenade" hidden>${icon('grenade')}</div>
-        <div class="hud__tbtn hud__tbtn--ability" data-tbtn="melee" hidden>${icon('melee')}</div>
-        <div class="hud__tbtn" data-tbtn="jump" hidden>${icon('jump')}</div>
-        <div class="hud__tbtn" data-tbtn="sprint" hidden>${icon('sprint')}</div>
-        <div class="hud__tbtn" data-tbtn="crouch" hidden>${icon('crouch')}</div>
-        <div class="hud__tbtn" data-tbtn="reload" hidden>${icon('reload')}</div>
-        <div class="hud__tbtn" data-tbtn="cycle" hidden>${icon('swap')}</div>
+        <button type="button" class="hud__tbtn" data-tbtn="fire" aria-label="Fire" hidden>${icon('crosshair')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="aim" aria-label="Aim" hidden>${icon('target')}</button>
+        <button type="button" class="hud__tbtn hud__tbtn--ability" data-tbtn="dash" aria-label="Dash" hidden>${icon('dash')}</button>
+        <button type="button" class="hud__tbtn hud__tbtn--ability" data-tbtn="grenade" aria-label="Grenade" hidden>${icon('grenade')}</button>
+        <button type="button" class="hud__tbtn hud__tbtn--ability" data-tbtn="melee" aria-label="Melee" hidden>${icon('melee')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="jump" aria-label="Jump" hidden>${icon('jump')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="sprint" aria-label="Sprint" hidden>${icon('sprint')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="crouch" aria-label="Crouch" hidden>${icon('crouch')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="reload" aria-label="Reload" hidden>${icon('reload')}</button>
+        <button type="button" class="hud__tbtn" data-tbtn="cycle" aria-label="Switch weapon" hidden>${icon('swap')}</button>
         <!-- Ability charge pips: dash/grenade counts, so a touch player reads
              resources exactly the way the footer plates show them on desktop. -->
         <div class="hud__tpips">
@@ -694,7 +694,7 @@ export class Hud {
         <div class="hud__weapon">
           <div class="hud__weapon-row">
             <span class="hud__weapon-name" data-weapon-name></span>
-            <span class="hud__slot-count" data-slot-count>1/10</span>
+            <span class="hud__slot-count" data-slot-count>1/3</span>
           </div>
           <div class="hud__slots" data-slots></div>
           <div class="hud__ammo" data-ammo>
@@ -961,7 +961,10 @@ export class Hud {
     // Four slots, matching the loadout. The icons come from the LIVE loadout
     // each frame, so this list is only the pool the HUD may draw from.
     for (let i = 0; i < LOADOUT_SLOTS; i++) {
-      const slot = document.createElement('div');
+      // A real button: the slot ring is a weapon selector, so it has to be
+      // reachable by keyboard and announced by a screen reader.
+      const slot = document.createElement('button');
+      slot.type = 'button';
       slot.className = 'hud__slot';
       slot.hidden = true;
       slotsEl.appendChild(slot);

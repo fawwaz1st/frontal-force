@@ -39,7 +39,7 @@
   --line-strong: rgba(150, 178, 198, 0.42);
   --text: #dde7ee;
   --text-dim: rgba(176, 198, 214, 0.62);
-  --text-faint: rgba(176, 198, 214, 0.50);
+  --text-faint: rgba(176, 198, 214, 0.65);
 
   /* --- Type --- */
   --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
@@ -198,12 +198,14 @@ body {
    only: the player should never have to guess what just died. */
 .hud__killfeed {
   position: absolute;
-  top: calc(64px + var(--safe-t));
-  right: calc(18px + var(--safe-r));
+  /* Left rail under the chips: the right corner is the radar's, and a killfeed
+     stacked under it collided with toasts. */
+  top: calc(96px + var(--safe-t));
+  left: calc(20px + var(--safe-l));
   z-index: 2;
   display: grid;
   gap: 3px;
-  justify-items: end;
+  justify-items: start;
   pointer-events: none;
 }
 .hud__kf-row {
@@ -343,7 +345,7 @@ body {
 }
 .hud__marker-glyph {
   font-family: var(--font-data);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   color: var(--mk-color, #fff);
@@ -352,9 +354,9 @@ body {
 .hud__marker-glyph[hidden] { display: none; }
 .hud__marker-n {
   font-family: var(--font-data);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.04em;
-  color: rgba(232, 240, 244, 0.72);
+  color: rgba(232, 240, 244, 0.88);
   text-shadow: 0 1px 2px #000;
 }
 /* Off-screen markers shrink and hollow out: present, but clearly not in view. */
@@ -619,6 +621,11 @@ kbd {
   cursor: help;
 }
 .hud__chip--mutation b { letter-spacing: 0.08em; }
+.hud__chip--mutation:focus-visible,
+.hud__chip--wager:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
 
 .hud__chip--wager {
   color: var(--danger);
@@ -1005,6 +1012,12 @@ kbd {
   height: 26px;
   display: grid;
   place-items: center;
+  /* Button reset: slots are real <button> elements so keyboard and screen
+   * reader users can reach the weapon selector. */
+  font: inherit;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
   /* The HUD root is pointer-events: none (the 3D scene owns the canvas), so
    * every interactive descendant must re-enable it — the chips, buttons, mode
    * chips, draft cards and kiosk rows all do. The slot chips are the touch
@@ -1017,6 +1030,10 @@ kbd {
   clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
   color: var(--text-dim);
   transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.hud__slot:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .hud__slot .ic { width: 19px; height: 19px; }
 .hud__slot.active {
@@ -2361,12 +2378,14 @@ kbd {
    ========================================================================== */
 .hud__toasts {
   position: absolute;
-  top: calc(18px + var(--safe-t));
+  /* Below the radar: the radar is 144px at margin 16, so 176px clears it.
+     Toasts and the radar were fighting for the same corner. */
+  top: calc(176px + var(--safe-t));
   right: calc(18px + var(--safe-r));
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(300px, 70vw);
+  width: min(240px, 60vw);
   pointer-events: none;
   z-index: 4;
 }
@@ -2436,11 +2455,22 @@ kbd {
   position: absolute;
   display: grid;
   place-items: center;
+  /* Button reset: the touch buttons are real <button> elements so a screen
+     reader and keyboard user can reach them, and buttons need their UA styles
+     cleared before the instrument look applies. */
+  font: inherit;
+  padding: 0;
+  margin: 0;
   border: 2px solid var(--line-strong);
   border-radius: 50%;
   background: rgba(16, 21, 26, 0.5);
   color: var(--text-dim);
+  cursor: pointer;
   transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.hud__tbtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .hud__tbtn[hidden] { display: none; }
 .hud__tbtn.active {
@@ -2522,7 +2552,7 @@ kbd {
 @media (max-height: 860px) {
   /* Side-by-side: the ledger (visual, tall) beside the keycap diagram (short),
      which removes a whole stacked block and keeps DEPLOY above the fold. */
-  .hud__menu-card {
+  .hud__menu .hud__menu-card {
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
     grid-template-areas:
       "title    title"
@@ -2623,7 +2653,10 @@ kbd {
   }
   .hud__chip { font-size: 12px; padding: 4px 8px 4px 7px; }
   .hud__radar { width: 92px; height: 92px; margin: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) 0 0; }
-  .hud__enemies { margin: calc(46px + var(--safe-t)) 0 0 calc(10px + var(--safe-l)); }
+  .hud__enemies { margin: calc(76px + var(--safe-t)) 0 0 calc(10px + var(--safe-l)); }
+  /* On a phone the chip row can wrap to two lines; the less-critical run chips
+     give way so the row stays one line and the status line keeps its lane. */
+  .hud__chip[data-upgrades], .hud__chip--mutation, .hud__chip--wager { display: none; }
   .hud__bottom {
     margin: 0 calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
     grid-template-columns: minmax(0, 1fr) auto;
