@@ -611,6 +611,25 @@ kbd {
 /* Every other hidden chip leaves the flow entirely. */
 .hud__chip[hidden]:not(.hud__chip--combo) { display: none; }
 
+/* Style rank chip: gold at the top ranks, neutral at the bottom, so the read
+   is instant without a legend. */
+.hud__chip--style {
+  color: var(--text-dim);
+  border-left-color: var(--line-strong);
+}
+.hud__chip--style b {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.hud__chip--style[data-rank='5'],
+.hud__chip--style[data-rank='6'],
+.hud__chip--style[data-rank='7'] {
+  color: var(--gold);
+  border-left-color: var(--gold);
+}
+
 .hud__chip--mutation {
   color: var(--text);
   border-left-color: rgba(255, 217, 138, 0.6);
@@ -888,6 +907,34 @@ kbd {
   transition: transform 0.15s ease-out;
 }
 .hud__health-fill.low { background: linear-gradient(90deg, #b2313f, var(--danger)); }
+
+/* Sprint stamina: a hairline under the health plate. It is the only way a
+   player learns that sprinting has a cost instead of reading as a bug. */
+.hud__stamina-bar {
+  position: relative;
+  height: 3px;
+  margin-top: 3px;
+  background: rgba(8, 11, 14, 0.85);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.hud__stamina-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
+  background: var(--accent);
+  transition: transform 0.1s linear;
+}
+.hud__stamina-bar i.exhausted {
+  background: var(--danger);
+  animation: stamflash 0.6s steps(2, jump-none) infinite;
+}
+@keyframes stamflash {
+  0% { opacity: 1; }
+  100% { opacity: 0.35; }
+}
 
 /* Shield rides on the bar as a second segment: one pool of absorption. */
 .hud__shield-fill {

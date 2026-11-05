@@ -66,8 +66,10 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   emptyTome: {
     id: 'emptyTome', name: 'Empty Tome', rarity: 'common',
-    description: '+8% fire rate.',
-    apply: (m) => { m.fireRateMul *= 1.08; },
+    // A second fire-rate card with a reload rider: it is a handling pick, not a
+    // strictly worse Soldier's Syringe.
+    description: '+8% fire rate and +12% reload speed.',
+    apply: (m) => { m.fireRateMul *= 1.08; m.reloadMul *= 0.88; },
   },
   bracer: {
     id: 'bracer', name: 'Bracer', rarity: 'common',
@@ -97,15 +99,19 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   pummarola: {
     id: 'pummarola', name: 'Pummarola', rarity: 'common',
-    description: 'Regenerate 0.4 HP per second.',
+    // Stacks into a sustain identity: regen plus a little max health, so four
+    // stacks are a build rather than a worse Medkit.
+    description: 'Regenerate 0.4 HP per second and +8% max health.',
     maxStacks: 4,
-    apply: (m) => { m.regen += 0.4; },
+    apply: (m) => { m.regen += 0.4; m.maxHealthMul *= 1.08; },
   },
   clover: {
     id: 'clover', name: 'Clover', rarity: 'common',
-    description: '+6% crit chance.',
+    // Crit CHANCE lives on Lens-Maker's Glasses; Clover is the crit DAMAGE
+    // line, so the two cards are a real choice rather than one dominating.
+    description: '+25% crit damage.',
     maxStacks: 5,
-    apply: (m) => { m.critChance += 0.06; },
+    apply: (m) => { m.critMul *= 1.25; },
   },
 
   // ---------- Common: weapon-feel lines ----------

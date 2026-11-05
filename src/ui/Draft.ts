@@ -98,7 +98,9 @@ export class Draft {
     const skipBtn = document.createElement('button');
     skipBtn.type = 'button';
     skipBtn.className = 'hud__btn hud__btn--ghost';
-    skipBtn.textContent = 'SKIP';
+    // The skip bounty is a real economic lever (~11 kills). Naming it on the
+    // button is the only way a player can discover it.
+    skipBtn.textContent = 'SKIP (+45 SALVAGE)';
     skipBtn.addEventListener('click', () => this.finish(null));
 
     const actions = document.createElement('div');

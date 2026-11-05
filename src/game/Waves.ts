@@ -34,6 +34,8 @@ interface ModeConfig {
 }
 
 const ENDLESS_ALIVE_CAP = 24;
+/** Finite modes cap the live roster lower: the wave must stay readable. */
+const FINITE_ALIVE_CAP = 18;
 /** A boss wave is every N waves in every mode. */
 const BOSS_EVERY = 5;
 
@@ -394,7 +396,11 @@ export class WaveManager {
         this.spawnTimer -= dt;
         if (this.spawnTimer <= 0 && this.queue.length > 0) {
           const config = this.config();
-          if (config.endless && this.enemies.aliveCount >= ENDLESS_ALIVE_CAP) {
+          // Every mode holds the wave at the alive cap: without it a finite wave
+          // can stack 60+ bodies, which is both unreadable and a frame-cost
+          // problem. Endless uses its own (higher) cap.
+          const aliveCap = config.endless ? ENDLESS_ALIVE_CAP : FINITE_ALIVE_CAP;
+          if (this.enemies.aliveCount >= aliveCap) {
             this.spawnTimer = 0.3; // hold the wave until attrition frees slots
             break;
           }
@@ -519,8 +525,11 @@ export class WaveManager {
     // archetype scales together instead of only the grunts.
     const pacing = pacingCountMul(wave);
     const countMul = config.countMultiplier * this.curseCountMul * this.challengeCountMul * pacing;
-    const grunts = Math.round((3 + wave * 1.2) * countMul) + config.countBonus;
-    const rushers = wave >= 2 ? Math.round(wave * 0.8 * countMul) : 0;
+    // Grunts and rushers grow linearly but are capped: an uncapped melee swarm
+    // turns wave 30 into a 98-enemy, 60-second spawn. The cap keeps the wave
+    // readable while the ARCHETYPE mix keeps scaling.
+    const grunts = Math.min(26, Math.round((3 + wave * 1.2) * countMul) + config.countBonus);
+    const rushers = wave >= 2 ? Math.min(14, Math.round(wave * 0.8 * countMul)) : 0;
     const gunners = wave >= config.gunnerFromWave ? Math.round((wave - 1) * 0.6 * countMul) : 0;
     const wardens = wave > 1 && wave >= config.wardenFromWave
       ? Math.min(2, 1 + Math.floor((wave - config.wardenFromWave) / 3))

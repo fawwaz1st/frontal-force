@@ -160,6 +160,15 @@ export class Player {
   public eyeHeight = EYE_STAND;
   private slideTimer = 0;
   private wasCrouching = false;
+  /** 0..1 sprint stamina, for the HUD bar. */
+  public get staminaFraction(): number {
+    return this.stamina / STAMINA_MAX;
+  }
+  /** True while the sprint is locked out after hitting zero. */
+  public get isExhausted(): boolean {
+    return this.exhausted;
+  }
+
   private stamina = STAMINA_MAX;
   private exhausted = false;
   private sprintLocked = false;

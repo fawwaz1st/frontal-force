@@ -22,6 +22,9 @@ const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
   overrun: { icon: 'infinity', label: 'OVERRUN' },
 };
 
+/** Style rank letters, indexed by the 1..7 rank the sim computes. */
+const STYLE_RANKS = ['D', 'C', 'B', 'A', 'S', 'SS', 'SSS'] as const;
+
 /** Grenade kind labels. Keyed off the HudState union so the two cannot drift. */
 const GRENADE_LABEL: Record<HudState['grenadeKind'], string> = {
   frag: 'FRAG',
@@ -144,6 +147,12 @@ export interface HudState {
   crosshairGapPx: number;
   /** One-shot teaching line, shown once per mechanic per run. */
   teach: string;
+  /** 0..1 sprint stamina. */
+  stamina: number;
+  /** Live style rank 1..7 (D..SSS). */
+  styleRank: number;
+  /** True while the sprint is locked out. */
+  staminaExhausted: boolean;
   /** False on menu/pause/death screens: suppresses gameplay hints */
   inGame: boolean;
   /** Escort-bot squad readout */
@@ -338,6 +347,8 @@ export class Hud {
   private readonly waveText: HTMLElement;
   private readonly scoreText: HTMLElement;
   private readonly comboEl: HTMLElement;
+  private readonly styleChip: HTMLElement;
+  private readonly styleN: HTMLElement;
   private readonly killsText: HTMLElement;
   private readonly enHostiles: HTMLElement;
   private readonly enTimer: HTMLElement;
@@ -439,6 +450,7 @@ export class Hud {
   private readonly slowPipN: HTMLElement;
   /** Shield readout on the health bar. */
   private readonly shieldFill: HTMLElement;
+  private readonly staminaFill: HTMLElement;
   private readonly shieldText: HTMLElement;
   /** Achievement toast stack. */
   private readonly toastHost: HTMLElement;
@@ -595,6 +607,8 @@ export class Hud {
       <div class="hud__top">
         <div class="hud__chip" data-score>${icon('score')}<b data-score-n>0</b></div>
         <div class="hud__chip hud__chip--combo" data-combo hidden>×1</div>
+        <!-- Style rank: the live D..SSS read on how the run is going. -->
+        <div class="hud__chip hud__chip--style" data-style hidden><b data-style-n>D</b></div>
         <div class="hud__chip hud__chip--wave" data-wave>${icon('flag')}<b data-wave-n>1</b></div>
         <div class="hud__chip" data-kills>${icon('skull')}<b data-kills-n>0</b></div>
         <!-- Run chips: salvage, upgrade count, arena mutation, seed. Each one
@@ -683,6 +697,9 @@ export class Hud {
             <div class="hud__health-fill" data-health-fill></div>
             <div class="hud__shield-fill" data-shield-fill></div>
           </div>
+          <!-- Sprint stamina: without a bar, the sprint simply stops after ~6 s
+               and reads as the game breaking its promise. -->
+          <div class="hud__stamina-bar"><i data-stamina-fill></i></div>
           <div class="hud__ally" data-ally hidden>
             ${icon('bot')}
             <b class="hud__ally-n" data-ally-n></b>
@@ -880,6 +897,8 @@ export class Hud {
     this.waveText = q('[data-wave-n]');
     this.scoreText = q('[data-score-n]');
     this.comboEl = q('[data-combo]');
+    this.styleChip = q('[data-style]');
+    this.styleN = q('[data-style-n]');
     this.killsText = q('[data-kills-n]');
     this.crosshair = q('[data-crosshair]');
     this.hitmarker = q('[data-hitmarker]');
@@ -945,6 +964,7 @@ export class Hud {
     this.slowPipN = q('[data-slow-n]');
     // Shield segment on the health bar.
     this.shieldFill = q('[data-shield-fill]');
+    this.staminaFill = q('[data-stamina-fill]');
     this.shieldText = q('[data-shield-n]');
     // Toast host + achievement ledger.
     this.toastHost = q('[data-toasts]');
@@ -1271,6 +1291,12 @@ export class Hud {
     this.setText('kills', this.killsText, String(s.kills));
     this.comboEl.hidden = s.comboMult <= 1;
     if (!this.comboEl.hidden) this.setText('combo', this.comboEl, `×${s.comboMult}`);
+    // Style rank: a live read on how the run is going, D through SSS.
+    this.styleChip.hidden = !s.inGame;
+    if (s.inGame) {
+      this.setText('style', this.styleN, STYLE_RANKS[s.styleRank] ?? 'D');
+      this.styleChip.dataset.rank = String(s.styleRank);
+    }
     this.allyEl.hidden = !s.allyActive;
     if (s.allyActive) {
       const pct = Math.max(0, Math.min(100, (s.allyHp / Math.max(1, s.allyMax)) * 100));
@@ -1429,6 +1455,11 @@ export class Hud {
     const show = shield > 0.5;
     this.shieldText.hidden = !show;
     if (show) this.setText('shn', this.shieldText, `+${Math.ceil(shield)}`);
+
+    // Sprint stamina: a thin bar under the health plate. It flashes red while
+    // the sprint is locked out, which is the only way a player learns the rule.
+    this.setStyle('stam', this.staminaFill, 'transform', `scaleX(${clamp01(s.stamina)})`);
+    this.setClass('stamx', this.staminaFill, 'exhausted', s.staminaExhausted);
   }
 
   /** Burn / slow pips. Whole seconds only; a pip at 0 seconds is noise. */

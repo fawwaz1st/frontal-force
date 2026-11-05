@@ -333,6 +333,9 @@ export class Game {
     comboMult: 1,
     crosshairGapPx: 3,
     teach: '',
+    stamina: 1,
+    styleRank: 1,
+    staminaExhausted: false,
     inGame: false,
     allyActive: false,
     allyCount: 0,
@@ -1461,7 +1464,11 @@ export class Game {
     const accuracy = this.run.stats.shotsFired > 0
       ? this.run.stats.shotsHit / this.run.stats.shotsFired
       : 0;
-    const score = kpm * 0.35 + accuracy * 4 + this.longestCombo * 0.12;
+    // Damage taken demotes: a rank that only rewarded aggression would drift
+    // upward on a sloppy run. The penalty is small so it shapes rather than
+    // dominates, and it is what the README's "taking damage demotes it" means.
+    const score = kpm * 0.35 + accuracy * 4 + this.longestCombo * 0.12
+      - this.run.stats.damageTaken * 0.02;
     if (score >= 14) return 7;
     if (score >= 11) return 6;
     if (score >= 8.5) return 5;
@@ -2140,6 +2147,9 @@ export class Game {
     state.health = this.player.health;
     state.maxHealth = this.player.maxHealth;
     state.shield = this.player.shield;
+    state.stamina = this.player.staminaFraction;
+    state.styleRank = this.styleRank();
+    state.staminaExhausted = this.player.isExhausted;
     state.mag = view.mag;
     // Use the MODDED mag size, not the base def. With Bracer/Duplicator/Fuel
     state.reserve = view.reserve;
