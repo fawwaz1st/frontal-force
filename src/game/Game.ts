@@ -218,6 +218,8 @@ export class Game {
   private phase: GamePhase = 'menu';
   private score = 0;
   private kills = 0;
+  /** Wave whose draft is waiting for the banner queue to drain. 0 = none. */
+  private pendingDraftWave = 0;
   /** One-shot teaching lines: each mechanic is explained the first time it is
    *  actually available, not in a menu the player never opens. */
   private readonly taught = new Set<string>();
@@ -367,6 +369,8 @@ export class Game {
     slowT: 0,
     achievementsQueued: 0,
     eliteAlive: 0,
+    modifierName: '',
+    modifierDesc: '',
     mapName: '',
     mapTagline: '',
     loadoutNames: [],
@@ -768,8 +772,10 @@ export class Game {
       } else {
         this.hud.showBanner('WAVE CLEAR', `+${bonus}`);
       }
-      // Between-wave draft: the roguelite core loop.
-      this.openDraft(wave);
+      // Between-wave draft: the roguelite core loop. Deferred until the wave
+      // banners have played -- opening the overlay on the same frame used to
+      // cover the story fragment and the wave-clear medal completely.
+      this.deferDraft(wave);
     };
     this.hud.onStart = () => this.startRun();
     this.hud.onRestart = () => this.startRun();
@@ -1060,6 +1066,11 @@ export class Game {
   private challengeMods: ChallengeMods = foldChallenges([]);
 
   /** Open the between-wave draft and freeze the sim behind it. */
+  /** Hold the draft until the banner queue drains, then open it. */
+  private deferDraft(wave: number): void {
+    this.pendingDraftWave = wave;
+  }
+
   private openDraft(wave: number): void {
     // Every third wave also opens the kiosk first, so the player spends before
     // they commit a card. Two decisions back to back is the intended rhythm.
@@ -1615,6 +1626,12 @@ export class Game {
       reloadProgress: wv.reloadProgress,
     });
     if (this.player.isSprinting) this.teach('slide', 'C WHILE SPRINTING: SLIDE');
+    // A deferred draft opens the moment the announcements have finished.
+    if (this.pendingDraftWave > 0 && !this.hud.bannerBusy()) {
+      const wave = this.pendingDraftWave;
+      this.pendingDraftWave = 0;
+      this.openDraft(wave);
+    }
     this.waves.update(dt, this.player.position);
     // Smoke and EMP fields feed the enemy perception and shield systems, which
     // is what turns the two support grenades into mechanical tools rather than
@@ -2205,6 +2222,10 @@ export class Game {
     // readout because the map is part of the seed now.
     state.mapName = this.world.themeName;
     state.mapTagline = this.world.themeTagline;
+    // The active run modifier, kept on screen for as long as it lasts.
+    const activeMod = this.waves.activeModifier;
+    state.modifierName = activeMod?.name ?? '';
+    state.modifierDesc = activeMod?.description ?? '';
     state.markers = this.targetMarkers;
     state.markerCount = this.markerCount;
     state.hurtBy = this.player.lastDamageSource;

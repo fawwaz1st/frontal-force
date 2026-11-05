@@ -198,6 +198,9 @@ export interface HudState {
   bossPhase: number;
   /** True while the boss rear core is intact. */
   bossWeakPoint: boolean;
+  /** Active run modifier, announced and kept on screen while it lasts. */
+  modifierName: string;
+  modifierDesc: string;
   /** Arena theme name, for the location readout. */
   mapName: string;
   /** One-line description of the arena theme. */
@@ -383,6 +386,9 @@ export class Hud {
   private readonly killfeed: HTMLElement;
   private popCursor = 0;
   private bannerTimer = 0;
+  /** Announcements wait their turn: a wave banner must not swallow the story
+   *  fragment or the modifier rule that fired in the same frame. */
+  private readonly bannerQueue: Array<{ title: string; sub: string }> = [];
   private dmgCursor = 0;
   private radarVisible = false;
   /** Seconds since the last radar redraw (throttle, see RADAR_INTERVAL). */
@@ -410,6 +416,8 @@ export class Hud {
   private readonly upgradeN: HTMLElement;
   private readonly mutationChip: HTMLElement;
   private readonly mutationText: HTMLElement;
+  private readonly modifierChip: HTMLElement;
+  private readonly modifierText: HTMLElement;
   private readonly wagerChip: HTMLElement;
   private readonly wagerN: HTMLElement;
   private readonly seedChip: HTMLButtonElement;
@@ -597,6 +605,11 @@ export class Hud {
         </div>
         <div class="hud__chip" data-upgrades hidden>
           <span class="hud__chip-tag">MOD</span><b data-upgrades-n>0</b>
+        </div>
+        <!-- Active run modifier: the rule that changes HOW this wave is fought.
+             It lasts several waves, so it stays on screen, not just in a banner. -->
+        <div class="hud__chip hud__chip--modifier" data-modifier hidden tabindex="0" role="note" aria-label="Run modifier">
+          <span class="hud__chip-tag">MOD</span><b data-modifier-n></b>
         </div>
         <div class="hud__chip hud__chip--mutation" data-mutation hidden tabindex="0" role="note" aria-label="Arena mutation">
           <b data-mutation-n></b>
@@ -904,6 +917,8 @@ export class Hud {
     this.upgradeN = q('[data-upgrades-n]');
     this.mutationChip = q('[data-mutation]');
     this.mutationText = q('[data-mutation-n]');
+    this.modifierChip = q('[data-modifier]');
+    this.modifierText = q('[data-modifier-n]');
     this.wagerChip = q('[data-wager]');
     this.wagerN = q('[data-wager-n]');
     this.seedChip = q<HTMLButtonElement>('[data-seed]');
@@ -1315,7 +1330,10 @@ export class Hud {
 
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
-      if (this.bannerTimer <= 0) this.waveBanner.classList.remove('show');
+      if (this.bannerTimer <= 0) {
+        this.waveBanner.classList.remove('show');
+        this.nextBanner();
+      }
     }
   }
 
@@ -1533,6 +1551,13 @@ export class Hud {
     const hasUpgrades = s.upgrades > 0;
     this.upgradeChip.hidden = !live || !hasUpgrades;
     if (live && hasUpgrades) this.setText('upgn', this.upgradeN, String(s.upgrades));
+
+    const hasModifier = live && s.modifierName !== '';
+    this.modifierChip.hidden = !hasModifier;
+    if (hasModifier) {
+      this.setText('modn', this.modifierText, s.modifierName);
+      if (this.modifierChip.title !== s.modifierDesc) this.modifierChip.title = s.modifierDesc;
+    }
 
     const hasMutation = live && s.mutationName !== '';
     this.mutationChip.hidden = !hasMutation;
@@ -1856,9 +1881,21 @@ export class Hud {
   }
 
   public showBanner(title: string, sub: string): void {
-    this.bannerTitle.textContent = title;
-    this.bannerSub.textContent = sub;
-    this.bannerSub.hidden = !sub;
+    this.bannerQueue.push({ title, sub });
+    if (this.bannerTimer <= 0) this.nextBanner();
+  }
+
+  /** True while an announcement is on screen or waiting: the draft must wait. */
+  public bannerBusy(): boolean {
+    return this.bannerTimer > 0 || this.bannerQueue.length > 0;
+  }
+
+  private nextBanner(): void {
+    const next = this.bannerQueue.shift();
+    if (!next) return;
+    this.bannerTitle.textContent = next.title;
+    this.bannerSub.textContent = next.sub;
+    this.bannerSub.hidden = !next.sub;
     this.waveBanner.classList.add('show');
     this.bannerTimer = 2.4;
   }

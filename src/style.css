@@ -619,6 +619,17 @@ kbd {
   cursor: help;
 }
 .hud__chip--mutation b { letter-spacing: 0.08em; }
+/* The run modifier is the rule that changes HOW the wave is fought, so it
+   carries the danger hue: this is a warning, not a label. */
+.hud__chip--modifier {
+  color: var(--text);
+  border-left-color: rgba(255, 77, 94, 0.6);
+  background: rgba(255, 77, 94, 0.08);
+  pointer-events: auto;
+  cursor: help;
+}
+.hud__chip--modifier b { letter-spacing: 0.08em; }
+.hud__chip--modifier:focus-visible,
 .hud__chip--mutation:focus-visible,
 .hud__chip--wager:focus-visible {
   outline: none;
@@ -2700,7 +2711,7 @@ kbd {
   .hud__enemies { margin: calc(76px + var(--safe-t)) 0 0 calc(10px + var(--safe-l)); }
   /* On a phone the chip row can wrap to two lines; the less-critical run chips
      give way so the row stays one line and the status line keeps its lane. */
-  .hud__chip[data-upgrades], .hud__chip--mutation, .hud__chip--wager { display: none; }
+  .hud__chip[data-upgrades], .hud__chip--mutation, .hud__chip--modifier, .hud__chip--wager { display: none; }
   .hud__bottom {
     margin: 0 calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
     grid-template-columns: minmax(0, 1fr) auto;
