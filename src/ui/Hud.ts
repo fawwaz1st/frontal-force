@@ -492,6 +492,9 @@ export class Hud {
   private achSignature = '';
   /** World-marker DOM pool, grown on demand up to MAX_MARKERS. */
   private readonly markerEls: HTMLElement[] = [];
+  /** Cached child refs per marker element, so the per-frame pass is transforms
+   *  and text writes only -- no DOM traversal. */
+  private readonly markerParts: Array<{ dot: HTMLElement; range: HTMLElement; glyph: HTMLElement }> = [];
   private readonly markerHost: HTMLElement;
   /** Named-damage banner. */
   private readonly hurtEl: HTMLElement;
@@ -1291,10 +1294,10 @@ export class Hud {
   public update(dt: number, s: HudState): void {
     const hpPct = Math.max(0, s.health / s.maxHealth) * 100;
     this.setStyle('hpw', this.healthFill, 'transform', `scaleX(${Math.max(0, Math.min(1, hpPct / 100))})`);
-    this.healthFill.classList.toggle('low', hpPct <= 30);
-    this.healthHead.classList.toggle('low', hpPct <= 30);
+    this.setClass('hplow', this.healthFill, 'low', hpPct <= 30);
+    this.setClass('hhlow', this.healthHead, 'low', hpPct <= 30);
     this.setText('hp', this.healthText, String(Math.ceil(s.health)));
-    this.vignette.classList.toggle('lowhp', hpPct <= 30 && hpPct > 0);
+    this.setClass('vlow', this.vignette, 'lowhp', hpPct <= 30 && hpPct > 0);
 
     this.updateShield(s);
     this.updatePips(s);
@@ -1302,8 +1305,8 @@ export class Hud {
     this.updateRunChips(s);
     this.updateBoss(s);
 
-    this.ammoEl.classList.toggle('reloading', s.reloading);
-    this.ammoEl.classList.toggle('empty', !s.reloading && s.mag === 0);
+    this.setClass('ammr', this.ammoEl, 'reloading', s.reloading);
+    this.setClass('amme', this.ammoEl, 'empty', !s.reloading && s.mag === 0);
     if (!s.reloading) {
       this.setText('mag', this.ammoMag, String(s.mag));
       this.setText('resv', this.ammoResv, `/ ${s.reserve}`);
@@ -1334,7 +1337,7 @@ export class Hud {
         this.slotIconCache[i] = iconId;
         slot.innerHTML = icon(iconId);
       }
-      slot.classList.toggle('active', i === s.weaponIndex);
+      this.setClass(`slota${i}`, slot, 'active', i === s.weaponIndex);
       const name = names[idx] ?? '';
       if (slot.title !== name) slot.title = name;
     }
@@ -1459,10 +1462,14 @@ export class Hud {
         + '<span class="hud__marker-glyph"></span>';
       this.markerHost.appendChild(el);
       this.markerEls.push(el);
+      // Child refs are cached ONCE at creation. A 28-marker wave was doing three
+      // firstElementChild/lastElementChild traversals per marker per frame.
+      this.markerParts.push({
+        dot: el.firstElementChild as HTMLElement,
+        range: el.lastElementChild?.previousElementSibling as HTMLElement,
+        glyph: el.lastElementChild as HTMLElement,
+      });
     }
-    // Cache child refs on first creation is implicit: each el is queried
-    // once during creation. Re-querying firstElementChild/lastElementChild
-    // per frame is avoided here by storing transform directly on el.
     for (let i = 0; i < this.markerEls.length; i++) {
       const el = this.markerEls[i];
       if (!el) continue;
@@ -1483,19 +1490,17 @@ export class Hud {
       const cls = `hud__marker hud__marker--${m.role}${m.clamped ? ' is-clamped' : ''}`;
       if (el.className !== cls) el.className = cls;
       this.setStyle(`mkc${i}`, el, '--mk-color', m.colorCss);
-      const n = el.lastElementChild?.previousElementSibling as HTMLElement | undefined;
+      const parts = this.markerParts[i];
       // The distance label is only for OFF-SCREEN markers. On screen, the dot,
       // glyph and health tick already say what it is; 24 range labels stacked
       // over the scene is the smallest, densest text in the HUD.
       const range = m.clamped ? `${Math.round(m.distance)}m` : '';
-      if (n && n.textContent !== range) n.textContent = range;
-      const glyph = el.lastElementChild as HTMLElement | null;
+      if (parts && parts.range.textContent !== range) parts.range.textContent = range;
       const wanted = m.glyph;
-      if (glyph && glyph.textContent !== wanted) glyph.textContent = wanted;
-      if (glyph) glyph.hidden = wanted === '';
+      if (parts && parts.glyph.textContent !== wanted) parts.glyph.textContent = wanted;
+      if (parts) parts.glyph.hidden = wanted === '';
       // Health tick: the dot's fill height is the health fraction.
-      const dot = el.firstElementChild as HTMLElement | null;
-      if (dot) this.setStyle(`mkh${i}`, dot, '--hp', m.health.toFixed(2));
+      if (parts) this.setStyle(`mkh${i}`, parts.dot, '--hp', m.health.toFixed(2));
     }
   }
 
