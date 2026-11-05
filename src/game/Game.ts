@@ -1597,7 +1597,7 @@ export class Game {
       this.comboTimer = this.combo > 0 ? COMBO_DECAY : 0;
     }
     if (this.comboTimer < 0) this.comboTimer = 0;
-    this.weapons.damageScale = this.waves.damageScale;
+    this.weapons.damageScale = this.waves.damageScale * this.waves.damageDealtMul;
     this.weapons.update(frame, dt);
     this.viewmodel.setWeapon(this.weapons.current.def.id);
     const wv = this.weapons.view();
@@ -1975,7 +1975,8 @@ export class Game {
     }
     // Health is the rarest drop, and an elite is the most likely source. A
     // common heal would erase the value of the arena's health stations.
-    if (boss || this.pityHealth >= PITY_HEALTH_KILLS || rng.next() < DROP_CHANCE_HEALTH + elite * 0.5) {
+    if (!this.waves.activeModifier?.noHealthDrops &&
+      (boss || this.pityHealth >= PITY_HEALTH_KILLS || rng.next() < DROP_CHANCE_HEALTH + elite * 0.5)) {
       this.pickups.dropAt('health', at, () => rng.next());
       this.pityHealth = 0;
     }

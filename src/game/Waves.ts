@@ -187,6 +187,10 @@ export interface WaveModifier {
   readonly scoreMul: number;
   /** True when a killed enemy drops a live grenade at its feet. */
   readonly deathGrenades: boolean;
+  /** True when health drops are disabled for this modifier block. */
+  readonly noHealthDrops?: boolean;
+  /** Multiplier applied to damage the player deals to enemies. */
+  readonly damageDealtMul?: number;
 }
 
 export const WAVE_MODIFIERS: readonly WaveModifier[] = [
@@ -224,6 +228,22 @@ export const WAVE_MODIFIERS: readonly WaveModifier[] = [
     description: 'Killed enemies drop a live grenade. Back out or catch it.',
     enemySpeedMul: 1, playerFireRateMul: 1, enemyFireRateMul: 1,
     grenadeRechargeMul: 1, scoreMul: 1.3, deathGrenades: true,
+  },
+  {
+    // Blood Moon: no health drops. Survival has to come from lifesteal, regen
+    // cards and the arena's stations -- the modifier makes the economy visible.
+    id: 'blood-moon', name: 'BLOOD MOON',
+    description: 'No health drops this wave. Heal through lifesteal or stations.',
+    enemySpeedMul: 1, playerFireRateMul: 1, enemyFireRateMul: 1,
+    grenadeRechargeMul: 1, scoreMul: 1.25, deathGrenades: false, noHealthDrops: true,
+  },
+  {
+    // Berserk: both sides hit twice as hard and take twice as much. A clean
+    // run becomes a speedrun; a sloppy one becomes a death screen.
+    id: 'berserk', name: 'BERSERK',
+    description: 'Enemies deal double damage and take double. End it fast.',
+    enemySpeedMul: 1, playerFireRateMul: 1, enemyFireRateMul: 1,
+    grenadeRechargeMul: 1, scoreMul: 1.3, deathGrenades: false, damageDealtMul: 2,
   },
 ];
 /** Mutations that can be rolled (clear is the "no mutation" baseline). */
@@ -331,6 +351,11 @@ export class WaveManager {
    *  fixed ammo pool cannot become a hard wall. Returns 1 for finite modes. */
   public get damageScale(): number {
     return MODES[this.mode].endless ? WaveManager.hpMul(this.wave) : 1;
+  }
+
+  /** Multiplier the active run modifier applies to player damage dealt. */
+  public get damageDealtMul(): number {
+    return this.modifier?.damageDealtMul ?? 1;
   }
 
   /** Single source of truth for the endless HP curve — enemy health and the

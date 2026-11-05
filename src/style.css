@@ -20,8 +20,6 @@
   /* --- Signal hues (rationed: one meaning each) --- */
   --accent: #7ce7ff;            /* instrument cyan: interactive / current */
 
-  --warn: #ffcf6b;              /* amber, retired — kept for touch ability fallback */
-  --warn-line: #4a4033;         /* amber line, retired */
   --accent-soft: rgba(124, 231, 255, 0.38);
   --accent-wash: rgba(124, 231, 255, 0.1);
   --danger: #ff4d5e;            /* harm: damage, empty, K.I.A. */
@@ -2416,7 +2414,9 @@ kbd {
   gap: 8px;
   width: min(240px, 60vw);
   pointer-events: none;
-  z-index: 4;
+  /* Above the overlay scrim: an achievement that lands as the death card opens
+     must still be seen. */
+  z-index: 30;
 }
 .hud__toast {
   padding: 9px 13px 10px;

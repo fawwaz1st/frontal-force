@@ -160,7 +160,9 @@ export class World {
   private readonly rangeMaterials: THREE.MeshStandardMaterial[] = [];
   /** AABB registry of walkable surfaces for footstep audio + hit decals. */
   private readonly surfaceSlabs: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; surface: string }> = [];
-  private lightsBuilt = false;
+  /** Layout roll from buildStructures, reused by buildLights. */
+  private layoutMirror = 1;
+  private layoutRollValue = 0;
   private readonly rangeLamps: THREE.PointLight[] = [];
 
   /** Short theme name for the HUD and the debrief board. */
@@ -290,29 +292,11 @@ export class World {
     // are owned by Game and created after build(), so this is the only place
     // that can guarantee they match the theme.
     this.applyTheme(this.theme, changed);
-    this.lightsBuilt = true;
-    // Lamps follow the layout roll, so they are built AFTER the layout is
-    // known. buildLights is therefore called from rebuild(), not from build().
-    if (this.lightsBuilt) {
-      for (const L of this.rangeLamps) this.scene?.remove(L);
-      this.rangeLamps.length = 0;
-    }
+    // Lamps follow the layout roll, so they are built AFTER the layout is known.
+    // buildLights is therefore called from rebuild(), not from build(), and it
+    // tears down its own previous lights first so a run never adds a second sun.
+    this.teardownLights();
     this.buildLights(this.scene!);
-    this.lightsBuilt = true;
-    // Lamps follow the layout roll, so they are built AFTER the layout is
-    // known. buildLights is therefore called from rebuild(), not from build().
-    if (this.lightsBuilt) {
-      // Remove old lamps so they don't accumulate.
-      for (const L of this.rangeLamps) this.scene?.remove(L);
-      this.rangeLamps.length = 0;
-      // Remove old lamp housings (children of this.group).
-      const housings = this.group.children.filter((c) =>
-        (c as THREE.Mesh).material && ((c as THREE.Mesh).material as THREE.Material).userData?.lamp === true,
-      );
-      housings.forEach((h) => this.group.remove(h));
-    }
-    this.buildLights(this.scene!);
-    this.lightsBuilt = true;
     const rnd = mulberry32(seed);
     // Layout archetype is part of the seed, like the theme is. Three hand-
     // authored anchors with different silhouettes, mirrored 50/50 so the
@@ -489,6 +473,10 @@ export class World {
     const mirror = rnd() < 0.5 ? -1 : 1;
     const layoutRoll = rnd();
     const platformRoll = rnd();
+    // Expose the roll so buildLights() can hang the lamps on the SAME structures
+    // without a second source of truth (and without re-rolling the stream).
+    this.layoutMirror = mirror;
+    this.layoutRollValue = layoutRoll;
     // Bunker anchor: centre-far (classic), split-side, or forward. The bunker
     // is the arena's landmark, so MOVING it is what makes a layout read as a
     // different place rather than a recoloured one.
@@ -992,6 +980,38 @@ export class World {
     this.runMaterials = [];
   }
 
+  /** Remove the previous run's lights and lamp housings. Idempotent. */
+  private teardownLights(): void {
+    const scene = this.scene;
+    if (!scene) return;
+    if (this.skyLight) {
+      scene.remove(this.skyLight);
+      this.skyLight.dispose();
+      this.skyLight = null;
+    }
+    if (this.sunLight) {
+      scene.remove(this.sunLight);
+      scene.remove(this.sunLight.target);
+      this.sunLight.dispose();
+      this.sunLight = null;
+    }
+    for (const lamp of this.rangeLamps) {
+      scene.remove(lamp);
+      lamp.dispose();
+    }
+    this.rangeLamps.length = 0;
+    for (const child of [...this.group.children]) {
+      const mesh = child as THREE.Mesh;
+      if (mesh.userData?.lamp === true) {
+        this.group.remove(child);
+        mesh.geometry.dispose();
+        const mat = mesh.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else if (mat) mat.dispose();
+      }
+    }
+  }
+
   private buildLights(scene: THREE.Scene): void {
     this.skyLight = new THREE.HemisphereLight(
       this.theme.light.sky, this.theme.light.ground, this.theme.light.ambientIntensity,
@@ -1047,18 +1067,11 @@ export class World {
     // lamps track the bunker/towers regardless of seed. Recomputed here
     // (cheap, deterministic) rather than stored, so there is no second source
     // of truth for the layout.
-    // NOTE: buildLights() is called once at build() time, before rebuild()
-    // rolls the layout. So the lamps here can only track the *first* seed's
-    // layout. To make them follow every seed, buildLights must be called
-    // again inside rebuild() after buildStructures().
-    // Recompute the same rolls buildStructures() used, so the lamps track
-    // the bunker/towers regardless of seed. Deterministic from the theme
-    // seed is fine here because buildLights runs once per rebuild.
-    // Recompute the same rolls buildStructures() used, so the lamps track
-    // the bunker/towers regardless of seed. Deterministic from the theme
-    // seed is fine here because buildLights runs once per rebuild.
-    const mirror = this.themeIndex % 2 === 0 ? 1 : -1;
-    const layoutRoll = (this.themeIndex * 0.31 + 0.17) % 1;
+    // The roll is captured by buildStructures() from the SAME seeded stream the
+    // geometry used, so the lamps hang over the structures this seed actually
+    // built -- not a theme-derived approximation.
+    const mirror = this.layoutMirror;
+    const layoutRoll = this.layoutRollValue;
     const towerZ = layoutRoll < 0.34 ? 0 : layoutRoll < 0.67 ? -14 : 18;
     const bunkerZ = layoutRoll < 0.34 ? -28 : layoutRoll < 0.67 ? 0 : 14;
     const lampPositions: Array<[number, number, number]> = [
@@ -1073,14 +1086,17 @@ export class World {
       scene.add(light);
       // Housing hangs BELOW the light so the shade never occludes the source.
       const shade = new THREE.Mesh(shadeGeo, housingMat);
+      shade.userData.lamp = true;
       shade.position.set(x, y + 0.34, z);
       shade.rotation.x = Math.PI;
       shade.castShadow = false;
       this.group.add(shade);
       const lens = new THREE.Mesh(lensGeo, lensMat);
+      lens.userData.lamp = true;
       lens.position.set(x, y + 0.1, z);
       this.group.add(lens);
       const bracket = new THREE.Mesh(bracketGeo, housingMat);
+      bracket.userData.lamp = true;
       bracket.position.set(x, y + 0.62, z);
       this.group.add(bracket);
     }
