@@ -1318,7 +1318,7 @@ export class Hud {
     // Style rank: a live read on how the run is going, D through SSS.
     this.styleChip.hidden = !s.inGame;
     if (s.inGame) {
-      this.setText('style', this.styleN, STYLE_RANKS[s.styleRank] ?? 'D');
+      this.setText('style', this.styleN, STYLE_RANKS[s.styleRank - 1] ?? 'D');
       this.styleChip.dataset.rank = String(s.styleRank);
     }
     this.allyEl.hidden = !s.allyActive;
