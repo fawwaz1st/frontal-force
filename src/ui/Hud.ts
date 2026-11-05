@@ -1841,7 +1841,13 @@ export class Hud {
       ['sprint', `${cap('SHIFT')}`, 'Sprint'],
       ['crouch', `${cap('C')}`, 'Crouch & slide'],
       ['reload', `${cap('R')}`, 'Reload'],
-      ['swap', `${cap('1')}–${cap('4')}`, 'Switch weapon'],
+      // The three abilities are the most distinctive controls in the game and
+      // were missing from this diagram entirely.
+      ['dash', `${cap('Q')}`, 'Dash'],
+      ['grenade', `${cap('G')}`, 'Grenade (hold to cook)'],
+      ['melee', `${cap('F')} / ${cap('V')}`, 'Melee'],
+      // Three slots, not four: LOADOUT_SLOTS is 3 and Digit4 does nothing.
+      ['swap', `${cap('1')}–${cap('3')}`, 'Switch weapon'],
       ['swap', `${cap('WHEEL')}`, 'Cycle weapon'],
       ['pause', `${cap('ESC')}`, 'Pause'],
       ['crosshair', `${cap('×2')}`, 'Headshot damage'],

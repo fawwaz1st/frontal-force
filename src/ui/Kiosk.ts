@@ -208,7 +208,9 @@ export class Kiosk {
 
   /** Write one row's price or its refusal reason. */
   private paintRow(item: KioskItem, row: HTMLButtonElement, cost: HTMLElement): void {
-    const bought = row.dataset.owned === '1';
+    // A sell row is per-stack: liquidating a second stack of the same card is
+    // the whole point of the row, so the one-shot guard must not apply to it.
+    const bought = row.dataset.owned === '1' && item.sell !== true;
     // A sell row is affordable by definition: it PAYS the balance.
     const affordable = item.sell === true || item.cost <= this.salvage;
     // `bought` marks the purchase as accepted even when the item leaves the

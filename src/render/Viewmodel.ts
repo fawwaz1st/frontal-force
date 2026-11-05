@@ -95,6 +95,9 @@ export class Viewmodel {
   private trailT = 0;
   private trailAxis: 1 | -1 = 1;
   private readonly TRAIL_LIFE = 0.09;
+  /** Landing dip: seconds left and amplitude in rig units. */
+  private landDipT = 0;
+  private landDipAmp = 0;
   private readonly flashPlane: THREE.Mesh;
   private readonly flashLight: THREE.PointLight;
 
@@ -248,6 +251,16 @@ export class Viewmodel {
     this.switchT = 0;
   }
 
+  /**
+   * Landing dip. A jump that lands with no camera or weapon response reads as
+   * weightless; the dip is scaled by the impact so a small hop is a small nod
+   * and a long fall is a real jolt.
+   */
+  public landDip(strength: number): void {
+    this.landDipT = Math.min(0.28, 0.1 + strength * 0.03);
+    this.landDipAmp = Math.min(0.05, 0.015 + strength * 0.004);
+  }
+
   /** Clear animation state between runs so no pose/effect leaks into REDEPLOY. */
   public reset(): void {
     this.swayX = this.swayY = this.swayRotX = this.swayRotY = 0;
@@ -279,6 +292,7 @@ export class Viewmodel {
   }
 
   public update(dt: number, f: ViewmodelFrame): void {
+    this.landDipT = Math.max(0, this.landDipT - dt);
     const switchPose = this.updateMotionState(dt, f);
     this.applyRigPose(switchPose);
     this.updateReloadProps(f);
@@ -353,7 +367,8 @@ export class Viewmodel {
       + Math.cos(this.breathT * breathHz) * breathAmp * breath;
     const hipY = REST_POS.y + this.swayY + Math.sin(this.bobT * 2) * 0.007 * bob
       + Math.sin(this.breathT * breathHz * 1.55) * breathAmp * 1.6 * breath
-      - this.reloadPose * 0.07 - this.sprintPose * 0.06 - switchPose * 0.28;
+      - this.reloadPose * 0.07 - this.sprintPose * 0.06 - switchPose * 0.28
+      - (this.landDipT > 0 ? Math.sin((this.landDipT / 0.28) * Math.PI) * this.landDipAmp : 0);
     const hipZ = REST_POS.z + this.kickZ + this.reloadPose * 0.05;
     const aim = this.adsT;
     this.rig.position.set(

@@ -284,7 +284,7 @@ carrier, and the number is the precision layer under it, never the whole read.
 
 ### Touch Overlay
 - **Stick:** floating-origin, 2px cyan-soft ring with a cyan wash fill. Round, because a stick is round.
-- **Buttons:** seven round hit-rects with a steel border that flips to cyan on hold.
+- **Buttons:** ten round hit-rects with a steel border that flips to cyan on hold.
 - **Placement:** `Hud.layoutTouch()` writes positions from the input layer's own hit-rects, so what is drawn is exactly what is tappable, inset by the safe-area variables.
 
 ## 8. Sound

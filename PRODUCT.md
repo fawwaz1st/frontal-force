@@ -34,11 +34,11 @@ Ten weapons, each with a full stat block (`src/combat/weapons.ts`). The lineup s
 
 ## Squad
 
-Two escort bots deploy with the player and fight autonomously — anchor + leash + role slot. The player's position is quantized to a 3 m grid and used only as an idle anchor; the leash is soft at 18 m, hard at 26 m. A role auction every 2 s sends the nearer bot to flank (≤12 m) and the other to overwatch (10–20 m), with opposite orbit signs. Bots retreat below 30 % HP, re-engage at 55 %, and never stay retreated longer than 8 s.
+Two escort bots deploy with the player and fight autonomously. Each bot owns a HALF of the arena, re-assigned every 2.5 s on whichever axis the live enemy cloud is more spread along, because two bots with a shared objective simply walk to the same cluster. A role auction every 2 s sends the nearer bot to flank (8 m standoff) and the other to overwatch (10–20 m band), with opposite orbit signs. Bots retreat below 30 % HP, re-engage at 55 %, never stay retreated longer than 8 s, and walk in from their OWN sector edge on redeploy — never from the player.
 
 ## Platforms & Performance
 
-One build serves desktop and mobile. Touch is a first-class scheme: free-drag look, floating stick, 7 on-screen buttons; pointer lock is optional (iOS Safari has none, Chrome Android 144 shipped it), and the game falls through to touch if the lock has not landed within 320 ms. Adaptive quality picks low/medium/high at boot and a frame-time governor holds a 30 fps budget, always capped by `devicePixelRatio`. The layout honors safe-area insets and `100dvh` with breakpoints at 700/640/560/430 px plus `pointer: coarse`; quality and touch sensitivity are player settings.
+One build serves desktop and mobile. Touch is a first-class scheme: free-drag look, floating stick, 10 on-screen buttons; pointer lock is optional (iOS Safari has none, Chrome Android 144 shipped it), and the game falls through to touch if the lock has not landed within 320 ms. Adaptive quality picks low/medium/high at boot and a frame-time governor holds a 30 fps budget, always capped by `devicePixelRatio`. The layout honors safe-area insets and `100dvh` with breakpoints at 700/640/560/430 px plus `pointer: coarse`; quality and touch sensitivity are player settings.
 
 ## Brand Personality
 

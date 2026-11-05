@@ -1288,6 +1288,13 @@ export class EnemyManager {
   public breakWeakPoint(enemy: Enemy): void {
     if (enemy.weakPointBroken) return;
     enemy.weakPointBroken = true;
+    // The HUD announces CORE DOWN; the model has to agree. The core is the
+    // boss's chest strip, so it goes dark and cold instead of burning gold.
+    const strip = this.stripMats.get('wardenPrime');
+    if (strip) {
+      strip.emissiveIntensity = 0.12;
+      strip.emissive.setHex(0x2a3038);
+    }
     this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1.8), 0xffd76b, 9, 0.6);
     this.audio.eliteKill();
   }

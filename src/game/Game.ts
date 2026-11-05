@@ -720,6 +720,8 @@ export class Game {
     };
     this.player.onLanded = (fallSpeed) => {
       this.audio.land();
+      // The dip is the missing weight: without it a landing is silent motion.
+      this.viewmodel.landDip(fallSpeed);
       if (fallSpeed > 6) {
         this.effects.ring(this.player.position, 0xffffff, 1.5, 0.25);
         this.effects.smoke(this.player.position);

@@ -49,7 +49,7 @@ A drop you cannot use right now stays on the ground. Walking over a health drop 
 
 ## The arena
 
-The play space is 94 x 94 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so the old 94 m box was mostly dead ground that only ever produced long walks.
+The play space is 74 x 74 m, sized to the engagement ranges: every enemy engages inside 44 m and the longest useful sight line is about 40 m, so a larger box would be mostly dead ground that only ever produced long walks.
 
 Four fixed structures, and every one of them does a job:
 
@@ -144,7 +144,7 @@ Everything is synthesized with WebAudio, and the kit is built from five primitiv
 
 1. **Fight a wave.** Enemies spawn from points that respect line of sight to your position.
 2. **Clear it.** A clean, fast clear pays a medal (GOLD / SILVER / BRONZE) and bonus score.
-3. **Draft a card.** Three offers from 40 upgrades, with rarity weights that shift toward rare and legendary as the run goes on. Rerolls cost salvage.
+3. **Draft a card.** Three offers from 42 upgrades, with rarity weights that shift toward rare and legendary as the run goes on. Rerolls cost salvage.
 4. **Spend salvage.** Every third wave the kiosk opens first: field repair, a full armory refill, an extra draft reroll, reactive plating, and sell-back for any upgrade you regret (40% of its value, paid back as salvage).
 5. **Repeat**, with the arena mutating every few waves.
 
@@ -266,7 +266,7 @@ Accuracy is treated as a system, not a stat:
 ## Progression
 
 - **42 upgrade cards** across three rarities (common, rare, legendary) with stacking caps, including on-kill, on-crit, lifesteal, blast, and movement modifiers. Every card's stated effect is wired: damage mitigation (flat armor, fractional reduction, sprint-only armor, full-dodge) resolves inside `Player.damage`, which is the one funnel every damage source passes through, and card movement speed multiplies the same ground speed the weapon weight does.
-- **35 achievements** with lifetime counters persisted across sessions: headshot counts, accuracy bests, kill streaks, no-hit waves, barrel kills, melee kills, dash kills, daily runs, and style ranks.
+- **36 achievements** with lifetime counters persisted across sessions: headshot counts, accuracy bests, kill streaks, no-hit waves, barrel kills, melee kills, dash kills, daily runs, and style ranks.
 - **Style rank D to SSS**, ULTRAKILL-style: kill rate and headshot accuracy raise it, taking damage demotes it.
 - **Kill combo** with an x8 cap, refreshed per kill and decaying after a 3 s window.
 
