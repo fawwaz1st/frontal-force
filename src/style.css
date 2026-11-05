@@ -906,6 +906,23 @@ kbd {
   100% { opacity: 0; transform: translate(calc(-50% + var(--pop-x, 0px)), calc(-50% - 46px)) scale(0.94); }
 }
 
+/* ---------- Draft story fragment ---------- */
+/* The environmental story lives here rather than in a banner: a banner is
+   replaced by the next announcement in the same frame, so the fragment was
+   never actually read. The draft is on screen for the whole pick. */
+.hud__draft-story {
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--gold);
+  background: rgba(255, 215, 107, 0.06);
+  font-family: var(--font-data);
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.hud__draft-story[hidden] { display: none; }
+
 /* ---------- Damage numbers ---------- */
 /* The per-hit feedback the whole card pool is built around. A damage number
    says "this build hits this hard", which no hitmarker alone can do. */

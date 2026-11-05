@@ -35,6 +35,7 @@ export class Draft {
   private readonly panel: HTMLDivElement;
   private readonly titleEl: HTMLDivElement;
   private readonly cardsEl: HTMLDivElement;
+  private readonly storyEl: HTMLDivElement;
   private readonly rerollBtn: HTMLButtonElement;
   private readonly cards: HTMLButtonElement[] = [];
   private salvage = 0;
@@ -87,6 +88,14 @@ export class Draft {
     sub.className = 'hud__draft-sub';
     sub.textContent = 'SELECT ONE UPGRADE';
 
+    // The arena's environmental story fragment. The banner used to be the only
+    // place it appeared, and the wave-clear banner overwrote it in the same
+    // frame -- the story was never actually seen. The draft is on screen for
+    // several seconds, so it is where the fragment can be read.
+    this.storyEl = document.createElement('div');
+    this.storyEl.className = 'hud__draft-story';
+    this.storyEl.hidden = true;
+
     this.cardsEl = document.createElement('div');
     this.cardsEl.className = 'hud__draft-cards';
 
@@ -107,7 +116,7 @@ export class Draft {
     actions.className = 'hud__draft-actions';
     actions.append(this.rerollBtn, skipBtn);
 
-    this.panel.append(this.titleEl, sub, this.cardsEl, actions);
+    this.panel.append(this.titleEl, sub, this.storyEl, this.cardsEl, actions);
     this.root.append(this.panel);
   }
 
@@ -120,7 +129,13 @@ export class Draft {
    * `salvage` is the player's current currency, `rerolls` the remaining
    * free rerolls. Renders one card per offer plus a SKIP button.
    */
-  public show(wave: number, offers: readonly DraftOffer[], salvage: number, rerolls: number): void {
+  public show(
+    wave: number,
+    offers: readonly DraftOffer[],
+    salvage: number,
+    rerolls: number,
+    story?: string,
+  ): void {
     // A reroll re-shows the same draft, so the previous keyboard layer goes
     // first. removeEventListener on a listener that was never added is a no-op,
     // which keeps this path idempotent.
@@ -130,6 +145,8 @@ export class Draft {
     this.salvage = salvage;
     this.rerolls = Math.max(0, rerolls);
     this.titleEl.textContent = `WAVE ${wave} CLEARED`;
+    this.storyEl.textContent = story ?? '';
+    this.storyEl.hidden = !story;
 
     this.cards.length = 0;
     this.cardsEl.replaceChildren();

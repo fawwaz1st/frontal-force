@@ -227,8 +227,6 @@ export class Game {
   private phase: GamePhase = 'menu';
   private score = 0;
   private kills = 0;
-  /** Wave whose draft is waiting for the banner queue to drain. 0 = none. */
-  private pendingDraftWave = 0;
   /** One-shot teaching lines: each mechanic is explained the first time it is
    *  actually available, not in a menu the player never opens. */
   private readonly taught = new Set<string>();
@@ -766,16 +764,6 @@ export class Game {
       this.waveStartT = this.run.stats.timeSurvived;
     };
     this.waves.onWaveClear = (wave) => {
-      // Surface the map's environmental story fragment on the first clear:
-      // the arena has been read by then, so the banner lands as a beat.
-      if (wave === 1) {
-        const frag = this.world.themeStory[0];
-        if (frag) this.hud.showBanner(this.world.themeName, frag);
-      }
-      if (wave === 5) {
-        const frag = this.world.themeStory[1];
-        if (frag) this.hud.showBanner('MORE FRAGMENTS', frag);
-      }
       // Slow-motion beat on wave clear: the rhythm release. Giving the player
       // a third of a second of near-frozen time is what makes a clear feel like
       // a victory rather than like a timer resetting.
@@ -801,10 +789,10 @@ export class Game {
       } else {
         this.hud.showBanner('WAVE CLEAR', `+${bonus}`);
       }
-      // Between-wave draft: the roguelite core loop. Deferred until the wave
-      // banners have played -- opening the overlay on the same frame used to
-      // cover the story fragment and the wave-clear medal completely.
-      this.deferDraft(wave);
+      // Between-wave draft: the roguelite core loop. The story fragment rides
+      // into the draft panel, because the banner queue is still showing the
+      // wave-clear medal and would have overwritten it.
+      this.openDraft(wave);
     };
     this.hud.onStart = () => this.startRun();
     this.hud.onRestart = () => this.startRun();
@@ -1102,11 +1090,6 @@ export class Game {
   private challengeMods: ChallengeMods = foldChallenges([]);
 
   /** Open the between-wave draft and freeze the sim behind it. */
-  /** Hold the draft until the banner queue drains, then open it. */
-  private deferDraft(wave: number): void {
-    this.pendingDraftWave = wave;
-  }
-
   private openDraft(wave: number): void {
     // Every third wave also opens the kiosk first, so the player spends before
     // they commit a card. Two decisions back to back is the intended rhythm.
@@ -1128,7 +1111,8 @@ export class Game {
     }
     this.phase = 'draft';
     document.exitPointerLock();
-    this.draft.show(wave, offers, this.run.salvage, this.run.rerolls);
+    const story = wave === 1 ? this.world.themeStory[0] : wave === 5 ? this.world.themeStory[1] : undefined;
+    this.draft.show(wave, offers, this.run.salvage, this.run.rerolls, story);
   }
 
   private resolveDraft(chosen: string | null, _rerollCost: number): void {
@@ -1668,12 +1652,6 @@ export class Game {
       reloadProgress: wv.reloadProgress,
     });
     if (this.player.isSprinting) this.teach('slide', 'C WHILE SPRINTING: SLIDE');
-    // A deferred draft opens the moment the announcements have finished.
-    if (this.pendingDraftWave > 0 && !this.hud.bannerBusy()) {
-      const wave = this.pendingDraftWave;
-      this.pendingDraftWave = 0;
-      this.openDraft(wave);
-    }
     this.waves.update(dt, this.player.position);
     // Smoke and EMP fields feed the enemy perception and shield systems, which
     // is what turns the two support grenades into mechanical tools rather than
