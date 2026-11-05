@@ -67,8 +67,8 @@ export const MAPS: readonly MapTheme[] = [
     id: 'dawn-range',
     name: 'DAWN RANGE',
     story: [
-      'Sekali unit artileri. Sekarang: sasaran.',
-      'Mereka menembak mundur sampai tidak ada lagi yang menembak.',
+      'An artillery unit once. Now: the target.',
+      'They shot back until nobody was left to shoot.',
     ],
     tagline: 'cold light, long shadows',
     floor: {
@@ -95,8 +95,8 @@ export const MAPS: readonly MapTheme[] = [
     id: 'night-yard',
     name: 'NIGHT YARD',
     story: [
-      'Garasi kendaraan militer. Semua sudah dibawa pergi — atau dimakan.',
-      'Yang tersisa: kunci yang tidak ada mobilnya.',
+      'A military motor pool. Everything was driven off — or eaten.',
+      'What is left: keys with no vehicles.',
     ],
     tagline: 'dark, tight, lit by work lamps',
     floor: {
@@ -127,8 +127,8 @@ export const MAPS: readonly MapTheme[] = [
     id: 'rust-works',
     name: 'RUST WORKS',
     story: [
-      'Peleburan. Api mati 40 tahun lalu, besi masih panas.',
-      'Ada yang membangun ulang di sini. Bukan manusia.',
+      'A smelter. The fires died forty years ago; the iron is still warm.',
+      'Something rebuilt here. Not people.',
     ],
     tagline: 'hot haze over dead machinery',
     floor: {
@@ -155,8 +155,8 @@ export const MAPS: readonly MapTheme[] = [
     id: 'frost-line',
     name: 'FROST LINE',
     story: [
-      'Array radar lintas kutub. Masih berputar. Tidak ada yang mendengarkan.',
-      'Kecuali mereka.',
+      'A trans-polar radar array. Still turning. Nobody is listening.',
+      'Except them.',
     ],
     tagline: 'white ground, blue air, no cover for free',
     floor: {

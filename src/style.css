@@ -697,6 +697,16 @@ kbd {
 }
 .hud__chip--seed b { font-variant-numeric: tabular-nums; }
 
+/* ---------- Briefing ---------- */
+.hud__briefing {
+  margin: 0 0 2px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 /* ---------- Field guide ---------- */
 .hud__guide {
   display: grid;

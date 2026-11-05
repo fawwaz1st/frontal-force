@@ -804,6 +804,10 @@ export class Hud {
           </div>
 
           <div class="hud__panel" data-panel="play" role="tabpanel" id="panel-play" aria-labelledby="tab-play">
+            <!-- The one line of framing the game otherwise lacks: why you are
+                 here and what you are doing. It is a place, a wave count and a
+                 war, in one sentence. -->
+            <p class="hud__briefing">The line is gone. Hold the arena, wave after wave.</p>
             <div class="hud__modes" role="group" aria-label="Game mode">
               <button type="button" class="hud__mode-chip active" data-mode="standard" title="Classic waves, steady ramp">${icon('flag')}<span>STANDARD</span></button>
               <button type="button" class="hud__mode-chip" data-mode="blitz" title="Short breaks, denser spawns, ×1.35 score">${icon('sprint')}<span>BLITZ</span></button>
