@@ -11,6 +11,8 @@ interface SpawnEntry {
   delay: number;
   /** True when this entry is the wave boss (announced, never randomised away). */
   boss?: boolean;
+  /** Burst group: entries sharing a burst id spawn together in one tick. */
+  burst?: number;
 }
 
 interface ModeConfig {
@@ -373,6 +375,17 @@ export class WaveManager {
           }
           const entry = this.queue.shift();
           if (entry) {
+            // Spawn the whole burst: collect every queued entry sharing this
+            // burst id so the pod arrives together. The boss (no burst) always
+            // spawns alone.
+            const burstEntries: SpawnEntry[] = [entry];
+            if (entry.burst !== undefined) {
+              while (this.queue.length > 0 && this.queue[0]?.burst === entry.burst) {
+                const next = this.queue.shift();
+                if (next) burstEntries.push(next);
+              }
+            }
+            for (const be of burstEntries) {
             const point = this.pickSpawnPoint(playerPos);
             // Finite ramp: health +6%/wave (cap 2.2x), speed +1.8%/wave (cap
             // 1.32x), attack cadence -1.5%/wave (floor 0.72x). Endless ramps:
@@ -395,7 +408,7 @@ export class WaveManager {
               ? 1
               : Math.min(1.6, 1 + 0.03 * (this.wave - 1));
             this.enemies.spawn(
-              entry.kind,
+              be.kind,
               point,
               hpMul,
               spdMul,
@@ -405,7 +418,8 @@ export class WaveManager {
               this.challengeExtraAffixes,
               dmgMul,
             );
-            if (entry.boss) this.onBoss?.(BOSS_NAME);
+            if (be.boss) this.onBoss?.(BOSS_NAME);
+            }
             this.spawnTimer = config.endless
               ? Math.min(entry.delay, Math.max(0.25, Math.pow(0.94, this.wave - 1)))
               : entry.delay;
@@ -533,6 +547,20 @@ export class WaveManager {
       if (a && b) {
         rest[i] = b;
         rest[j] = a;
+      }
+    }
+    // Burst grouping: consecutive entries share a burst id, so the wave arrives
+    // in pods of 2-4 instead of a trickle. A trickle reads as a faucet; pods read
+    // as an assault. Burst size grows slightly with the wave.
+    const target = 2 + (this.random() < 0.3 ? 1 : 0) + Math.min(1, Math.floor(wave / 8));
+    let burstId = 0;
+    let burstCount = 0;
+    for (const e of rest) {
+      e.burst = burstId;
+      burstCount += 1;
+      if (burstCount >= target) {
+        burstId += 1;
+        burstCount = 0;
       }
     }
     return [...rest, ...boss];
