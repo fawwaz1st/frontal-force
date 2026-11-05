@@ -151,6 +151,7 @@ export class Grenades {
       if (field.mesh) {
         this.group.remove(field.mesh);
         field.mesh.geometry.dispose();
+      if (field.mesh.material) (field.mesh.material as THREE.Material).dispose();
       }
     }
     this.fields.length = 0;
@@ -206,20 +207,22 @@ export class Grenades {
       g.vel.multiplyScalar(1 - DRAG * dt);
       const step = this.tmp.copy(g.vel).multiplyScalar(dt);
       const length = step.length();
+      let hit = false;
       if (length > 1e-5) {
-        const hit = this.sweep(g.mesh.position, step, length);
-        if (hit) {
-          g.mesh.position.addScaledVector(hit.normal, hit.depth);
-          const into = g.vel.dot(hit.normal);
+        const hitResult = this.sweep(g.mesh.position, step, length);
+        if (hitResult) {
+          hit = true;
+          g.mesh.position.addScaledVector(hitResult.normal, hitResult.depth);
+          const into = g.vel.dot(hitResult.normal);
           if (into < 0) {
-            g.vel.addScaledVector(hit.normal, -into * (1 + RESTITUTION));
+            g.vel.addScaledVector(hitResult.normal, -into * (1 + RESTITUTION));
             g.vel.multiplyScalar(0.72);
             g.fuse = Math.max(0.4, g.fuse - def.bounceFuse);
-            this.effects.impact(g.mesh.position.clone(), hit.normal);
+            this.effects.impact(g.mesh.position, hitResult.normal);
           }
         }
       }
-      g.mesh.position.addScaledVector(g.vel, dt);
+      if (!hit) g.mesh.position.addScaledVector(g.vel, dt);
       // Spin for readability — a grenade that does not tumble is unreadable.
       g.mesh.rotation.x += dt * 7;
       g.mesh.rotation.z += dt * 4.5;
@@ -244,6 +247,7 @@ export class Grenades {
         if (field.mesh) {
           this.group.remove(field.mesh);
           field.mesh.geometry.dispose();
+      if (field.mesh.material) (field.mesh.material as THREE.Material).dispose();
         }
         this.fields.splice(i, 1);
       }

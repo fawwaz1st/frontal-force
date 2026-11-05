@@ -12,7 +12,8 @@ import { Hazards, type HazardDamageSink } from '../world/Hazards';
 import { Player } from '../player/Player';
 import { Effects } from '../render/Effects';
 import { EnemyManager, type Enemy } from '../ai/Enemies';
-import { WeaponController, PLAYER_TARGET_ID } from '../combat/WeaponController';
+import { WeaponController } from '../combat/WeaponController';
+import { PLAYER_TARGET_ID } from '../combat/Combatant';
 import { WEAPONS, sanitizeLoadout, type WeaponId } from '../combat/weapons';
 import { Grenades, type GrenadeKind } from '../combat/Grenades';
 import { Viewmodel } from '../render/Viewmodel';
@@ -268,7 +269,7 @@ export class Game {
   private pendingDashKill = false;
   private meleeKillT = 0;
   private grenadeKillT = 0;
-  private readonly pLast = new THREE.Vector3(Number.NaN, 0, 0);
+  private readonly pLast = new THREE.Vector3(0, 0, 0);
   private readonly radarBlips: RadarBlip[] = Array.from({ length: 40 }, () => ({
     x: 0,
     z: 0,
@@ -307,7 +308,6 @@ export class Game {
     score: 0,
     kills: 0,
     comboMult: 1,
-    spread: 0,
     crosshairGapPx: 3,
     inGame: false,
     allyActive: false,
@@ -2103,7 +2103,6 @@ export class Game {
     state.score = this.score;
     state.kills = this.kills;
     state.comboMult = Math.min(1 + Math.floor(this.combo / 2), 8);
-    state.spread = this.crosshairSpread();
     state.crosshairGapPx = this.crosshairGap();
     state.inGame = this.phase === 'playing';
     state.allyActive = this.ally.active;
@@ -2185,13 +2184,6 @@ export class Game {
       if (names[i] !== name) names[i] = name;
       if (outIds[i] !== id) outIds[i] = id;
     }
-  }
-
-  /** Normalized crosshair spread 0..1 from the ACTUAL cone the next shot uses. */
-  private crosshairSpread(): number {
-    const cone = this.weapons.currentSpread();
-    // 0.08 rad is the widest authored cone (shotgun moving) — normalize to it.
-    return clamp(cone / 0.08, 0, 1);
   }
 
   /** Honest crosshair gap in CSS px, straight from the real cone. */

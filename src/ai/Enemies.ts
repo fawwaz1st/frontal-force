@@ -10,6 +10,7 @@ import {
   type TacticalClaim,
 } from './Tactics';
 import {
+  PLAYER_TARGET_ID,
   GRUDGE_WINDOW,
   grudgeAt,
   RETARGET_INTERVAL,
@@ -253,7 +254,6 @@ const BOSS_PHASE_3 = 0.33;
 /** CombatTarget id of the human player. Mirrors WeaponController's constant;
  *  duplicated as a literal because the AI module must not import the weapon
  *  module just for one number (that would be a cycle). */
-const PLAYER_TARGET_ID = 1;
 /** Seconds before a boss enrages: +25% damage, 20% shorter telegraphs. */
 const BOSS_ENRAGE_TIME = 90;
 /** Weak-point damage multiplier (Doom-style permanent disable). */

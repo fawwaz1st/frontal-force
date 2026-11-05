@@ -140,7 +140,6 @@ export interface HudState {
   /** 1..8 — current kill-combo score multiplier */
   comboMult: number;
   /** 0..1 — drives dynamic crosshair gap */
-  spread: number;
   /** Exact crosshair gap in CSS px, derived from the real cone + FOV. */
   crosshairGapPx: number;
   /** False on menu/pause/death screens: suppresses gameplay hints */
@@ -1162,7 +1161,7 @@ export class Hud {
 
   public update(dt: number, s: HudState): void {
     const hpPct = Math.max(0, s.health / s.maxHealth) * 100;
-    this.setStyle('hpw', this.healthFill, 'width', `${hpPct}%`);
+    this.setStyle('hpw', this.healthFill, 'transform', `scaleX(${Math.max(0, Math.min(1, hpPct / 100))})`);
     this.healthFill.classList.toggle('low', hpPct <= 30);
     this.healthHead.classList.toggle('low', hpPct <= 30);
     this.setText('hp', this.healthText, String(Math.ceil(s.health)));
@@ -1247,7 +1246,7 @@ export class Hud {
     this.allyEl.hidden = !s.allyActive;
     if (s.allyActive) {
       const pct = Math.max(0, Math.min(100, (s.allyHp / Math.max(1, s.allyMax)) * 100));
-      this.setStyle('allyw', this.allyFill, 'width', `${pct}%`);
+      this.setStyle('allyw', this.allyFill, 'transform', `scaleX(${Math.max(0, Math.min(1, pct))})`);
       if (this.lastAllyN !== s.allyCount) {
         this.lastAllyN = s.allyCount;
         this.allyN.textContent = s.allyCount > 0 ? `×${s.allyCount}` : '';
@@ -1379,8 +1378,8 @@ export class Hud {
     const shield = Math.max(0, s.shield);
     const healthFrac = clamp01(s.health / max);
     const shieldFrac = Math.min(clamp01(shield / max), 1 - healthFrac);
-    this.setStyle('shx', this.shieldFill, 'left', `${healthFrac * 100}%`);
-    this.setStyle('shw', this.shieldFill, 'width', `${shieldFrac * 100}%`);
+    this.setStyle('shx', this.shieldFill, 'transform', `scaleX(${Math.max(0, Math.min(1, shieldFrac))})`);
+    
     this.setClass('shv', this.shieldFill, 'on', shieldFrac > 0);
     const show = shield > 0.5;
     this.shieldText.hidden = !show;
@@ -1411,7 +1410,7 @@ export class Hud {
 
     const dashReady = s.dashCharges > 0;
     this.setText('dashn', this.dashN, `${s.dashCharges}/${s.dashMax}`);
-    this.setStyle('dashw', this.dashBar, 'width', `${clamp01(s.dashFraction) * 100}%`);
+    this.setStyle('dashw', this.dashBar, 'transform', `scaleX(${clamp01(s.dashFraction)})`);
     this.setClass('dashr', this.dashBar, 'ready', dashReady);
     // An empty chip dims: with zero charges there is nothing to press yet, and
     // the dim state is the tell that does not require reading the n/N.
@@ -1432,8 +1431,8 @@ export class Hud {
     this.setStyle(
       'grenw',
       this.grenBar,
-      'width',
-      `${(cooking ? cook : clamp01(s.grenadeFraction)) * 100}%`,
+      'transform',
+      `scaleX(${cooking ? cook : clamp01(s.grenadeFraction)})`,
     );
     this.setClass('grenc', this.grenChip, 'cooking', cooking);
     this.setClass('grenr', this.grenBar, 'ready', grenReady && !cooking);
@@ -1501,7 +1500,7 @@ export class Hud {
       // The meter is a "can I afford the expensive thing yet" read: the kiosk's
       // priciest item is 120, so the bar fills across that range and caps there.
       const frac = Math.min(1, Math.max(0, s.salvage) / SALVAGE_METER_SCALE);
-      this.setStyle('salvm', this.salvageMeter, '--v', `${(frac * 100).toFixed(0)}%`);
+      this.setStyle('salvm', this.salvageMeter, '--v', frac.toFixed(3));
     }
 
     const hasUpgrades = s.upgrades > 0;
@@ -1557,7 +1556,7 @@ export class Hud {
     const coreUp = s.bossWeakPoint;
     this.setText('bossp', this.bossPhaseEl, coreUp ? `PHASE ${s.bossPhase}` : 'CORE DOWN');
     const frac = s.bossMax > 0 ? clamp01(s.bossHealth / s.bossMax) : 0;
-    this.setStyle('bossw', this.bossFill, 'width', `${frac * 100}%`);
+    this.setStyle('bossw', this.bossFill, 'transform', `scaleX(${Math.max(0, Math.min(1, frac))})`);
     this.setClass('bossc', this.bossFill, 'core-down', !coreUp);
   }
 
@@ -1697,7 +1696,7 @@ export class Hud {
       `<span class="hud__ach-medal">${icon('medal')}</span>` +
       `<span class="hud__ach-body">` +
       `<span class="hud__ach-name">${def.name}</span>` +
-      `<span class="hud__ach-meter"><i style="--v:${(frac * 100).toFixed(1)}%"></i></span>` +
+      `<span class="hud__ach-meter"><i style="--v:${frac.toFixed(3)}"></i></span>` +
       `</span>` +
       `<span class="hud__ach-prog">${formatProgress(value, def.target)}</span>` +
       `<span class="sr-only">${def.description}</span>` +
@@ -2076,7 +2075,7 @@ export class Hud {
         `<div class="hud__meter${tone ? ` ${tone}` : ''}">` +
         `<span class="hud__meter-ic">${icon(ic)}</span>` +
         `<span class="hud__meter-label">${label}</span>` +
-        `<span class="hud__meter-track"><i style="--v:${pct.toFixed(1)}%"></i></span>` +
+        `<span class="hud__meter-track"><i style="--v:${(pct / 100).toFixed(3)}"></i></span>` +
         `<b class="hud__meter-value">${display}</b>` +
         `</div>`,
       );

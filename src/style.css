@@ -586,9 +586,11 @@ kbd {
   content: '';
   display: block;
   height: 100%;
-  width: var(--v, 0%);
+  width: 100%;
+  transform: scaleX(var(--v, 0));
+  transform-origin: left center;
   background: var(--gold);
-  transition: width 0.2s ease-out;
+  transition: transform 0.2s ease-out;
 }
 .hud__chip--gold {
   border-left-color: var(--gold);
@@ -816,8 +818,10 @@ kbd {
 .hud__health-fill {
   height: 100%;
   width: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
   background: linear-gradient(90deg, #4e9c63, var(--ok));
-  transition: width 0.15s ease-out;
+  transition: transform 0.15s ease-out;
 }
 .hud__health-fill.low { background: linear-gradient(90deg, #b2313f, var(--danger)); }
 
@@ -827,9 +831,11 @@ kbd {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 0;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
   background: var(--accent);
-  transition: left 0.15s ease-out, width 0.15s ease-out;
+  transition: transform 0.15s ease-out;
 }
 .hud__shield-fill.on { box-shadow: 0 0 8px var(--accent-soft); }
 .hud__shield-n {
@@ -870,8 +876,10 @@ kbd {
   display: block;
   height: 100%;
   width: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
   background: var(--accent);
-  transition: width 0.15s ease-out;
+  transition: transform 0.15s ease-out;
 }
 
 /* ---------- Status effect pips ---------- */
@@ -956,8 +964,10 @@ kbd {
   display: block;
   height: 100%;
   width: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
   background: var(--line);
-  transition: width 0.12s linear, background 0.12s;
+  transition: transform 0.12s linear, background 0.12s;
 }
 .hud__ability-bar i.ready { background: var(--accent); }
 .hud__ability.depleted { opacity: 0.6; }
@@ -1098,8 +1108,10 @@ kbd {
 .hud__boss-fill {
   height: 100%;
   width: 100%;
+  transform: scaleX(1);
+  transform-origin: left center;
   background: var(--danger);
-  transition: width 0.15s ease-out;
+  transition: transform 0.15s ease-out;
 }
 .hud__boss-fill.core-down { border-top: 2px solid var(--gold); }
 
@@ -1708,9 +1720,11 @@ kbd {
 .hud__ach-meter i {
   display: block;
   height: 100%;
-  width: var(--v, 0%);
+  width: 100%;
+  transform: scaleX(var(--v, 0));
+  transform-origin: left center;
   background: var(--line-strong);
-  transition: width 0.35s ease-out;
+  transition: transform 0.35s ease-out;
 }
 .hud__ach-row[data-tier='bronze'] .hud__ach-meter i { background: rgba(201, 138, 90, 0.75); }
 .hud__ach-row[data-tier='silver'] .hud__ach-meter i { background: rgba(185, 198, 208, 0.75); }
@@ -1805,9 +1819,10 @@ kbd {
 .hud__meter-track i {
   display: block;
   height: 100%;
-  width: var(--v, 0%);
+  width: 100%;
+  transform: scaleX(var(--v, 0));
+  transform-origin: left center;
   background: var(--accent);
-  transform-origin: left;
 }
 .hud__meter-value {
   font-family: var(--font-data);

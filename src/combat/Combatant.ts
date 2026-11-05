@@ -40,6 +40,9 @@ export interface CombatTarget {
  * damage" and "lowest health" heuristics in the FDG-2014 threat-ordering study,
  * and at 24 enemies x 3 targets the whole pass is 72 multiplications at 8 Hz.
  */
+/** CombatTarget id of the human player — shared with the enemy threat table. */
+export const PLAYER_TARGET_ID = 1;
+
 export const THREAT_WEIGHTS = {
   proximity: 0.3,
   role: 0.2,

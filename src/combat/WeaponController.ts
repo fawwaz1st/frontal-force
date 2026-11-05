@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { EnemyManager, Enemy } from '../ai/Enemies';
+import { PLAYER_TARGET_ID } from './Combatant';
 import type { Player } from '../player/Player';
 import type { InputFrame } from '../input/Input';
 import type { Effects } from '../render/Effects';
@@ -31,7 +32,6 @@ const MAX_SELF_BLAST = 35;
 const COOLDOWN_EPS = 1e-6;
 
 /** CombatTarget id of the human player — shared with the enemy threat table. */
-export const PLAYER_TARGET_ID = 1;
 
 export interface WeaponView {
   index: number;
