@@ -18,7 +18,9 @@
   place-items: center;
   /* The scope reads as an instrument, so it is drawn in the data face. */
   font-family: var(--font-data);
-  transition: opacity 90ms linear;
+  /* No transition: the opacity is written every frame from adsT, so a
+     transition would only lag the ADS state behind itself. */
+  transition: none;
 }
 .hud__scope[hidden] { display: none; }
 .hud__scope-mask {

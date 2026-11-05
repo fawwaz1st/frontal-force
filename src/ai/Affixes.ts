@@ -33,6 +33,8 @@ export interface AffixDef {
   glow: number;
   /** Multipliers applied at spawn. */
   hpMul: number;
+  /** How much of each affix's hpMul stacks (the rest is discounted). */
+  readonly hpStackRate?: number;
   damageMul: number;
   speedMul: number;
   /** Attack-cadence multiplier (lower = faster attacks). */
@@ -181,7 +183,6 @@ export function eliteScoreMul(count: number): number {
  * `AFFIXES` so the data table stays serialisable and testable.
  */
 export interface AffixStats {
-  health: number;
   damage: number;
   speed: number;
   score: number;
@@ -189,6 +190,8 @@ export interface AffixStats {
   flatArmor: number;
   /** Attack-cadence multiplier. */
   attackCooldown: number;
+  /** Additive health bonus from affixes, discounted per stack. */
+  healthBonus: number;
   /** Salvage multiplier on death. */
   salvage: number;
   /** Fraction of damage dealt returned as health. */
@@ -204,7 +207,11 @@ export interface AffixStats {
 }
 
 export function applyAffix(stats: AffixStats, def: AffixDef): void {
-  stats.health *= def.hpMul;
+  // Health stacks ADDITIVELY and at a discount: multiplicative stacking turned
+  // a three-affix elite into a 10x bullet sponge. Each affix adds a fraction of
+  // its bonus, so more affixes still mean more health, just not an exponential.
+  const rate = def.hpStackRate ?? 0.6;
+  stats.healthBonus += (def.hpMul - 1) * rate;
   stats.damage *= def.damageMul;
   stats.speed *= def.speedMul;
   stats.score *= def.scoreMul;

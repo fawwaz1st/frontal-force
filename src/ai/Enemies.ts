@@ -789,12 +789,12 @@ export class EnemyManager {
     let lifestealMul = 0;
     if (affixes.length > 0) {
       const stats: AffixStats = {
-        health: def.health,
         damage: def.damage,
         speed: def.speed,
         score: def.score,
         flatArmor: 0,
         attackCooldown: 1,
+        healthBonus: 0,
         salvage: 1,
         lifesteal: 0,
         ccImmune: false,
@@ -803,7 +803,9 @@ export class EnemyManager {
         tint: null,
       };
       for (const id of affixes) applyAffix(stats, AFFIXES[id]);
-      def.health = Math.round(stats.health);
+      // Affix health stacks additively and discounted; the base health is the
+      // kind's own, so a one-affix elite still reads as its kind.
+      def.health = Math.round(def.health * (1 + stats.healthBonus));
       def.damage = Math.round(stats.damage * 10) / 10;
       def.speed = stats.speed;
       def.attackCooldown *= stats.attackCooldown;

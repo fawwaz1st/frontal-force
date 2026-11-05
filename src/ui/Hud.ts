@@ -406,6 +406,10 @@ export class Hud {
   private readonly pops: HTMLElement[] = [];
   /** Pooled damage-number nodes. */
   private readonly dmgNums: HTMLElement[] = [];
+  /** Radar colours read from the CSS tokens (canvas cannot use var()). */
+  private radarLine = 'rgba(0, 200, 255, 0.35)';
+  private radarLineFaint = 'rgba(0, 200, 255, 0.15)';
+  private radarWash = 'rgba(0, 200, 255, 0.16)';
   /** Killfeed host: the last four named kills. */
   private readonly killfeed: HTMLElement;
   private popCursor = 0;
@@ -642,11 +646,13 @@ export class Hud {
         </div>
         <div class="hud__chip hud__chip--mutation" data-mutation hidden tabindex="0" role="note" aria-label="Arena mutation">
           <b data-mutation-n></b>
+          <span class="sr-only" id="mutation-desc" data-mutation-desc></span>
         </div>
         <!-- Active wager: only shown when the run was deployed with challenges,
              so a normal run keeps its four-chip row. -->
         <div class="hud__chip hud__chip--wager" data-wager hidden tabindex="0" role="note" aria-label="Active wager">
           <span class="hud__chip-tag">WAGER</span><b data-wager-n></b>
+          <span class="sr-only" data-wager-desc></span>
         </div>
         <!-- A real button: the seed is the one chip with an action (copy). -->
         <button type="button" class="hud__chip hud__chip--seed" data-seed hidden>
@@ -671,7 +677,9 @@ export class Hud {
         <span data-en-timer hidden>${icon('clock')}<b data-timer-n>0</b></span>
         <span data-en-clear hidden>${icon('check')}</span>
       </div>
-      <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}" aria-hidden="true" role="img" aria-label="Radar showing nearby hostiles"></canvas>
+      <!-- aria-hidden, not role=img: a canvas with no accessible content must
+           not advertise a label it never announces. -->
+      <canvas class="hud__radar" data-radar width="${RADAR_SIZE}" height="${RADAR_SIZE}" aria-hidden="true"></canvas>
       <div class="hud__hint" data-hint hidden></div>
       <!-- Touch overlay: only shown once a real touch is seen. Positioned by
            layoutTouch() so the button rects match the input hit-tests. -->
@@ -1124,6 +1132,23 @@ export class Hud {
     });
     q('[data-seed-run]').addEventListener('click', () => this.submitSeed());
     q('[data-daily-run]').addEventListener('click', () => this.onDailyRun?.());
+
+    this.syncRadarColors();
+  }
+
+  /**
+   * Read the radar colours out of the CSS tokens. Canvas 2D cannot resolve
+   * `var()`, so the values are read once from the document root and cached.
+   */
+  private syncRadarColors(): void {
+    const styles = getComputedStyle(document.documentElement);
+    const read = (name: string, fallback: string): string => {
+      const value = styles.getPropertyValue(name).trim();
+      return value || fallback;
+    };
+    this.radarLine = read('--radar-soft', this.radarLine);
+    this.radarLineFaint = read('--radar-faint', this.radarLineFaint);
+    this.radarWash = read('--radar-faint', this.radarWash);
   }
 
   /** Validate the seed field and start a run, or flash the field red. */
@@ -1428,7 +1453,10 @@ export class Hud {
       if (el.className !== cls) el.className = cls;
       this.setStyle(`mkc${i}`, el, '--mk-color', m.colorCss);
       const n = el.lastElementChild?.previousElementSibling as HTMLElement | undefined;
-      const range = m.clamped ? '' : `${Math.round(m.distance)}m`;
+      // The distance label is only for OFF-SCREEN markers. On screen, the dot,
+      // glyph and health tick already say what it is; 24 range labels stacked
+      // over the scene is the smallest, densest text in the HUD.
+      const range = m.clamped ? `${Math.round(m.distance)}m` : '';
       if (n && n.textContent !== range) n.textContent = range;
       const glyph = el.lastElementChild as HTMLElement | null;
       const wanted = m.glyph;
@@ -1622,6 +1650,9 @@ export class Hud {
       // Native tooltip: the description is one line of context, not worth a
       // panel, and the title attribute needs no layout budget.
       if (this.mutationChip.title !== s.mutationDesc) this.mutationChip.title = s.mutationDesc;
+      const mutDesc = this.mutationChip.querySelector('[data-mutation-desc]');
+      if (mutDesc && mutDesc.textContent !== s.mutationDesc) mutDesc.textContent = s.mutationDesc;
+      this.mutationChip.setAttribute('aria-describedby', 'mutation-desc');
     }
 
     // Active wager: the run's challenges and their total payout. The tooltip
@@ -1924,12 +1955,14 @@ export class Hud {
     ctx.translate(r, r);
 
     // Grid rings + sweep wedge — instrument cyan per DESIGN.md §110.
-    ctx.strokeStyle = 'rgba(0, 200, 255, 0.35)';
+    // Canvas does not resolve CSS variables, so the token is read once and
+    // cached rather than inlined as var().
+    ctx.strokeStyle = this.radarLine;
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(0, 0, r - 2, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = 'rgba(0, 200, 255, 0.15)';
+    ctx.strokeStyle = this.radarLineFaint;
     ctx.beginPath(); ctx.arc(0, 0, (r - 2) * 0.5, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = 'rgba(0, 200, 255, 0.16)';
+    ctx.fillStyle = this.radarWash;
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, r - 2, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55);

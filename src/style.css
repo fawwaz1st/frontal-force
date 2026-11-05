@@ -19,6 +19,15 @@
 :root {
   /* --- Signal hues (rationed: one meaning each) --- */
   --accent: #7ce7ff;            /* instrument cyan: interactive / current */
+  /* Role hues that appear in more than one place (radar canvas, world tints,
+     marker dots) so a state change never means editing several files. */
+  --radar: rgba(0, 200, 255, 1);
+  --radar-soft: rgba(0, 200, 255, 0.35);
+  --radar-faint: rgba(0, 200, 255, 0.15);
+  --enemy: #ff5c5c;
+  --elite: #35f0c8;
+  --burn: #ff8a3c;
+  --slow: #7dd8ff;
 
   --accent-soft: rgba(124, 231, 255, 0.38);
   --accent-wash: rgba(124, 231, 255, 0.1);
@@ -364,7 +373,7 @@ body {
   border: 1.5px solid var(--mk-color, #fff);
   box-shadow: none;
 }
-.hud__marker--enemy { --mk-color: #ff5c5c; }
+.hud__marker--enemy { --mk-color: var(--enemy); }
 .hud__marker--elite { --mk-color: #ffd76b; }
 .hud__marker--boss { --mk-color: #ff4d5e; }
 .hud__marker--ally { --mk-color: #7ddb8a; }
@@ -442,7 +451,7 @@ body {
 /* Armour plate: teal, matching the warden, so a blocked shot never reads as a
    normal connect. */
 .hud__hitmarker.flash--blocked::before,
-.hud__hitmarker.flash--blocked::after { background: #35f0c8; box-shadow: 0 0 9px #35f0c8; }
+.hud__hitmarker.flash--blocked::after { background: var(--elite); box-shadow: 0 0 9px var(--elite); }
 .hud__hitmarker.flash--blocked { animation: hit 0.22s ease-out; }
 @keyframes hit {
   0% { opacity: 1; transform: translate(-50%, -50%) rotate(45deg) scale(1.25); }
@@ -1038,8 +1047,8 @@ kbd {
 }
 .hud__pip[hidden] { display: none; }
 .hud__pip b { font-weight: 700; }
-.hud__pip--burn { color: #ff8a3c; background: rgba(255, 138, 60, 0.14); }
-.hud__pip--slow { color: #7dd8ff; background: rgba(125, 216, 255, 0.14); }
+.hud__pip--burn { color: var(--burn); background: rgba(255, 138, 60, 0.14); }
+.hud__pip--slow { color: var(--slow); background: rgba(125, 216, 255, 0.14); }
 
 /* ---------- Ability chips ---------- */
 .hud__abilities {
@@ -1278,6 +1287,10 @@ kbd {
   display: grid;
   align-content: safe center;
   justify-items: center;
+  /* Safe-area padding: on a notched phone in landscape the card would otherwise
+     sit under the sensor housing. */
+  padding: calc(12px + var(--safe-t)) calc(12px + var(--safe-r))
+    calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
   overflow-y: auto;
   overscroll-behavior: contain;
   background: rgba(6, 9, 12, 0.82);
@@ -2011,8 +2024,8 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 .hud__emblem .ic { width: 15px; height: 15px; color: var(--text-dim); }
-.hud__emblem--elite { border-left-color: #35f0c8; }
-.hud__emblem--elite .ic { color: #35f0c8; }
+.hud__emblem--elite { border-left-color: var(--elite); }
+.hud__emblem--elite .ic { color: var(--elite); }
 .hud__emblem--gold { border-left-color: var(--gold); }
 .hud__emblem--gold .ic { color: var(--gold); }
 .hud__emblem--good { border-left-color: var(--ok); }
@@ -2774,6 +2787,13 @@ kbd {
   }
   /* A short ledger keeps DEPLOY reachable on a phone without a long scroll. */
   .hud__ach-list { max-height: 124px; }
+}
+
+/* Between the 680px and 820px breakpoints the chip row can wrap to
+   two lines while the status line still sits at 52px. The same strategy as the
+   phone block: the less-critical run chips give way. */
+@media (max-width: 820px) {
+  .hud__chip[data-upgrades], .hud__chip--mutation, .hud__chip--modifier { display: none; }
 }
 
 @media (max-width: 680px) {
