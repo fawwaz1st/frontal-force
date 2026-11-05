@@ -6,6 +6,8 @@ import type { QualitySetting } from '../core/storage';
 import { ACHIEVEMENTS, AchievementTracker } from '../game/Achievements';
 import type { AchievementDef, AchievementId, AchievementMetric } from '../game/Achievements';
 import { UPGRADES } from '../game/Upgrades';
+import { AFFIXES, AFFIX_IDS } from '../ai/Affixes';
+import { WAVE_MODIFIERS } from '../game/Waves';
 import type { UpgradeCard, UpgradeId } from '../game/Upgrades';
 import {
   CHALLENGES,
@@ -21,6 +23,9 @@ const MODE_META: Record<GameMode, { icon: IconName; label: string }> = {
   rotator: { icon: 'swap', label: 'ROTATION' },
   overrun: { icon: 'infinity', label: 'OVERRUN' },
 };
+
+/** `#rrggbb` for a numeric colour, for the guide's affix swatches. */
+const cssColor = (color: number): string => `#${color.toString(16).padStart(6, '0')}`;
 
 /** Style rank letters, indexed by the 1..7 rank the sim computes. */
 const STYLE_RANKS = ['D', 'C', 'B', 'A', 'S', 'SS', 'SSS'] as const;
@@ -406,6 +411,8 @@ export class Hud {
   private readonly pops: HTMLElement[] = [];
   /** Pooled damage-number nodes. */
   private readonly dmgNums: HTMLElement[] = [];
+  /** True once the guide tab has been built. */
+  private guideBuilt = false;
   /** Radar colours read from the CSS tokens (canvas cannot use var()). */
   private radarLine = 'rgba(0, 200, 255, 0.35)';
   private radarLineFaint = 'rgba(0, 200, 255, 0.15)';
@@ -787,6 +794,7 @@ export class Hud {
             <button type="button" class="hud__tab active" data-tab="play" role="tab" id="tab-play" aria-controls="panel-play" aria-selected="true">${icon('play')}<span>PLAY</span></button>
             <button type="button" class="hud__tab" data-tab="kit" role="tab" id="tab-kit" aria-controls="panel-kit" aria-selected="false">${icon('crate')}<span>LOADOUT</span></button>
             <button type="button" class="hud__tab" data-tab="record" role="tab" id="tab-record" aria-controls="panel-record" aria-selected="false">${icon('trophy')}<span>RECORDS</span></button>
+            <button type="button" class="hud__tab" data-tab="guide" role="tab" id="tab-guide" aria-controls="panel-guide" aria-selected="false">${icon('crosshair')}<span>GUIDE</span></button>
             <button type="button" class="hud__tab" data-tab="setup" role="tab" id="tab-setup" aria-controls="panel-setup" aria-selected="false">${icon('grid')}<span>SETTINGS</span></button>
           </div>
 
@@ -853,6 +861,26 @@ export class Hud {
             <div class="hud__ach" data-ach>
               <div class="hud__ach-summary" data-ach-summary>UNLOCKED 0/0</div>
               <div class="hud__ach-list" data-ach-list></div>
+            </div>
+          </div>
+
+          <!-- Guide tab: the affix legend and the mechanics a player otherwise
+               has to learn by dying. Counter-play against an affix cannot be
+               planned if the affix has no name in the game. -->
+          <div class="hud__panel hidden" data-panel="guide" role="tabpanel" id="panel-guide" aria-labelledby="tab-guide">
+            <div class="hud__guide">
+              <div class="hud__guide-h">HOW TO PLAY</div>
+              <p>Survive the waves. Every third wave the kiosk opens first, then you
+              draft one card from three. Salvage buys cards and kiosk items; elites
+              and the boss pay a premium. Skipping a draft pays 45 salvage.</p>
+              <p>Headshots deal double damage. Wardens halve frontal shots and
+              charge a guard meter -- flank them, or break the guard and trade.
+              The boss has a REAR CORE: any shot from behind opens it, and
+              destroying it is the fastest way to end the fight.</p>
+              <div class="hud__guide-h">ELITE AFFIXES</div>
+              <div class="hud__guide-affixes" data-guide-affixes></div>
+              <div class="hud__guide-h">RUN MODIFIERS</div>
+              <div class="hud__guide-mods" data-guide-mods></div>
             </div>
           </div>
 
@@ -2082,6 +2110,33 @@ export class Hud {
       panel.classList.toggle('hidden', panel.dataset.panel !== id);
     }
     if (id === 'kit') this.renderLoadout();
+    if (id === 'guide') this.buildGuide();
+  }
+
+  /**
+   * The field guide: the affix legend and the run modifiers, built once from
+   * the same data tables the simulation reads, so the two cannot drift.
+   */
+  private buildGuide(): void {
+    if (this.guideBuilt) return;
+    this.guideBuilt = true;
+    const affixesEl = this.menu.querySelector('[data-guide-affixes]');
+    if (affixesEl) {
+      affixesEl.innerHTML = AFFIX_IDS.map((id) => {
+        const def = AFFIXES[id];
+        return (
+          `<div class="hud__guide-row" title="${def.description}">` +
+          `<span class="hud__guide-dot" style="background:${cssColor(def.tint)}"></span>` +
+          `<b>${def.name.toUpperCase()}</b><span>${def.description}</span></div>`
+        );
+      }).join('');
+    }
+    const modsEl = this.menu.querySelector('[data-guide-mods]');
+    if (modsEl) {
+      modsEl.innerHTML = WAVE_MODIFIERS.map((m) =>
+        `<div class="hud__guide-row"><b>${m.name}</b><span>${m.description}</span></div>`,
+      ).join('');
+    }
   }
 
   private buildTabs(): void {

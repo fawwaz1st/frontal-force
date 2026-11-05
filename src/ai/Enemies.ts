@@ -153,6 +153,8 @@ export interface Enemy {
   phase: number;
   /** Boss enrage countdown in seconds; Infinity for non-bosses. */
   enrageT: number;
+  /** Boss phase-3 ground slam countdown. */
+  slamT: number;
   /** True once the boss weak point has been destroyed. */
   weakPointBroken: boolean;
   /** Rear-core damage accumulated this fight; the core breaks at a fraction
@@ -872,6 +874,7 @@ export class EnemyManager {
       slowT: 0,
       phase: isBoss ? 1 : 0,
       enrageT: isBoss ? BOSS_ENRAGE_TIME : Number.POSITIVE_INFINITY,
+      slamT: 0,
       weakPointBroken: false,
       coreDamage: 0,
       halo,
@@ -1604,10 +1607,26 @@ export class EnemyManager {
         const phase = fraction <= BOSS_PHASE_3 ? 3 : fraction <= BOSS_PHASE_2 ? 2 : 1;
         if (phase !== enemy.phase) {
           enemy.phase = phase;
-          // Each phase shortens the telegraph and speeds the boss up.
+          // Each phase is a new rule, not a faster version of the last one:
+          // phase 2 fires a three-round burst, phase 3 slams the ground.
           enemy.def.speed *= 1.08;
+          if (phase === 2) enemy.burst = 3;
           this.effects.ring(enemy.group.position.clone().setY(enemy.group.position.y + 1.6), 0xffd76b, 7, 0.5);
           this.audio.bossSpawn();
+        }
+        // Phase 3: a periodic ground slam. It is the boss's answer to a player
+        // who simply backs away and trades -- the arena itself becomes unsafe.
+        if (enemy.phase === 3 && !enemy.dead) {
+          enemy.slamT -= dt;
+          if (enemy.slamT <= 0) {
+            enemy.slamT = 5.5;
+            const at = enemy.group.position.clone().setY(enemy.group.position.y + 0.5);
+            this.effects.ring(at, 0xffd76b, 8, 0.6);
+            this.effects.burst(at, 0xffd76b, 24, 3);
+            this.audio.blastAt(at.x, at.z);
+            // The slam hurts whatever is standing close, player included.
+            this.damageArea(at, 6, 22, 0.4, false);
+          }
         }
         if (enemy.enrageT !== Number.POSITIVE_INFINITY) {
           enemy.enrageT -= dt;

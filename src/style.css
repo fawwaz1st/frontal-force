@@ -697,6 +697,46 @@ kbd {
 }
 .hud__chip--seed b { font-variant-numeric: tabular-nums; }
 
+/* ---------- Field guide ---------- */
+.hud__guide {
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.hud__guide p { margin: 0; max-width: 62ch; }
+.hud__guide-h {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+  margin-top: 6px;
+}
+.hud__guide-row {
+  display: grid;
+  grid-template-columns: 10px minmax(90px, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+}
+.hud__guide-row b {
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.hud__guide-row span { font-size: 11px; }
+.hud__guide-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  align-self: center;
+}
+
 /* ---------- Arena identity (name + tagline) ---------- */
 /* Sits under the chips on the left rail: the arena is a place, not a wave
    counter, and naming it is the cheapest world-building there is. */
