@@ -1676,7 +1676,10 @@ export class Hud {
     this.upgradeChip.hidden = !live || !hasUpgrades;
     if (live && hasUpgrades) this.setText('upgn', this.upgradeN, String(s.upgrades));
 
-    const hasModifier = live && s.modifierName !== '';
+    // The modifier is a RUN rule, not a gameplay-state rule: it stays on screen
+    // through the kiosk and the draft, because it is still the rule for the
+    // next wave. It is empty whenever no run is live, so no `live` gate here.
+    const hasModifier = s.modifierName !== '';
     this.modifierChip.hidden = !hasModifier;
     if (hasModifier) {
       this.setText('modn', this.modifierText, s.modifierName);
