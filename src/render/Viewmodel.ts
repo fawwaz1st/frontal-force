@@ -351,7 +351,9 @@ export class Viewmodel {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
-    if (this.switchT < 1) this.switchT = Math.min(1, this.switchT + dt / 0.24);
+    // 0.18 s matches the weapon controller's switch cooldown, so the viewmodel
+    // is settled on the exact frame the new gun can fire.
+    if (this.switchT < 1) this.switchT = Math.min(1, this.switchT + dt / 0.18);
     return Math.sin(this.switchT * Math.PI);
   }
 

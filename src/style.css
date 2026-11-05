@@ -1471,6 +1471,17 @@ kbd {
   font-family: var(--font-data);
 }
 .hud__menu-best .ic { color: var(--gold); }
+.hud__menu-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+}
+.hud__menu-meta[hidden] { display: none; }
+.hud__menu-meta .ic { width: 14px; height: 14px; color: var(--gold); }
 .hud__fatal { color: var(--text-dim); max-width: 42ch; margin: 20px auto 0; }
 
 .hud__menu-records {

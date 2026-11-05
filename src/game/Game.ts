@@ -214,6 +214,8 @@ export class Game {
   private counters = createCounters();
   private readonly tracker = new AchievementTracker();
   private unlocked = new Set<AchievementId>();
+  /** Meta progression level: one per unlocked achievement, capped. */
+  private metaLevel = 0;
   private queue: AchievementId[] = [];
   private loop!: GameLoop;
   private readonly save: SaveData;
@@ -432,6 +434,10 @@ export class Game {
     // The ledger is a progress panel, so it belongs on the first paint too: an
     // empty ring at 0% is a better invitation than an absent panel.
     this.hud.setAchievements(this.unlocked, this.counters);
+    // Meta progression: derived from the achievement ledger, which is rebuilt
+    // from the persisted counters every session.
+    this.metaLevel = this.tracker.evaluate(this.counters, this.unlocked).length;
+    this.hud.setMenuMeta(this.metaLevel);
     this.input.touch.setSensitivity(this.save.touchSensitivity);
     // The HUD draws the touch buttons from the SAME rects the input hit-tests,
     // so a visible button is always a tappable button.
@@ -928,6 +934,13 @@ export class Game {
     // Fresh run: new seeded stream, new modifier set, fresh statistics.
     const runSeed = seed ?? ((Math.random() * 0xffffffff) >>> 0);
     this.run = new Run(runSeed);
+    // Meta progression: the long game pays a small permanent head start. It is
+    // deliberately modest -- an achievement should feel like a head start, not
+    // a different game.
+    if (this.metaLevel > 0) {
+      this.run.salvage += Math.min(50, this.metaLevel * 5);
+      if (this.metaLevel >= 3) this.run.rerolls += 1;
+    }
     // The mutation log is per RUN: it is rendered as "the mutations you saw"
     // on the death card, so carrying it across a restart reported the previous
     // run's weather as this run's.

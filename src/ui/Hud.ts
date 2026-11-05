@@ -381,6 +381,7 @@ export class Hud {
   private readonly death: HTMLElement;
   private readonly deathStats: HTMLElement;
   private readonly menuBest: HTMLElement;
+  private readonly menuMeta: HTMLElement;
   private readonly menuRecords: HTMLElement;
   private readonly recordEl: HTMLElement;
   private readonly damageDirs: HTMLElement[] = [];
@@ -784,6 +785,7 @@ export class Hud {
         <div class="hud__menu-card">
           <div class="hud__menu-title">FRONTAL FORCE</div>
           <div class="hud__menu-best" data-menu-best></div>
+          <div class="hud__menu-meta" data-menu-meta></div>
           <!--
             Tabs. The menu used to show ten named areas at once, which is a
             control panel rather than a menu: everything competes for the same
@@ -960,6 +962,7 @@ export class Hud {
     this.death = q('[data-death]');
     this.deathStats = q('[data-death-stats]');
     this.menuBest = q('[data-menu-best]');
+    this.menuMeta = q('[data-menu-meta]');
     this.menuRecords = q('[data-menu-records]');
     this.recordEl = q('[data-record]');
     this.pauseModeEl = q('[data-pause-mode]');
@@ -2489,6 +2492,23 @@ export class Hud {
       score > 0
         ? `${icon('trophy')}<span>${score} · WAVE ${Math.max(1, wave)}</span>`
         : `${icon('trophy')}<span>NO RECORD</span>`;
+  }
+
+  /**
+   * Meta progression line: the permanent head start earned from the achievement
+   * ledger. Without it the long game is a record board with nothing to spend.
+   */
+  public setMenuMeta(level: number): void {
+    if (level <= 0) {
+      this.menuMeta.hidden = true;
+      return;
+    }
+    const salvage = Math.min(50, level * 5);
+    const perks: string[] = [`+${salvage} SALVAGE`];
+    if (level >= 3) perks.push('+1 REROLL');
+    this.menuMeta.innerHTML =
+      `${icon('crate')}<span>SUPPLY LEVEL ${level} — ${perks.join(' · ')}</span>`;
+    this.menuMeta.hidden = false;
   }
 
   /** Lifetime records under the menu best line, as visual stat tiles. */
