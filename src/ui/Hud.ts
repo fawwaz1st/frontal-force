@@ -720,7 +720,7 @@ export class Hud {
           </div>
         </div>
       </div>
-      <div class="hud__menu" data-menu>
+      <div class="hud__menu" data-menu role="dialog" aria-modal="true" aria-label="Main menu">
         <div class="hud__menu-card">
           <div class="hud__menu-title">FRONTAL FORCE</div>
           <div class="hud__menu-best" data-menu-best></div>
@@ -817,7 +817,7 @@ export class Hud {
           <button class="hud__btn hud__btn--deploy" data-start>${icon('play')}<span>DEPLOY</span></button>
         </div>
       </div>
-      <div class="hud__pause hidden" data-pause>
+      <div class="hud__pause hidden" data-pause role="dialog" aria-modal="true" aria-label="Paused">
         <div class="hud__menu-card">
           <div class="hud__menu-title hud__menu-title--pause">${icon('pause')}<span>PAUSED</span></div>
           <div class="hud__pause-mode" data-pause-mode></div>
@@ -833,7 +833,7 @@ export class Hud {
           </div>
         </div>
       </div>
-      <div class="hud__death hidden" data-death>
+      <div class="hud__death hidden" data-death role="dialog" aria-modal="true" aria-label="Run ended">
         <div class="hud__menu-card">
           <div class="hud__menu-title hud__menu-title--dead">K.I.A.</div>
           <div class="hud__record" data-record hidden>${icon('trophy')}<span>NEW RECORD</span></div>
@@ -1220,7 +1220,6 @@ export class Hud {
         slot.innerHTML = icon(iconId);
       }
       slot.classList.toggle('active', i === s.weaponIndex);
-      slot.classList.remove('hud__slot--edge');
       const name = names[idx] ?? '';
       if (slot.title !== name) slot.title = name;
     }
@@ -1275,6 +1274,14 @@ export class Hud {
     this.enClear.hidden = combat || inter;
     if (combat) this.setText('enemiesN', this.enemiesN, String(s.enemiesLeft));
     if (inter) this.setText('timerN', this.timerN, String(Math.max(0, Math.ceil(s.phaseTimer))));
+    // Elite count: the threat readout the state has always carried but the HUD
+    // never drew. An elite on the field is the thing a player most needs to
+    // know before they commit to a fight.
+    if (s.inGame && s.eliteAlive > 0) {
+      this.enHostiles.setAttribute('data-elite', String(s.eliteAlive));
+    } else {
+      this.enHostiles.removeAttribute('data-elite');
+    }
     // Map name + tagline: the arena's identity, shown under the chips.
     this.mapNameHost.hidden = !s.inGame;
     if (s.inGame) {
@@ -1892,6 +1899,7 @@ export class Hud {
     // one that starts a run, not whatever they were last fiddling with.
     if (visible) this.selectTab('play');
     this.syncOverlay();
+    if (visible) this.focusOverlay(this.menu);
   }
 
   /**
@@ -2044,6 +2052,7 @@ export class Hud {
   public showPause(visible: boolean): void {
     this.pause.classList.toggle('hidden', !visible);
     this.syncOverlay();
+    if (visible) this.focusOverlay(this.pause);
   }
 
   /**
@@ -2061,6 +2070,17 @@ export class Hud {
       this.recordEl.hidden = !stats.isNewRecord;
     }
     this.syncOverlay();
+    if (visible) this.focusOverlay(this.death);
+  }
+
+  /**
+   * Move focus into an open overlay. Without this, a keyboard or screen-reader
+   * user who opens the menu with Esc is still on the canvas, and Tab walks the
+   * whole HUD before reaching DEPLOY.
+   */
+  private focusOverlay(panel: HTMLElement): void {
+    const target = panel.querySelector<HTMLElement>('button:not([disabled])');
+    target?.focus();
   }
 
   private renderDeath(stats: DeathStats): void {
@@ -2279,7 +2299,9 @@ export class Hud {
   /** Reflect the selected mode on menu chips + the pause-card readout. */
   public syncMode(mode: GameMode): void {
     for (const chip of this.modeChips) {
-      chip.classList.toggle('active', chip.dataset.mode === mode);
+      const isActive = chip.dataset.mode === mode;
+      chip.classList.toggle('active', isActive);
+      chip.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     }
     const m = MODE_META[mode];
     if (m) this.pauseModeEl.innerHTML = `${icon(m.icon)}<span>${m.label}</span>`;

@@ -670,6 +670,12 @@ kbd {
   align-items: baseline;
   gap: 8px;
   pointer-events: none;
+  /* A plate, like every other readout: over a bright wall or sky the bare text
+     could disappear. */
+  padding: 3px 8px 3px 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
 }
 .hud__mapname[hidden] { display: none; }
 .hud__mapname b {
@@ -692,6 +698,10 @@ kbd {
   justify-self: start;
   align-self: start;
   margin: calc(52px + var(--safe-t)) 0 0 calc(20px + var(--safe-l));
+  padding: 4px 9px 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -707,6 +717,16 @@ kbd {
 .hud__enemies [data-en-hostiles] .ic { color: var(--danger); }
 .hud__enemies [data-en-timer] .ic { color: var(--accent); }
 .hud__enemies [data-en-clear] .ic { color: var(--ok); font-size: 15px; }
+/* Elite count badge: an elite on the field is the single most important thing
+   a player needs to know before committing to a fight. */
+.hud__enemies [data-en-hostiles][data-elite]::after {
+  content: attr(data-elite) ' ELITE';
+  margin-left: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+}
 
 /* ---------- Radar ---------- */
 /* No drop-shadow filter: a filtered canvas is re-rasterised on every frame it
@@ -1099,9 +1119,10 @@ kbd {
 @keyframes spinslow { to { transform: rotate(360deg); } }
 
 .hud__reload {
+  /* min() so a 320px viewport does not squeeze the integrity column. */
+  width: min(180px, 100%);
   margin-top: 6px;
   height: 3px;
-  width: 180px;
   margin-left: auto;
   background: rgba(8, 11, 14, 0.85);
   overflow: hidden;
@@ -2579,20 +2600,11 @@ kbd {
    Responsive — every breakpoint reorders the named areas, never the internals.
    ========================================================================== */
 @media (max-height: 860px) {
-  /* Side-by-side: the ledger (visual, tall) beside the keycap diagram (short),
-     which removes a whole stacked block and keeps DEPLOY above the fold. */
+  /* Compact the tab layout. The old two-column grid here was dead: the tab
+     stylesheet redefines the same areas at equal specificity and loads later,
+     so this block only ever sized things. */
   .hud__menu .hud__menu-card {
-    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-    grid-template-areas:
-      "title    title"
-      "best     best"
-      "records  records"
-      "modes    modes"
-      "wagers   wagers"
-      "ach      keys"
-      "seed     settings"
-      "deploy   deploy";
-    gap: 8px 24px;
+    gap: 10px;
     padding: 16px 24px 14px;
     margin: 10px 0;
   }
@@ -2632,7 +2644,8 @@ kbd {
   .hud__stat-tile span { font-size: 9px; }
   .hud__modes { gap: 5px; }
   .hud__mode-chip { padding: 5px 9px; font-size: 11px; }
-  .hud__challenge { padding: 4px 8px; font-size: 10px; }
+  /* WCAG 2.2 SC 2.5.8: a tap target below 24px is a barrier on a phone. */
+  .hud__challenge { padding: 6px 10px; font-size: 11px; }
   .hud__btn { padding: 9px 24px; font-size: 14px; }
   .hud__btn--seed { font-size: 12px; padding: 9px 14px; }
   .hud__seed-input { padding: 8px 10px; font-size: 13px; }
@@ -2645,8 +2658,10 @@ kbd {
   .hud__bottom { margin: 0 calc(14px + var(--safe-r)) calc(12px + var(--safe-b)) calc(14px + var(--safe-l)); }
   .hud__health { min-width: 0; }
   .hud__ammo { font-size: 24px; }
-  .hud__hint { bottom: calc(126px + var(--safe-b)); }
-  .hud__menu-title { font-size: 28px; }
+  /* The boss bar's peak reaches ~130px; the hint lane must clear it. */
+  .hud__hint { bottom: calc(134px + var(--safe-b)); }
+  /* A short viewport gets a SMALLER title, not a larger one. */
+  .hud__menu-title { font-size: 26px; }
   .hud__keys { grid-template-columns: 1fr 1fr 1fr; }
   .hud__boss { bottom: calc(84px + var(--safe-b)); }
 }
@@ -2674,7 +2689,7 @@ kbd {
   .hud__ach-list { max-height: 124px; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 680px) {
   .hud__top {
     margin: calc(8px + var(--safe-t)) 0 0 calc(10px + var(--safe-l));
     max-width: calc(100vw - 118px - var(--safe-l) - var(--safe-r));
@@ -2699,9 +2714,10 @@ kbd {
   .hud__ammo { font-size: 26px; }
   .hud__weapon-row { font-size: 10px; gap: 6px; }
   .hud__slots { gap: 4px; margin-bottom: 5px; }
-  .hud__slot { width: 28px; height: 22px; }
+  /* 28x24 keeps the slot ring inside the footer while clearing the 24px tap
+     target floor. */
+  .hud__slot { width: 28px; height: 24px; }
   .hud__slot .ic { width: 15px; height: 15px; }
-  .hud__slot--edge .ic { width: 12px; height: 12px; }
   .hud__health-bar { height: 10px; }
   .hud__health-num { font-size: 22px; }
   .hud__banner-title { font-size: 30px; }
@@ -2793,6 +2809,13 @@ kbd {
   .hud__menu, .hud__pause, .hud__death,
   .hud__menu.hidden, .hud__pause.hidden, .hud__death.hidden { transition: none; }
   .hud__toast { transition: none; }
+  /* Bars and the killfeed: every hit still sweeps a full-width bar and slides a
+     row, which is exactly the motion reduced-motion exists to remove. */
+  .hud__health-fill, .hud__shield-fill, .hud__ally-bar i,
+  .hud__ability-bar i, .hud__boss-fill, .hud__ring-fill,
+  .hud__ach-meter i, .hud__chip-meter::before,
+  .hud__marker, .hud__dmg-arc { transition: none; }
+  .hud__kf-row { animation: none; }
   @keyframes hit { 0% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes hithead { 0% { opacity: 1; } 100% { opacity: 0; } }
   @keyframes hitkill { 0% { opacity: 1; } 60% { opacity: 0.9; } 100% { opacity: 0; } }
