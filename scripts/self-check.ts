@@ -1213,7 +1213,9 @@ check('drops: a boss always pays out', () => {
   const m = /private rollDrop\(enemy: Enemy\): void \{([\s\S]*?)\n  \}/.exec(gameSrc);
   assert.ok(m, 'rollDrop not found');
   assert.match(m[1], /if \(boss \|\| rng\.next\(\) < DROP_CHANCE_SALVAGE \+ elite\) \{/);
-  assert.match(m[1], /if \(boss \|\| rng\.next\(\) < DROP_CHANCE_HEALTH \+ elite \* 0\.5\) \{/);
+  // The health drop now also has a pity timer: after N dry kills it is
+  // guaranteed, so a long streak cannot end a run.
+  assert.match(m[1], /if \(boss \|\| this\.pityHealth >= PITY_HEALTH_KILLS \|\| rng\.next\(\) < DROP_CHANCE_HEALTH \+ elite \* 0\.5\) \{/);
 });
 check('drops: health is the rarest drop', () => {
   // A common heal erases the value of the arena's health stations.

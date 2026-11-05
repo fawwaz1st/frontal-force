@@ -251,9 +251,9 @@ export const UPGRADES: Record<UpgradeId, UpgradeCard> = {
   },
   blackContract: {
     id: 'blackContract', name: 'Black Contract', rarity: 'rare',
-    description: '+6% enemy count and +7.5% enemy health, +40% score and +50% salvage.',
+    description: '+12.5% enemy count and +15% enemy health, +25% score and +30% salvage.',
     maxStacks: 4,
-    apply: (m) => { m.curse += 0.25; m.scoreMul *= 1.4; m.salvageMul *= 1.5; },
+    apply: (m) => { m.curse += 0.5; m.scoreMul *= 1.25; m.salvageMul *= 1.3; },
   },
   overclock: {
     id: 'overclock', name: 'Overclock', rarity: 'rare',

@@ -739,6 +739,9 @@ export class EnemyManager {
     eliteAllowed = true,
     /** Extra affixes granted to an elite, from the run's challenges. */
     extraAffixes = 0,
+    /** Damage multiplier. Finite modes ramp this so late waves stay dangerous
+     *  instead of becoming bullet sponges. */
+    dmgMul = 1,
   ): void {
     // Per-spawn def clone: wave scaling never mutates the shared DEFS table.
     const base = DEFS[kind];
@@ -747,6 +750,7 @@ export class EnemyManager {
       health: Math.round(base.health * hpMul),
       speed: base.speed * spdMul,
       attackCooldown: base.attackCooldown * atkMul,
+      damage: base.damage * dmgMul,
     };
 
     // Elite roll. Boss kinds are always elite but never carry affixes: their

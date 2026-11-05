@@ -198,14 +198,14 @@ body {
    only: the player should never have to guess what just died. */
 .hud__killfeed {
   position: absolute;
-  /* Left rail under the chips: the right corner is the radar's, and a killfeed
-     stacked under it collided with toasts. */
-  top: calc(96px + var(--safe-t));
-  left: calc(20px + var(--safe-l));
+  /* Below the radar on the right rail: the radar owns the top corner, the
+     killfeed owns the lane under it, and toasts own the left rail. */
+  top: calc(168px + var(--safe-t));
+  right: calc(18px + var(--safe-r));
   z-index: 2;
   display: grid;
   gap: 3px;
-  justify-items: start;
+  justify-items: end;
   pointer-events: none;
 }
 .hud__kf-row {
@@ -659,6 +659,34 @@ kbd {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 .hud__chip--seed b { font-variant-numeric: tabular-nums; }
+
+/* ---------- Arena identity (name + tagline) ---------- */
+/* Sits under the chips on the left rail: the arena is a place, not a wave
+   counter, and naming it is the cheapest world-building there is. */
+.hud__mapname {
+  grid-area: header;
+  justify-self: start;
+  align-self: start;
+  margin: calc(96px + var(--safe-t)) 0 0 calc(20px + var(--safe-l));
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  pointer-events: none;
+}
+.hud__mapname[hidden] { display: none; }
+.hud__mapname b {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--text);
+}
+.hud__mapname span {
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
 
 /* ---------- Status line (hostiles / timer / clear) ---------- */
 .hud__enemies {
@@ -2378,10 +2406,11 @@ kbd {
    ========================================================================== */
 .hud__toasts {
   position: absolute;
-  /* Below the radar: the radar is 144px at margin 16, so 176px clears it.
-     Toasts and the radar were fighting for the same corner. */
-  top: calc(176px + var(--safe-t));
-  right: calc(18px + var(--safe-r));
+  /* Left rail under the arena name: the right corner is the radar's and the
+     killfeed's; toasts are transient so they get the lane the eye already
+     reads top-to-bottom on the left. */
+  top: calc(130px + var(--safe-t));
+  left: calc(20px + var(--safe-l));
   display: flex;
   flex-direction: column;
   gap: 8px;

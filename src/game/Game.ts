@@ -78,6 +78,10 @@ const DROP_CHANCE_HEALTH = 0.09;
 const DROP_CHANCE_SALVAGE = 0.22;
 /** Bonus roll odds for an elite, and the boss. */
 const ELITE_DROP_BONUS = 0.35;
+/** Pity: after this many consecutive kills without the drop, it is guaranteed.
+ *  A dry streak of RNG is not tension, it is a run-ending bug. */
+const PITY_HEALTH_KILLS = 12;
+const PITY_AMMO_KILLS = 10;
 /** Ability timings. */
 const DASH_CHARGES = 2;
 const DASH_COOLDOWN = 3;
@@ -214,6 +218,21 @@ export class Game {
   private phase: GamePhase = 'menu';
   private score = 0;
   private kills = 0;
+  /** One-shot teaching lines: each mechanic is explained the first time it is
+   *  actually available, not in a menu the player never opens. */
+  private readonly taught = new Set<string>();
+  private teachText = '';
+  private teachT = 0;
+  private teach(id: string, text: string): void {
+    if (this.taught.has(id)) return;
+    this.taught.add(id);
+    this.teachText = text;
+    this.teachT = 4;
+  }
+  /** Consecutive kills without an ammo drop (pity timer). */
+  private pityAmmo = 0;
+  /** Consecutive kills without a health drop (pity timer). */
+  private pityHealth = 0;
   private runRecorded = false;
   private isNewRecord = false;
   private stepAcc = 0;
@@ -309,6 +328,7 @@ export class Game {
     kills: 0,
     comboMult: 1,
     crosshairGapPx: 3,
+    teach: '',
     inGame: false,
     allyActive: false,
     allyCount: 0,
@@ -716,6 +736,10 @@ export class Game {
       if (wave === 1) {
         const frag = this.world.themeStory[0];
         if (frag) this.hud.showBanner(this.world.themeName, frag);
+      }
+      if (wave === 5) {
+        const frag = this.world.themeStory[1];
+        if (frag) this.hud.showBanner('MORE FRAGMENTS', frag);
       }
       // Slow-motion beat on wave clear: the rhythm release. Giving the player
       // a third of a second of near-frozen time is what makes a clear feel like
@@ -1588,6 +1612,7 @@ export class Game {
       reloading: wv.reloading,
       reloadProgress: wv.reloadProgress,
     });
+    if (this.player.isSprinting) this.teach('slide', 'C WHILE SPRINTING: SLIDE');
     this.waves.update(dt, this.player.position);
     // Smoke and EMP fields feed the enemy perception and shield systems, which
     // is what turns the two support grenades into mechanical tools rather than
@@ -1738,6 +1763,7 @@ export class Game {
         this.dashCharges += 1;
       }
     }
+    if (this.dashCharges > 0) this.teach('dash', 'Q: DASH');
     if (frame.dashPressed && this.dashCharges > 0 && this.dashT <= 0) {
       this.dashCharges -= 1;
       if (this.dashRecharge <= 0) this.dashRecharge = 0.001;
@@ -1755,6 +1781,7 @@ export class Game {
     }
 
     // ---- Grenade ----
+    if (this.grenadeCharges > 0) this.teach('grenade', 'G: GRENADE — HOLD TO COOK, RELEASE TO THROW');
     if (this.grenadeCharges < this.maxGrenadeCharges) {
       this.grenadeRecharge += dt * mods.grenadeRechargeMul;
       if (this.grenadeRecharge >= GRENADE_COOLDOWN) {
@@ -1788,6 +1815,7 @@ export class Game {
     // ---- Melee ----
     if (frame.meleePressed && this.meleeT <= 0) {
       this.meleeT = MELEE_COOLDOWN;
+      this.teach('melee', 'F: MELEE');
       this.doMelee();
     }
   }
@@ -1937,13 +1965,19 @@ export class Game {
     if (boss || rng.next() < DROP_CHANCE_SALVAGE + elite) {
       this.pickups.dropAt('salvage', at, () => rng.next());
     }
-    if (rng.next() < DROP_CHANCE_AMMO + elite) {
+    // Pity counters: a long dry streak of health or ammo is a run-ender, not a
+    // tension curve. After N kills the drop is guaranteed and the counter resets.
+    this.pityAmmo += 1;
+    this.pityHealth += 1;
+    if (boss || this.pityAmmo >= PITY_AMMO_KILLS || rng.next() < DROP_CHANCE_AMMO + elite) {
       this.pickups.dropAt('ammo', at, () => rng.next());
+      this.pityAmmo = 0;
     }
     // Health is the rarest drop, and an elite is the most likely source. A
     // common heal would erase the value of the arena's health stations.
-    if (boss || rng.next() < DROP_CHANCE_HEALTH + elite * 0.5) {
+    if (boss || this.pityHealth >= PITY_HEALTH_KILLS || rng.next() < DROP_CHANCE_HEALTH + elite * 0.5) {
       this.pickups.dropAt('health', at, () => rng.next());
+      this.pityHealth = 0;
     }
   }
 
@@ -2104,6 +2138,15 @@ export class Game {
     state.kills = this.kills;
     state.comboMult = Math.min(1 + Math.floor(this.combo / 2), 8);
     state.crosshairGapPx = this.crosshairGap();
+    state.mapName = this.world.themeName;
+    state.mapTagline = this.world.themeTagline;
+    if (this.teachT > 0) {
+      this.teachT -= 1 / 60;
+      state.teach = this.teachText;
+      if (this.teachT <= 0) this.teachText = '';
+    } else {
+      state.teach = '';
+    }
     state.inGame = this.phase === 'playing';
     state.allyActive = this.ally.active;
     state.allyCount = this.ally.aliveCount;

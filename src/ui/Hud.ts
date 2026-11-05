@@ -142,6 +142,8 @@ export interface HudState {
   /** 0..1 — drives dynamic crosshair gap */
   /** Exact crosshair gap in CSS px, derived from the real cone + FOV. */
   crosshairGapPx: number;
+  /** One-shot teaching line, shown once per mechanic per run. */
+  teach: string;
   /** False on menu/pause/death screens: suppresses gameplay hints */
   inGame: boolean;
   /** Escort-bot squad readout */
@@ -373,6 +375,9 @@ export class Hud {
   private readonly allyFill: HTMLElement;
   private readonly allyN: HTMLElement;
   private lastAllyN = -1;
+  private readonly mapNameEl: HTMLElement;
+  private readonly mapTagEl: HTMLElement;
+  private readonly mapNameHost: HTMLElement;
   private readonly pops: HTMLElement[] = [];
   /** Killfeed host: the last four named kills. */
   private readonly killfeed: HTMLElement;
@@ -615,6 +620,9 @@ export class Hud {
           <span class="hud__boss-phase" data-boss-phase></span>
         </div>
         <div class="hud__boss-bar"><div class="hud__boss-fill" data-boss-fill></div></div>
+      </div>
+      <div class="hud__mapname" data-mapname hidden>
+        <b data-mapname-n></b><span data-mapname-tag></span>
       </div>
       <div class="hud__enemies" data-enemies>
         <span data-en-hostiles>${icon('target')}<b data-enemies-n>0</b></span>
@@ -952,6 +960,9 @@ export class Hud {
       });
     }
     this.enHostiles = q('[data-en-hostiles]');
+    this.mapNameEl = q('[data-mapname-n]');
+    this.mapTagEl = q('[data-mapname-tag]');
+    this.mapNameHost = q('[data-mapname]');
     this.enTimer = q('[data-en-timer]');
     this.enClear = q('[data-en-clear]');
     this.enemiesN = q('[data-enemies-n]');
@@ -1264,6 +1275,12 @@ export class Hud {
     this.enClear.hidden = combat || inter;
     if (combat) this.setText('enemiesN', this.enemiesN, String(s.enemiesLeft));
     if (inter) this.setText('timerN', this.timerN, String(Math.max(0, Math.ceil(s.phaseTimer))));
+    // Map name + tagline: the arena's identity, shown under the chips.
+    this.mapNameHost.hidden = !s.inGame;
+    if (s.inGame) {
+      this.setText('mapname', this.mapNameEl, s.mapName);
+      this.setText('maptag', this.mapTagEl, s.mapTagline);
+    }
 
     this.updateHint(s);
     if (s.inGame) {
@@ -1714,7 +1731,10 @@ export class Hud {
     }
     let html = '';
     let tone = '';
-    if (s.mag === 0 && s.reserve === 0) {
+    if (s.teach) {
+      html = s.teach;
+      tone = '';
+    } else if (s.mag === 0 && s.reserve === 0) {
       html = `${icon('bullet')}`; // dry — no R prompt, reload would be rejected
       tone = 'hud__hint--warn';
     } else if (s.mag === 0 && s.reserve > 0) {

@@ -388,6 +388,12 @@ export class WaveManager {
             const atkMul = config.endless
               ? 1
               : Math.max(0.72, 1 - 0.015 * (this.wave - 1));
+            // Finite damage ramp: +3%/wave, capped at 1.6x. Without it a wave-20
+            // grunt hits exactly as hard as a wave-1 grunt, so the late game is a
+            // pure HP-sponge problem rather than a danger problem.
+            const dmgMul = config.endless
+              ? 1
+              : Math.min(1.6, 1 + 0.03 * (this.wave - 1));
             this.enemies.spawn(
               entry.kind,
               point,
@@ -397,6 +403,7 @@ export class WaveManager {
               this.wave,
               true,
               this.challengeExtraAffixes,
+              dmgMul,
             );
             if (entry.boss) this.onBoss?.(BOSS_NAME);
             this.spawnTimer = config.endless
