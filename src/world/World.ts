@@ -113,6 +113,10 @@ export class World {
   private readonly group = new THREE.Group();
   public readonly octree = new Octree();
   public readonly spawnPoints: THREE.Vector3[] = [];
+  /** Health/ammo station positions, for the radar. */
+  public get stationPoints(): THREE.Vector3[] {
+    return this.pickupPoints;
+  }
   public readonly pickupPoints: THREE.Vector3[] = [];
   public readonly coverSpots: CoverSpotData[] = [];
   /**

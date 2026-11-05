@@ -34,7 +34,14 @@ import {
   type ChallengeId,
   type ChallengeMods,
 } from './Challenges';
-import { Hud, type HudState, type RadarBlip, type SettingsPatch, type TargetMarker } from '../ui/Hud';
+import {
+  Hud,
+  type HudState,
+  type RadarBlip,
+  type DamagePop,
+  type SettingsPatch,
+  type TargetMarker,
+} from '../ui/Hud';
 import { Draft } from '../ui/Draft';
 import { Kiosk, type KioskItem } from '../ui/Kiosk';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -302,6 +309,14 @@ export class Game {
   private readonly radarColorCache = new Map<number, string>();
   private radarCount = 0;
   /** World-space markers over enemies and allies, rebuilt each HUD tick. */
+  /** Damage numbers: a fixed pool, so a 24-enemy wave never allocates. */
+  private readonly damagePops: Array<{ point: THREE.Vector3; amount: number; headshot: boolean; age: number }> = [];
+  /** Screen-space output for the damage numbers (pooled, reused each frame). */
+  private readonly dmgNumOut: DamagePop[] = Array.from({ length: 12 }, () => ({
+    x: 0, y: 0, amount: 0, kind: 'hit' as const,
+  }));
+  private dmgNumCount = 0;
+  private damagePopCursor = 0;
   private readonly targetMarkers: TargetMarker[] = Array.from({ length: 28 }, () => ({
     x: 0, y: 0, distance: 0, colorCss: '#ffffff', role: 'enemy',
     health: 1, clamped: false, glyph: '',
@@ -342,6 +357,8 @@ export class Game {
     allyHp: 0,
     allyMax: 0,
     radar: this.radarBlips,
+    damagePops: [],
+    damagePopCount: 0,
     radarCount: 0,
     // New systems surface through the same snapshot: the HUD never reaches
     // into the simulation, it only reads this object.
@@ -571,7 +588,8 @@ export class Game {
       }
       if (result === 2 || result === 3) this.run.stats.headshots += 1;
     };
-    this.weapons.onDamageDealt = (amount, headshot) => this.onDamageDealt(amount, headshot);
+    this.weapons.onDamageDealt = (amount, headshot, point) =>
+      this.onDamageDealt(amount, headshot, point);
     // Barrel shooting: a prop hit within a barrel's radius damages that barrel,
     // so the arena's explosive props are part of the fight instead of scenery.
     this.weapons.onPropHit = (point, _dir, amount) => {
@@ -1079,7 +1097,9 @@ export class Game {
   private openDraft(wave: number): void {
     // Every third wave also opens the kiosk first, so the player spends before
     // they commit a card. Two decisions back to back is the intended rhythm.
-    if (wave % 3 === 0 && this.run.salvage >= 40) {
+    // It opens regardless of salvage: a skipped kiosk that never explains why
+    // reads as a bug, and the rows show their own refusal reason.
+    if (wave % 3 === 0) {
       this.openKiosk();
       return;
     }
@@ -2122,15 +2142,31 @@ export class Game {
   };
 
   /** Damage actually dealt by the player, forwarded from the weapon path. */
-  public onDamageDealt(amount: number, headshot: boolean): void {
+  public onDamageDealt(amount: number, headshot: boolean, point?: THREE.Vector3): void {
     this.run.stats.damageDealt += amount;
-    void headshot;
+    // Damage number: the per-hit feedback the card pool is built around. It is
+    // capped to the pool and only drawn when the hit was real.
+    if (point && amount >= 1) this.pushDamagePop(amount, headshot, point);
     const mods = this.run.mods;
     if (mods.lifesteal > 0 && !this.player.dead) {
       const healed = amount * mods.lifesteal;
       this.player.heal(healed);
       this.lifestealHealed += healed;
     }
+  }
+
+  /** Emit one damage number at a world point. */
+  private pushDamagePop(amount: number, headshot: boolean, point: THREE.Vector3): void {
+    const pop = this.damagePops[this.damagePopCursor];
+    if (pop) {
+      pop.point.copy(point);
+      pop.amount = amount;
+      pop.headshot = headshot;
+      pop.age = 0;
+    } else {
+      this.damagePops.push({ point: point.clone(), amount, headshot, age: 0 });
+    }
+    this.damagePopCursor = (this.damagePopCursor + 1) % 12;
   }
 
   /** Screen-space-relative angle of an attacker for the damage arc UI. */
@@ -2192,6 +2228,8 @@ export class Game {
     state.allyHp = this.ally.hp;
     state.allyMax = this.ally.maxHp;
     state.radar = this.radarBlips;
+    state.damagePops = this.dmgNumOut;
+    state.damagePopCount = this.dmgNumCount;
     state.radarCount = this.radarCount;
     // Ability + run readouts.
     state.dashCharges = this.dashCharges;
@@ -2323,6 +2361,24 @@ export class Game {
       blip.colorCss = this.colorCssOf(blip.color);
       count += 1;
     });
+    // Stations: the arena's permanent fixtures. They ARE on the radar because
+    // the layout changes every seed, so "learned once" is not true -- a player
+    // who needs health and does not know where the station is is guessing.
+    for (const station of this.world.stationPoints) {
+      if (count >= this.radarBlips.length) break;
+      const blip = this.radarBlips[count];
+      if (!blip) break;
+      const dx = station.x - playerX;
+      const dz = station.z - playerZ;
+      const rx = dx * cy - dz * sy;
+      const rz = -(dx * sy + dz * cy);
+      blip.x = clamp(rx / 46, -1, 1);
+      blip.z = clamp(rz / 46, -1, 1);
+      blip.station = true;
+      blip.color = 0x7ddb8a;
+      blip.colorCss = this.colorCssOf(blip.color);
+      count += 1;
+    }
     this.radarCount = count;
   }
 
@@ -2425,6 +2481,23 @@ export class Game {
       );
     }
     this.markerCount = count;
+
+    // Damage numbers: project the pool to screen space. The age drives the
+    // fade and the rise, so a number never lingers after its hit.
+    this.dmgNumCount = 0;
+    for (const pop of this.damagePops) {
+      pop.age += 0.05;
+      if (pop.age > 0.55) continue;
+      this.markerProject.copy(pop.point).project(camera);
+      if (this.markerProject.z > 1) continue;
+      const out = this.dmgNumOut[this.dmgNumCount];
+      if (!out) break;
+      out.x = halfW + this.markerProject.x * halfW;
+      out.y = halfH - this.markerProject.y * halfH;
+      out.amount = pop.amount;
+      out.kind = pop.headshot ? 'headshot' : 'hit';
+      this.dmgNumCount += 1;
+    }
   }
 
   /** Cached `#rrggbb` for a numeric colour, shared with the radar. */

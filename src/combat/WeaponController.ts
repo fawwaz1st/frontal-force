@@ -97,7 +97,9 @@ export class WeaponController {
    * and the lifesteal path. Called once per pellet that connects, with the
    * post-mitigation number, so the accuracy and DPS readouts are honest.
    */
-  public onDamageDealt: ((amount: number, headshot: boolean) => void) | null = null;
+  public onDamageDealt:
+    | ((amount: number, headshot: boolean, point?: THREE.Vector3) => void)
+    | null = null;
   /**
    * Per-pellet outcome, for the accuracy and headshot statistics.
    * 0 = miss, 1 = body hit, 2 = headshot, 3 = headshot kill, 4 = body kill,
@@ -793,7 +795,7 @@ export class WeaponController {
       // Report the ACTUAL post-mitigation damage: a warden plate eats half the
       // round, and the damage/lifesteal readouts must reflect that, not the
       // number that was nominally fired.
-      this.onDamageDealt?.(hit.dealt, enemyHit.headshot);
+      this.onDamageDealt?.(hit.dealt, enemyHit.headshot, point);
       // Affix riders: the enemy hit the player, so its Blazing/Glacial/Charged
       // affixes fire here. The player's own cards never own this path.
       this.onEnemyHit?.(enemyHit.enemy, enemyHit.headshot);

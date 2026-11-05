@@ -304,7 +304,8 @@ check('fire: shot statistics count hits, headshots and kills', () => {
 check('fire: damage stats report post-mitigation damage', () => {
   // `dealt` is what the health bar actually lost, so a warden plate or a
   // kill-shot overkill cannot inflate damage-dealt or lifesteal.
-  assert.match(weaponSrc, /this\.onDamageDealt\?\.\(hit\.dealt, enemyHit\.headshot\)/);
+  // The third argument is the hit point, which drives the damage numbers.
+  assert.match(weaponSrc, /this\.onDamageDealt\?\.\(hit\.dealt, enemyHit\.headshot, point\)/);
   const enemiesSrc2 = readSrc('ai/Enemies.ts');
   assert.match(enemiesSrc2, /const dealt = Math\.max\(0, Math\.min\(damage, enemy\.health\)\)/);
   assert.match(enemiesSrc2, /return \{ killed: true, blocked, dealt \};/);

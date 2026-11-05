@@ -109,6 +109,13 @@ function formatClock(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+export interface DamagePop {
+  x: number;
+  y: number;
+  amount: number;
+  kind: 'hit' | 'headshot' | 'kill';
+}
+
 export interface RadarBlip {
   /** Right offset in radar units (-1..1) */
   x: number;
@@ -121,6 +128,8 @@ export interface RadarBlip {
    * lets the radar draw drops as a distinct shape rather than another dot.
    */
   drop?: 'health' | 'ammo' | 'salvage';
+  /** Set for a permanent health/ammo station. */
+  station?: boolean;
 }
 
 export interface HudState {
@@ -162,6 +171,8 @@ export interface HudState {
   allyMax: number;
   /** Reused array of pre-rotated radar blips */
   radar: RadarBlip[];
+  damagePops: DamagePop[];
+  damagePopCount: number;
   /** Active entries at the start of `radar` */
   radarCount: number;
   /** Absorbing shield on top of health (kiosk plating). */
@@ -393,6 +404,8 @@ export class Hud {
   private readonly mapTagEl: HTMLElement;
   private readonly mapNameHost: HTMLElement;
   private readonly pops: HTMLElement[] = [];
+  /** Pooled damage-number nodes. */
+  private readonly dmgNums: HTMLElement[] = [];
   /** Killfeed host: the last four named kills. */
   private readonly killfeed: HTMLElement;
   private popCursor = 0;
@@ -596,6 +609,8 @@ export class Hud {
         <div class="hud__scope-ticks"></div>
       </div>
       <div class="hud__pops" data-pops></div>
+      <!-- Damage numbers: the per-hit feedback the card pool is built around. -->
+      <div class="hud__dmgnums" data-dmgnums></div>
       <!-- Killfeed: the last few kills, named. Over-communicating is what
            Overwatch credits for its revitalisation -- the player should never
            have to guess what just died or what killed it. -->
@@ -987,6 +1002,15 @@ export class Hud {
       popsEl.appendChild(pop);
       this.pops.push(pop);
     }
+    // Damage numbers: a pooled DOM node per pop, so a 24-enemy wave cannot
+    // allocate on every hit.
+    const dmgnumsEl = q('[data-dmgnums]');
+    for (let i = 0; i < 12; i++) {
+      const el = document.createElement('div');
+      el.className = 'hud__dmgnum';
+      dmgnumsEl.appendChild(el);
+      this.dmgNums.push(el);
+    }
     this.modeChips.push(...qa<HTMLButtonElement>('[data-mode]'));
     for (const chip of this.modeChips) {
       chip.addEventListener('click', () => {
@@ -1352,6 +1376,7 @@ export class Hud {
     this.setStyle('chgap', this.crosshair, '--ch-gap', `${gap.toFixed(1)}px`);
 
     this.renderMarkers(s);
+    this.renderDamageNums(s);
     this.renderHurt(s);
 
     if (this.bannerTimer > 0) {
@@ -1862,6 +1887,33 @@ export class Hud {
       .join('');
   }
 
+  /**
+   * Damage numbers. Positions arrive already projected to screen pixels, so
+   * this is pure DOM placement: the pool is grown once and then only transformed
+   * and faded, which keeps a 24-enemy wave from allocating on every hit.
+   */
+  private renderDamageNums(s: HudState): void {
+    for (let i = 0; i < this.dmgNums.length; i++) {
+      const el = this.dmgNums[i];
+      if (!el) continue;
+      if (i >= s.damagePopCount) {
+        el.classList.remove('show');
+        continue;
+      }
+      const pop = s.damagePops[i];
+      if (!pop) {
+        el.classList.remove('show');
+        continue;
+      }
+      el.textContent = String(Math.round(pop.amount));
+      el.className = `hud__dmgnum show ${pop.kind}`;
+      this.setClass('dmgk', el, pop.kind, true);
+      el.style.left = `${pop.x.toFixed(0)}px`;
+      el.style.top = `${pop.y.toFixed(0)}px`;
+      el.style.setProperty('--dmg-rise', `${(14 + (i % 3) * 8).toFixed(0)}px`);
+    }
+  }
+
   private drawRadar(s: HudState): void {
     const ctx = this.radarCtx;
     if (!ctx) return;
@@ -1896,6 +1948,12 @@ export class Hud {
       const px = blip.x * (r - 7);
       const py = -blip.z * (r - 7);
       ctx.fillStyle = blip.colorCss;
+      if (blip.station) {
+        // A station is a square: it is a place, not a thing that moves. The
+        // shape distinguishes a fixture from a threat at a glance.
+        ctx.fillRect(px - 2.6, py - 2.6, 5.2, 5.2);
+        continue;
+      }
       if (blip.drop) {
         // Loot is a diamond, not a dot. The radar's dots are all threats, so a
         // drop drawn as a dot would read as "something is there" and send the

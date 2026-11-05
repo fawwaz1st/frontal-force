@@ -847,6 +847,35 @@ kbd {
   100% { opacity: 0; transform: translate(calc(-50% + var(--pop-x, 0px)), calc(-50% - 46px)) scale(0.94); }
 }
 
+/* ---------- Damage numbers ---------- */
+/* The per-hit feedback the whole card pool is built around. A damage number
+   says "this build hits this hard", which no hitmarker alone can do. */
+.hud__dmgnums {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.hud__dmgnum {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-data);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+  font-variant-numeric: tabular-nums;
+}
+.hud__dmgnum.show { animation: dmgrise 0.55s ease-out forwards; }
+.hud__dmgnum.headshot { color: var(--gold); font-size: 18px; }
+.hud__dmgnum.kill { color: var(--danger); font-size: 19px; }
+@keyframes dmgrise {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, calc(-50% - var(--dmg-rise, 20px))) scale(0.9); }
+}
+
 /* ==========================================================================
    Footer rail — a 3-column grid: integrity | abilities | weapon.
    ========================================================================== */
