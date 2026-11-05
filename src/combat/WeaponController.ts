@@ -783,7 +783,10 @@ export class WeaponController {
         dir, // knockback impulse along the shot line
         true, // player-owned kill: feeds the combo meter
         PLAYER_TARGET_ID, // threat-table identity, so enemies can hold a grudge
-        enemyHit.headshot, // weak-point check for the boss rear core
+        // The rear core is a POSITION, not a body part: any shot that lands from
+        // behind the boss opens it. Requiring a headshot too made the objective
+        // practically unreachable against a boss that turns to face the player.
+        enemyHit.enemy.kind === 'wardenPrime',
       );
       // Report the ACTUAL post-mitigation damage: a warden plate eats half the
       // round, and the damage/lifesteal readouts must reflect that, not the

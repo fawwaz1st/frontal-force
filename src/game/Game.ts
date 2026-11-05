@@ -2028,7 +2028,7 @@ export class Game {
     const salvageBase = (SALVAGE_PER_KILL
       + (enemy.elite ? SALVAGE_ELITE_BONUS : 0)
       + (enemy.kind === 'wardenPrime' ? SALVAGE_BOSS_BONUS : 0)) *
-      this.challengeMods.salvageMul;
+      this.challengeMods.salvageMul * enemy.salvageMul;
     this.run.earnSalvage(salvageBase);
     // Heal-on-kill and lifesteal, both from the card pool.
     if (mods.healOnKill > 0) this.player.heal(mods.healOnKill);

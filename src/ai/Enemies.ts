@@ -134,6 +134,12 @@ export interface Enemy {
   elite: boolean;
   /** Flat damage reduction from the Armored affix. */
   flatArmor: number;
+  /** Salvage multiplier from the Gilded affix. */
+  salvageMul: number;
+  /** Fraction of damage dealt returned as health (Vampiric). */
+  lifestealMul: number;
+  /** Absorb pool granted by the Charged affix's aura. */
+  shield: number;
   /** Stagger/knockback immunity (Juggernaut). */
   ccImmune: boolean;
   /** Remaining burn stacks (damage over time). */
@@ -219,6 +225,8 @@ export interface Projectile {
   /** True once this bolt has already whipped past the player. Without it a
    *  single bolt fires a near-miss sound on every tick it stays close. */
   nearMissed: boolean;
+  /** The enemy that fired this bolt, so Vampiric lifesteal can find its owner. */
+  owner: Enemy | null;
 }
 
 /** Anything that can intercept a bolt before it reaches the player. */
@@ -277,6 +285,8 @@ const AFFIX_BURN_DPS = 9;
 const AFFIX_BURN_TIME = 3;
 /** Glacial slow: fraction of speed removed and duration. */
 const AFFIX_SLOW_MUL = 0.65;
+/** Chain-lightning damage from the Overloading affix. */
+const AFFIX_CHAIN_DAMAGE = 12;
 const AFFIX_SLOW_TIME = 2;
 
 // ---------------------------------------------------------------------------
@@ -547,7 +557,7 @@ export class EnemyManager {
       this.group.add(bolt);
       this.projectiles.push({
         mesh: bolt, vel: new THREE.Vector3(), damage: 0, life: 0, active: false,
-        targetId: -1, sourceLabel: '', nearMissed: false,
+        targetId: -1, sourceLabel: '', nearMissed: false, owner: null,
       });
     }
   }
@@ -775,6 +785,8 @@ export class EnemyManager {
     let opacity = 1;
     let glow = 0;
     let tint: number | null = null;
+    let salvageMul = 1;
+    let lifestealMul = 0;
     if (affixes.length > 0) {
       const stats: AffixStats = {
         health: def.health,
@@ -782,6 +794,9 @@ export class EnemyManager {
         speed: def.speed,
         score: def.score,
         flatArmor: 0,
+        attackCooldown: 1,
+        salvage: 1,
+        lifesteal: 0,
         ccImmune: false,
         opacity: 1,
         glow: 0,
@@ -791,12 +806,15 @@ export class EnemyManager {
       def.health = Math.round(stats.health);
       def.damage = Math.round(stats.damage * 10) / 10;
       def.speed = stats.speed;
+      def.attackCooldown *= stats.attackCooldown;
       def.score = Math.round(stats.score * eliteScoreMul(affixes.length));
       flatArmor = stats.flatArmor;
       ccImmune = stats.ccImmune;
       opacity = stats.opacity;
       glow = stats.glow;
       tint = stats.tint;
+      salvageMul = stats.salvage;
+      lifestealMul = stats.lifesteal;
     } else if (isBoss) {
       def.score = Math.round(def.score * eliteScoreMul(3));
     }
@@ -842,6 +860,9 @@ export class EnemyManager {
       affixes,
       elite,
       flatArmor,
+      salvageMul,
+      lifestealMul,
+      shield: 0,
       ccImmune,
       burnT: 0,
       burnDps: 0,
@@ -1012,6 +1033,12 @@ export class EnemyManager {
     // `dealt` is the damage the health bar ACTUALLY lost — capped at the
     // remaining health so an overkill execute never inflates the damage
     // statistics or the lifesteal heal derived from them.
+    // Charged aura shield absorbs before health.
+    if (enemy.shield > 0) {
+      const absorbed = Math.min(enemy.shield, damage);
+      enemy.shield -= absorbed;
+      damage -= absorbed;
+    }
     const dealt = Math.max(0, Math.min(damage, enemy.health));
     enemy.health -= damage;
     enemy.flashT = 0.14;
@@ -1084,6 +1111,17 @@ export class EnemyManager {
     return { killed: false, blocked, dealt };
   }
 
+  /**
+   * Vampiric lifesteal: the affix heals the attacker for a fraction of the
+   * damage it DEALS. Called after every enemy attack that lands on a target,
+   * so a Vampiric elite is a sustain threat rather than a stat stick.
+   */
+  private applyLifesteal(enemy: Enemy, victim: CombatTarget, damage: number): void {
+    if (enemy.lifestealMul <= 0) return;
+    if (victim.targetId !== PLAYER_TARGET_ID) return;
+    enemy.health = Math.min(enemy.def.health, enemy.health + damage * enemy.lifestealMul);
+  }
+
   /** Shared kill path: death effects, affix on-death hooks, score callback. */
   private killEnemy(enemy: Enemy, byPlayer: boolean): void {
     enemy.dead = true;
@@ -1101,10 +1139,20 @@ export class EnemyManager {
       if (def.onDeath === 'explode') {
         this.effects.ring(at, 0xff8a3c, EXPLODER_RADIUS * 2.2, 0.4);
         this.audio.blastAt(at.x, at.z);
+        // The explosion is a real blast, not a firework: it damages the dead
+        // enemy's neighbours. Volatile hits harder than Blazing.
+        const isVolatile = id === 'volatile';
+        this.explodeAt(at, EXPLODER_RADIUS * (isVolatile ? 1.4 : 1), EXPLODER_DAMAGE * (isVolatile ? 0.8 : 0.5), enemy);
       } else if (def.onDeath === 'split' && enemy.kind !== 'wardenPrime') {
         this.spawnSplit(enemy);
       } else if (def.onDeath === 'freeze') {
         this.effects.ring(at, 0xa8f0ff, 5, 0.5);
+        // Glacial leaves a cold patch: enemies near the corpse are slowed.
+        for (const other of this.enemies) {
+          if (other.dead || other === enemy) continue;
+          if (other.group.position.distanceTo(at) > 5) continue;
+          other.slowT = Math.max(other.slowT, AFFIX_SLOW_TIME);
+        }
       }
     }
     // The Exploder's damage is on death: killing it at range is the counter-play.
@@ -1523,6 +1571,15 @@ export class EnemyManager {
           }
         }
       }
+      // Charged: a damage-absorbing aura for nearby enemies. It is the affix's
+      // whole identity -- without it the elite is just a stat stick.
+      if (enemy.affixes.some((id) => AFFIXES[id].passive === 'shieldAll')) {
+        for (const other of this.enemies) {
+          if (other.dead || other === enemy) continue;
+          if (other.group.position.distanceToSquared(enemy.group.position) > 100) continue;
+          other.shield = Math.min(other.def.health * 0.15, other.shield + other.def.health * 0.05 * dt);
+        }
+      }
       // The Healer KIND has the same aura as the Mending affix, but weaker and
       // tied to its own position, so the two stack the way players expect.
       if (enemy.kind === 'healer') {
@@ -1575,6 +1632,19 @@ export class EnemyManager {
         this.playerSlowT = Math.max(this.playerSlowT, AFFIX_SLOW_TIME);
       } else if (def.onHit === 'chain') {
         this.effects.burst(attacker.group.position.clone().setY(attacker.group.position.y + 1), 0x5aa8ff, 6, 1.8);
+        // Chain lightning: the hit arcs to the two nearest friendlies. It is a
+        // real damage event, so grouping up against an Overloading elite is a
+        // decision rather than a free lunch.
+        let arcs = 0;
+        for (const other of this.enemies) {
+          if (arcs >= 2) break;
+          if (other.dead || other === attacker) continue;
+          if (other.group.position.distanceToSquared(attacker.group.position) > 9) continue;
+          const atOther = other.group.position.clone().setY(other.group.position.y + 1);
+          this.effects.burst(atOther, 0x5aa8ff, 4, 1.4);
+          this.damageEnemy(other, AFFIX_CHAIN_DAMAGE, atOther, undefined, false, -1);
+          arcs += 1;
+        }
       }
     }
   }
@@ -2245,6 +2315,7 @@ export class EnemyManager {
     if (enemy.kind === 'rusher') {
       if (!this.hasLineOfSight(enemy.group.position, victimPos)) return;
       victim.receiveDamage(def.damage, enemy.group.position, def.label);
+      this.applyLifesteal(enemy, victim, def.damage);
       this.audio.melee(this.panToward(enemy.group.position, victimPos));
     } else if (enemy.kind === 'exploder') {
       // The Exploder's attack IS the detonation: it dies doing it, so the
@@ -2256,6 +2327,7 @@ export class EnemyManager {
       this.audio.blastAt(at.x, at.z);
       this.explodeAt(at, EXPLODER_RADIUS, EXPLODER_DAMAGE, enemy);
       victim.receiveDamage(def.damage, enemy.group.position, def.label);
+      this.applyLifesteal(enemy, victim, def.damage);
       this.killEnemy(enemy, false);
       return;
     } else if (enemy.kind === 'summoner') {
@@ -2623,6 +2695,7 @@ export class EnemyManager {
     if (!proj) return;
     proj.sourceLabel = enemy.def.label;
     proj.nearMissed = false;
+    proj.owner = enemy;
     const victimPos = victim.position;
     const from = this.tmp.set(
       enemy.group.position.x,
@@ -2741,6 +2814,7 @@ export class EnemyManager {
         if (this.segmentSphereHit(prev, proj.mesh.position, center, 0.75 + boltRadius)) {
           this.markAggressorForTarget(proj.targetId, proj.mesh.position);
           victim.receiveDamage(proj.damage, proj.mesh.position, proj.sourceLabel);
+          if (proj.owner && !proj.owner.dead) this.applyLifesteal(proj.owner, victim, proj.damage);
           proj.active = false;
           proj.mesh.visible = false;
           continue;

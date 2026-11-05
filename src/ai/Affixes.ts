@@ -35,6 +35,12 @@ export interface AffixDef {
   hpMul: number;
   damageMul: number;
   speedMul: number;
+  /** Attack-cadence multiplier (lower = faster attacks). */
+  attackCooldownMul?: number;
+  /** Salvage dropped on death. */
+  salvageMul?: number;
+  /** Fraction of damage dealt that is returned as health. */
+  lifestealMul?: number;
   /** Extra score multiplier on top of the elite bonus. */
   scoreMul: number;
   /** Behavioural hooks the enemy manager honours. */
@@ -85,12 +91,14 @@ export const AFFIXES: Record<AffixId, AffixDef> = {
     description: '30% faster movement and attack.',
     tint: 0xffe066, glow: 2.4,
     hpMul: 1.35, damageMul: 1.1, speedMul: 1.3, scoreMul: 1.5,
+    attackCooldownMul: 0.7,
   },
   gilded: {
     id: 'gilded', name: 'Gilded',
     description: 'Drops double salvage.',
     tint: 0xffd76b, glow: 2.8,
     hpMul: 1.6, damageMul: 1.1, speedMul: 1, scoreMul: 2.4,
+    salvageMul: 2,
   },
   splitting: {
     id: 'splitting', name: 'Splitting',
@@ -104,7 +112,9 @@ export const AFFIXES: Record<AffixId, AffixDef> = {
     description: 'Heals itself for 20% of the damage it deals.',
     tint: 0xff4d6d, glow: 2.4,
     hpMul: 1.8, damageMul: 1.2, speedMul: 1, scoreMul: 1.7,
-    passive: 'regen',
+    // Lifesteal on the damage it DEALS, not a flat regen: the affix is the
+    // difference between a vampire and a regenerating brute.
+    lifestealMul: 0.2,
   },
   volatile: {
     id: 'volatile', name: 'Volatile',
@@ -177,6 +187,12 @@ export interface AffixStats {
   score: number;
   /** Flat reduction applied after the multiplier. */
   flatArmor: number;
+  /** Attack-cadence multiplier. */
+  attackCooldown: number;
+  /** Salvage multiplier on death. */
+  salvage: number;
+  /** Fraction of damage dealt returned as health. */
+  lifesteal: number;
   /** True when stagger/knockback is ignored. */
   ccImmune: boolean;
   /** Body opacity; below 1 makes the enemy translucent. */
@@ -194,6 +210,9 @@ export function applyAffix(stats: AffixStats, def: AffixDef): void {
   stats.score *= def.scoreMul;
   stats.glow = Math.max(stats.glow, def.glow);
   stats.tint = def.tint;
+  if (def.attackCooldownMul !== undefined) stats.attackCooldown *= def.attackCooldownMul;
+  if (def.salvageMul !== undefined) stats.salvage *= def.salvageMul;
+  if (def.lifestealMul !== undefined) stats.lifesteal += def.lifestealMul;
   if (def.passive === 'armor') stats.flatArmor += 6;
   if (def.passive === 'ccImmune') stats.ccImmune = true;
   if (def.passive === 'stealth') stats.opacity = Math.min(stats.opacity, 0.42);
