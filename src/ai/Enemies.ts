@@ -1982,7 +1982,7 @@ export class EnemyManager {
   ): void {
     // The Glacial affix's slow applies to movement, and it must not be able to
     // push a slow below zero.
-    const slowK = enemy.slowT > 0 ? AFFIX_SLOW_MUL : 1;
+    const slowK = (enemy.slowT > 0 ? AFFIX_SLOW_MUL : 1) * this.enemySpeedMul;
     const step = speed * slowK * dt;
     // Record where we started so we can tell whether the step actually landed.
     const beforeX = enemy.collider.start.x;
@@ -2277,7 +2277,7 @@ export class EnemyManager {
       // cadence: an agent that cannot fire yet waits as long as one that just
       // did.
       if (enemy.attackTimer <= 0) {
-        enemy.attackTimer = def.attackCooldown * randRange(0.85, 1.2);
+        enemy.attackTimer = (def.attackCooldown * randRange(0.85, 1.2)) / this.enemyFireRateMul;
       }
       if (enemy.telegraphed) enemy.telegraphed = false;
       return;
@@ -2302,7 +2302,7 @@ export class EnemyManager {
     if (enemy.attackTimer > 0) return;
 
     enemy.telegraphed = false;
-    enemy.attackTimer = def.attackCooldown * randRange(0.85, 1.2);
+    enemy.attackTimer = (def.attackCooldown * randRange(0.85, 1.2)) / this.enemyFireRateMul;
     // Charge this agent's slot against the per-step budget. Incrementing (not
     // decrementing a shared count) is what lets the remaining agents see a
     // growing number and stop at the cap instead of all reading the same
@@ -2973,6 +2973,9 @@ export class EnemyManager {
   public sightMul = 1;
   /** Guard blocks shaved off the warden break threshold (Armor-Piercing). */
   public shieldBreakBonus = 0;
+  /** Run-modifier multipliers, pushed from Game each tick. */
+  public enemySpeedMul = 1;
+  public enemyFireRateMul = 1;
   private readonly tmpSmokeProbe = new THREE.Vector3();
 
   /**

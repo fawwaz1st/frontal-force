@@ -790,8 +790,10 @@ check('fire rate: the clock accumulates the interval instead of being overwritte
   // ticks but a ~1e-18 s float residue still pushed every shot to four, delivering
   // 15 rounds/s against a stated 20 — a 25% shortfall. Accumulating lets a short
   // and a long tick alternate, so the average lands on the stat block.
-  assert.match(weaponSrc, /weapon\.cooldown \+= 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul\);/);
-  assert.doesNotMatch(weaponSrc, /weapon\.cooldown = 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul\);/);
+  // The run-modifier fire-rate multiplier is part of the same cadence, so a
+  // BLITZ PACE wave really does make the player's guns cycle faster.
+  assert.match(weaponSrc, /weapon\.cooldown \+= 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul \* this\.runFireRateMul\);/);
+  assert.doesNotMatch(weaponSrc, /weapon\.cooldown = 1 \/ \(weapon\.def\.fireRate \* this\.mods\.fireRateMul \* this\.runFireRateMul\);/);
   // The carry must stay bounded: an idle gun may not bank catch-up shots.
   assert.match(weaponSrc, /weapon\.cooldown = Math\.max\(-dt, weapon\.cooldown - dt\);/);
 });
@@ -1386,7 +1388,9 @@ check('ai: the shooter cap counts agents that already fired, not the ready set',
     'the readiness snapshot is the deadlock; the cap must count agents that fired');
   // A capped-out agent waits a full cooldown, so it cannot re-enter the
   // wind-up window every frame and hold its slot.
-  assert.match(enemiesSrc, /enemy\.attackTimer = def\.attackCooldown \* randRange\(0\.85, 1\.2\);/);
+  // The cooldown is divided by the run-modifier fire-rate multiplier, so a
+  // BLITZ PACE wave really does make the roster shoot faster.
+  assert.match(enemiesSrc, /enemy\.attackTimer = \(def\.attackCooldown \* randRange\(0\.85, 1\.2\)\) \/ this\.enemyFireRateMul;/);
   assert.ok(!/attackTimer = windup \+ 0\.05/.test(enemiesSrc),
     'a blocked agent must not re-arm straight back into the wind-up window');
 });

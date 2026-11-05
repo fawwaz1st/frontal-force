@@ -254,6 +254,8 @@ export class Game {
   private dashT = 0;
   private dashDir = new THREE.Vector3();
   private grenadeCharges = GRENADE_CHARGES;
+  /** Run-modifier grenade recharge multiplier. */
+  private grenadeRechargeMul = 1;
   private grenadeRecharge = 0;
   private grenadeCook = 0;
   private grenadeKind: GrenadeKind = 'frag';
@@ -1625,6 +1627,13 @@ export class Game {
     // sight reduction ("Enemies see 30% less far") and this is what makes that
     // true rather than atmospheric copy.
     this.enemies.sightMul = this.waves.sightMul;
+    // Run modifiers: the wave table publishes these and the systems read them
+    // here. Before this, four of the five modifiers were score-only.
+    const mod = this.waves.activeModifier;
+    this.enemies.enemySpeedMul = mod?.enemySpeedMul ?? 1;
+    this.enemies.enemyFireRateMul = mod?.enemyFireRateMul ?? 1;
+    this.weapons.runFireRateMul = mod?.playerFireRateMul ?? 1;
+    this.grenadeRechargeMul = mod?.grenadeRechargeMul ?? 1;
     // HOT ZONE: killed enemies drop live grenades while the modifier is up.
     this.enemies.deathGrenades = this.waves.activeModifier?.deathGrenades === true;
     this.enemies.shieldBreakBonus = this.run.mods.shieldBreakBonus;
@@ -1783,7 +1792,7 @@ export class Game {
     // ---- Grenade ----
     if (this.grenadeCharges > 0) this.teach('grenade', 'G: GRENADE — HOLD TO COOK, RELEASE TO THROW');
     if (this.grenadeCharges < this.maxGrenadeCharges) {
-      this.grenadeRecharge += dt * mods.grenadeRechargeMul;
+      this.grenadeRecharge += dt * mods.grenadeRechargeMul * this.grenadeRechargeMul;
       if (this.grenadeRecharge >= GRENADE_COOLDOWN) {
         this.grenadeRecharge = 0;
         this.grenadeCharges += 1;

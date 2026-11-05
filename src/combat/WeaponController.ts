@@ -120,6 +120,8 @@ export class WeaponController {
     critChance: 0,
     critMul: 2,
   };
+  /** Run-modifier fire-rate multiplier, pushed from Game each tick. */
+  public runFireRateMul = 1;
   /** Damage multiplier for endless modes — mirrors the enemy HP ramp so a
    *  fixed ammo pool never becomes a hard wall. 1 in every finite mode. */
   public damageScale = 1;
@@ -563,12 +565,12 @@ export class WeaponController {
         // The group cannot cycle faster than it can physically be sent, so the
         // floor is the group's own duration.
         const groupDuration = (burstCount - 1) * BURST_ROUND_INTERVAL;
-        const cadence = 1 / (weapon.def.fireRate * this.mods.fireRateMul);
+        const cadence = 1 / (weapon.def.fireRate * this.mods.fireRateMul * this.runFireRateMul);
         weapon.cooldown += Math.max(cadence, groupDuration);
         this.burstLeft = burstCount - 1;
         this.burstT = BURST_ROUND_INTERVAL;
       } else {
-        weapon.cooldown += 1 / (weapon.def.fireRate * this.mods.fireRateMul);
+        weapon.cooldown += 1 / (weapon.def.fireRate * this.mods.fireRateMul * this.runFireRateMul);
       }
     }
     // Cone is sampled BEFORE addRecoil so the shot uses the state the player
